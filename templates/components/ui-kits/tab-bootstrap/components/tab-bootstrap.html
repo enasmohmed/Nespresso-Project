@@ -1,0 +1,95 @@
+{% load static %} {% load sass_tags %}
+<!-- Container-fluid starts  -->
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card">
+        <div class="card-header card-no-border pb-0">
+          <h4>Border Tabs</h4>
+          <p class="mt-1 f-m-light">
+            Use the <code>.nav-link </code>with <code>.active </code>class. And
+            hover effect added on bottom border styles.
+          </p>
+        </div>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="text-end mb-3">
+            <button id="uploadExcelBtn" class="btn btn-outline-primary">
+              📤 رفع ملف جديد
+            </button>
+            <input
+              type="file"
+              id="uploadExcelInput"
+              class="d-none"
+              accept=".xlsx,.xls"
+            />
+          </div>
+          <div class="d-flex align-items-center">
+            <label for="month-select" class="me-2 fw-semibold">Month:</label>
+            <select id="month-select" class="form-select form-select-sm">
+              <option value="">-- All Month --</option>
+              {% for m in months %}
+              <option value="{{ m }}">{{ m }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div id="filter-message"></div>
+        <div class="card-body">
+          <ul
+            class="nav nav-tabs border-tab mb-0"
+            id="bottom-tab"
+            role="tablist"
+          >
+            <li class="nav-item">
+              <a
+                class="nav-link nav-border txt-info tab-info pt-0"
+                id="bottom-home-tab"
+                data-bs-toggle="tab"
+                href="#bottom-home"
+                role="tab"
+                aria-controls="bottom-home"
+                aria-selected="true"
+                ><i class="icofont icofont-ui-home"> </i>All</a
+              >
+            </li>
+            {% for tab in excel_tabs %} {% if tab != "All" %}
+            <li class="nav-item">
+              <a
+                class="nav-link nav-border txt-info tab-info pt-0"
+                id="bottom-{{ tab }}-tab"
+                data-bs-toggle="{{ tab }}"
+                href="#bottom-home"
+                role="tab"
+                aria-controls="bottom-home"
+                aria-selected="true"
+                ><i class="icofont icofont-ui-home"> </i>{{ tab }}</a
+              >
+            </li>
+            {% endif %} {% endfor %}
+          </ul>
+          <div class="tab-content" id="bottom-tabContent">
+            <div
+              class="tab-pane fade show active"
+              id="bottom-home"
+              role="tabpanel"
+              aria-labelledby="bottom-home-tab"
+            >
+              <p class="pt-3">
+                A navigation bar is a particularly important feature because it
+                allows visitors to quickly and easily find
+                <em class="txt-danger">important pages on your website,</em>
+                like your blog, product pages, pricing, contact info, and
+                documentation. This improves the chances of visitors browsing
+                your site longer, which can boost your page views and reduce
+                your bounce rate.Create product Builder tool is also pre-bundled
+                in this template so that you can let the audience configure the
+                product by themselves before placing the order.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Container-fluid Ends-->

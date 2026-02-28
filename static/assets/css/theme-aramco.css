@@ -1,0 +1,234 @@
+/**
+ * Aramco Dashboard – Primary Palette
+ * يطبق الألوان الأساسية على الموقع دون تغيير الهيكل.
+ */
+
+:root {
+  /* 🟢 أخضر (Outbound / Success / SLA) */
+  --aramco-primary-green: #3F8F7A;
+  --aramco-deep-green: #2F6F5F;
+  --aramco-soft-green: #7FB7A6;
+
+  /* 🔵 أزرق (Inbound / Neutral) */
+  --aramco-primary-blue: #4C8FD6;
+  --aramco-medium-blue: #6FA6DE;
+  --aramco-light-blue: #A8C8EB;
+
+  /* 🟠 برتقالي (Utilization / Capacity) */
+  --aramco-capacity-orange: #E7B17A;
+  --aramco-soft-orange: #F2D3AE;
+
+  /* 🔴 أحمر (Delays / Risk) */
+  --aramco-alert-red: #D9645A;
+  --aramco-soft-red: #F3B2AD;
+
+  /* ⚪ خلفيات وكروت */
+  --aramco-bg-main: #F3F5F7;
+  --aramco-card: #FFFFFF;
+  --aramco-card-secondary: #F8FAFB;
+  --aramco-border: #E1E5EA;
+  --aramco-shadow: #D6DBE1;
+
+  /* 🖤 نصوص وأيقونات */
+  --aramco-title: #2C2F33;
+  --aramco-body: #5F6B78;
+  --aramco-muted: #9AA3AD;
+  --aramco-icon: #8C96A0;
+
+  /* ربط الثيم العام بالألوان الجديدة */
+  --theme-default: var(--aramco-primary-blue);
+  --theme-secondary: var(--aramco-capacity-orange);
+  --body-font-color: var(--aramco-body);
+  --light-background: var(--aramco-bg-main);
+  --light-bg: var(--aramco-bg-main);
+  --light2: var(--aramco-card-secondary);
+  --recent-box-bg: var(--aramco-card-secondary);
+  --chart-border: var(--aramco-border);
+  --bs-heading-color: var(--aramco-title);
+  --bs-card-cap-color: var(--aramco-muted);
+  --light-shade-primary: rgba(76, 143, 214, 0.15);
+}
+
+/* خلفية الصفحة والجسم */
+.page-body-wrapper,
+body .page-body-wrapper {
+  background-color: var(--aramco-bg-main) !important;
+}
+.page-body-wrapper .page-body {
+  background-color: var(--aramco-bg-main);
+}
+
+/* كروت وخلفيات ثانوية */
+.card {
+  background-color: var(--aramco-card);
+  border-color: var(--aramco-border);
+  box-shadow: 0 1px 3px rgba(214, 219, 225, 0.2);
+}
+.card-header {
+  background-color: var(--aramco-card) !important;
+  border-color: var(--aramco-border);
+  color: var(--aramco-title);
+}
+
+/* Primary = أزرق (Inbound) */
+.bg-primary,
+.btn-primary,
+.badge.bg-primary,
+.alert-primary,
+.txt-primary,
+.text-primary,
+.border-primary,
+.table-primary,
+.bg-primary .svg-fill {
+  /* background-color: var(--aramco-primary-blue) !important; */
+  color: #fff !important;
+  border-color: var(--aramco-primary-blue) !important;
+}
+.bg-primary.txt-primary,
+.bg-primary.text-primary { color: #fff !important; }
+.bg-light-primary,
+.light-primary {
+  background-color: var(--aramco-light-blue) !important;
+  color: var(--aramco-deep-green);
+}
+.text-primary,
+.txt-primary { color: var(--aramco-primary-blue) !important; }
+.btn-primary:not(.bg-primary) {
+  /* background-color: var(--aramco-primary-blue) !important; */
+  border-color: var(--aramco-primary-blue) !important;
+}
+.btn-primary:hover {
+  background-color: var(--aramco-medium-blue) !important;
+  border-color: var(--aramco-medium-blue) !important;
+}
+
+/* Success = أخضر (Outbound / SLA) */
+.bg-success,
+.btn-success,
+.badge.bg-success,
+.alert-success,
+.txt-success,
+.text-success,
+.border-success,
+.table-success {
+  /* background-color: var(--aramco-primary-green) !important; */
+  color: #fff !important;
+  border-color: var(--aramco-primary-green) !important;
+}
+.bg-success.txt-success,
+.bg-success.text-success { color: #fff !important; }
+.bg-light-success,
+.light-success {
+  background-color: rgba(63, 143, 122, 0.15) !important;
+  color: var(--aramco-deep-green);
+}
+.text-success,
+.txt-success { color: var(--aramco-primary-green) !important; }
+.btn-success:not(.bg-success) {
+  background-color: var(--aramco-primary-green) !important;
+  border-color: var(--aramco-primary-green) !important;
+}
+.btn-success:hover {
+  background-color: var(--aramco-deep-green) !important;
+  border-color: var(--aramco-deep-green) !important;
+}
+
+/* Warning / Utilization = برتقالي */
+.bg-warning,
+.btn-warning,
+.badge.bg-warning,
+.text-warning,
+.txt-warning {
+  /* background-color: var(--aramco-capacity-orange) !important; */
+  color: var(--aramco-title) !important;
+  border-color: var(--aramco-capacity-orange) !important;
+}
+.bg-light-warning {
+  background-color: var(--aramco-soft-orange) !important;
+}
+.text-warning,
+.txt-warning { color: var(--aramco-capacity-orange) !important; }
+
+/* Danger / Late = أحمر */
+.bg-danger,
+.btn-danger,
+.badge.bg-danger,
+.alert-danger,
+.text-danger,
+.txt-danger {
+  /* background-color: var(--aramco-alert-red) !important; */
+  color: #fff !important;
+  border-color: var(--aramco-alert-red) !important;
+}
+.bg-light-danger {
+  background-color: var(--aramco-soft-red) !important;
+}
+.text-danger,
+.txt-danger { color: var(--aramco-alert-red) !important; }
+
+/* نصوص وعناوين */
+h1, h2, h3, h4, h5, h6,
+.card-title,
+.fw-bold.text-dark {
+  color: var(--aramco-title) !important;
+}
+body,
+p,
+.inbound-kpi-label,
+.dashboard-kpi-label {
+  color: var(--aramco-body);
+}
+.small.text-muted,
+.text-muted,
+.label {
+  color: var(--aramco-muted) !important;
+}
+
+/* حدود وجداول */
+.table-bordered,
+.dashboard-data-table,
+.border {
+  border-color: var(--aramco-border) !important;
+}
+.table thead th,
+.dashboard-data-table th {
+  background-color: var(--aramco-card-secondary) !important;
+  color: var(--aramco-title);
+}
+.table-responsive {
+  border-color: var(--aramco-border);
+}
+
+/* أيقونات الداشبورد */
+.card-header-icon.text-primary { color: var(--aramco-primary-blue) !important; }
+.card-header-icon.text-secondary { color: var(--aramco-muted) !important; }
+.inbound-kpi-icon.bg-success-soft { background-color: rgba(63, 143, 122, 0.15) !important; color: var(--aramco-primary-green) !important; }
+.inbound-kpi-icon.bg-primary-soft { background-color: rgba(76, 143, 214, 0.15) !important; color: var(--aramco-primary-blue) !important; }
+
+/* Progress bars (SLA / نجاح) */
+.progress-bar.bg-success,
+.progress-bar[class*="success"] {
+  background-color: var(--aramco-primary-green) !important;
+}
+.progress-bar.bg-warning {
+  background-color: var(--aramco-capacity-orange) !important;
+}
+.progress-bar.bg-danger {
+  background-color: var(--aramco-alert-red) !important;
+}
+
+/* شكل عام للكروت في الداشبورد */
+.inbound-kpi-card,
+.dashboard-kpi-card {
+  background: var(--aramco-card) !important;
+  border-color: var(--aramco-border) !important;
+  box-shadow: 0 2px 8px rgba(214, 219, 225, 0.25);
+}
+.inbound-kpi-card .inbound-kpi-value,
+.dashboard-kpi-card .dashboard-kpi-value {
+  color: var(--aramco-title) !important;
+}
+.inbound-kpi-card .inbound-kpi-label,
+.dashboard-kpi-card .dashboard-kpi-label {
+  color: var(--aramco-muted) !important;
+}

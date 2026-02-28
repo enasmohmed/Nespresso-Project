@@ -1,0 +1,601 @@
+{% load static %} {% load sass_tags %}
+
+
+
+<link
+  href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+  rel="stylesheet"
+/>
+<style>
+  .meeting-section .meeting-title {
+    color: #007fa3;
+    font-weight: 600;
+  }
+  .meeting-section {
+    background-color: #f0f8ff;
+    padding: 40px;
+    margin-top: 40px;
+    border-radius: 10px;
+  }
+  .meeting-section .meeting-list td.point-desc {
+    display: flex;
+    align-items: center; /* ✅ يجعل النقطة والنص في المنتصف رأسيًا */
+  }
+
+  .meeting-section .meeting-list td.point-desc::before {
+    content: "•";
+    color: #007bff;
+    font-weight: bold;
+    font-size: 1.3rem;
+    margin-right: 8px; /* ✅ مسافة بسيطة بين النقطة والنص */
+    line-height: 1;
+  }
+
+  .meeting-section {
+    background-color: #f8fafc;
+  }
+
+  .meeting-table {
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .meeting-table thead th {
+    background-color: #e9f0ff;
+    color: #9084ad;
+    font-weight: 600;
+    border-bottom: 2px solid #cfe2ff;
+  }
+
+  .meeting-table tbody tr {
+    transition: all 0.25s ease;
+  }
+
+  .meeting-table tbody tr:hover {
+    background-color: #f1f6ff !important;
+    transform: scale(1.01);
+  }
+
+  .meeting-table .badge {
+    font-size: 0.85rem;
+    border-radius: 8px;
+  }
+
+  select#meetingFilter {
+    min-width: 130px;
+    font-weight: 500;
+  }
+
+  .row-gray-light {
+    background-color: #f0f0f0 !important;
+  }
+  .row-gray-dark {
+    background-color: #d3d3d3 !important;
+  }
+
+  /* ===== تعديل ألوان الصفوف ===== */
+  .table-success {
+    background-color: #f2f2f2 !important; /* رمادي فاتح بدل الأخضر */
+    color: #333 !important; /* نص غامق ليتضح */
+  }
+
+  .table-warning {
+    background-color: #bfbfbf !important; /* رمادي غامق بدل الأصفر */
+    color: #fff !important; /* نص أبيض لتباين أفضل */
+  }
+
+  /* ===== تعديل ألوان الشارات (badges) ===== */
+  .badge.bg-success {
+    background-color: #888 !important; /* رمادي متوسط */
+    color: #fff !important;
+  }
+
+  .badge.bg-warning {
+    background-color: #555 !important; /* رمادي غامق */
+    color: #fff !important;
+  }
+
+  /* لتنعيم التباين بين النص والخلفية في الصفوف */
+  .meeting-table tbody tr:hover {
+    filter: brightness(0.95);
+    transition: 0.2s;
+  }
+</style>
+<div class="container py-4">
+  <!--  <h3 class="text-center fw-bold mb-4">📊 All Tabs Overview</h3>-->
+  <div class="row">
+    {% for tab in tabs %} 
+    {% with counter_str=forloop.counter|stringformat:"s" %} 
+    {% with canvas_id="chart_"|add:counter_str %}
+    <div class="col-md-6 mb-4">
+      <div class="card shadow-sm border-0">
+        <div
+          class="card-header text-center fw-bold text-black rounded-top"
+          style="background-color: #e8f1fbcc !important"
+        >
+          {{ tab.name }}
+        </div>
+        <div class="card-body text-center">
+          <p class="mb-3">
+            <strong>Hit:</strong> {{ tab.hit_pct }}%
+            {% if tab.target_pct is not None %}
+            | <strong>Target:</strong> {{ tab.target_pct }}%
+            {% endif %}
+          </p>
+          <div
+            class="chart-container position-relative"
+            style="height: 320px; width: 100%; margin: auto"
+          >
+            <!-- Loader -->
+            <div
+              id="loader-{{ canvas_id }}"
+              class="position-absolute top-50 start-50 translate-middle bg-white"
+              style="display: none; z-index: 10"
+            >
+              <div
+                class="spinner-border text-primary"
+                role="status"
+                style="width: 2.5rem; height: 2.5rem"
+              >
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+            <canvas id="{{ canvas_id }}"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endwith %} 
+    {% endwith %} 
+    {% endfor %}
+    <!-- ✅ قسم Meeting Points & Actions - يظهر دائمًا -->
+    <div
+      class="meeting-section mt-5 p-4 rounded-3 shadow-sm"
+      id="meeting-section-container"
+      style="background-color: #f8fafc"
+    >
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 class="fw-bold mb-0" style="color: #9084ad">
+          <i class="bi bi-people-fill me-2"></i> Meeting Points & Actions
+        </h4>
+      </div>
+      <div class="filter-buttons mb-4 text-center">
+        <button
+          class="btn btn-secondary mx-1 {% if status_filter == 'all' or not status_filter %}active{% endif %}"
+          onclick="loadMeetingPoints('all', this)"
+          style="
+            font-weight: 600;
+            background-color: #9fc0e4 !important;
+            border-color: #9fc0e4 !important;
+            color: #000 !important;
+          "
+        >
+          All
+        </button>
+        <button
+          class="btn btn-warning mx-1 {% if status_filter == 'pending' %}active{% endif %}"
+          onclick="loadMeetingPoints('pending', this)"
+          style="
+            font-weight: 600;
+            background-color: #b8b8b8 !important;
+            border-color: #b8b8b8 !important;
+            color: #000 !important;
+          "
+        >
+          In Progress
+        </button>
+        <button
+          class="btn btn-success mx-1 {% if status_filter == 'done' %}active{% endif %}"
+          onclick="loadMeetingPoints('done', this)"
+          style="
+            font-weight: 600;
+            background-color: #9fc0e4 !important;
+            border-color: #9fc0e4 !important;
+            color: #000 !important;
+          "
+        >
+          Completed
+        </button>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle table-hover meeting-table">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Description</th>
+              <th class="text-center">Status</th>
+              <th class="text-center">Created At</th>
+              <th class="text-center">Target Date</th>
+              <th class="text-center">Assigned To</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if meeting_data %} {% for point in meeting_data reversed %}
+            <tr
+              class="{% if point.status == 'Done' %}row-gray-light{% elif point.status == 'Pending' %}row-gray-dark{% endif %}"
+            >
+              <td>{{ forloop.counter }}</td>
+              <td class="fw-semibold text-secondary">
+                {{ point.description }}
+              </td>
+              <td class="text-center">
+                {% if point.status == 'Done' %}
+                <span class="badge bg-success px-3 py-2">Done</span>
+                {% else %}
+                <span class="badge bg-warning text-dark px-3 py-2"
+                  >Pending</span
+                >
+                {% endif %}
+              </td>
+              <td class="text-center text-muted">
+                {{ point.created_at|date:"Y-m-d" }}
+              </td>
+              <td class="text-center text-muted">
+                {{ point.target_date|date:"Y-m-d"|default:"-" }}
+              </td>
+              <td class="text-center text-muted">
+                {{ point.assigned_to|default:"-" }}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="6" class="text-center text-muted py-4">
+                <i class="bi bi-info-circle me-1"></i> No meeting points
+                available at the moment.
+              </td>
+            </tr>
+            {% endfor %} {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted py-4">
+                <i class="bi bi-info-circle me-1"></i> No meeting points
+                available at the moment.
+              </td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ✅ مكتبات -->
+<!-- ✅ jQuery (آخر نسخة ثابتة) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+
+<!-- ✅ سكربت التهيئة لتسجيل البلجنات -->
+<script>
+  (function () {
+    let pluginsRegistered = false;
+
+    function ensureChartPlugins() {
+      if (pluginsRegistered) return;
+      try {
+        if (typeof ChartDataLabels !== "undefined") {
+          Chart.register(ChartDataLabels);
+        }
+        if (typeof window["chartjs-plugin-annotation"] !== "undefined") {
+          Chart.register(window["chartjs-plugin-annotation"]);
+        }
+        pluginsRegistered = true;
+        console.log("✅ Chart.js plugins registered successfully");
+      } catch (e) {
+        console.error("⚠️ Error registering Chart.js plugins:", e);
+      }
+    }
+
+    function getChartPlugins() {
+      return typeof ChartDataLabels !== "undefined" ? [ChartDataLabels] : [];
+    }
+
+    window.chartInstances = window.chartInstances || {};
+
+    window.initOverviewCharts = function (rootSelector) {
+      ensureChartPlugins();
+      const $scope = rootSelector ? $(rootSelector) : $(document);
+
+      const chartColors = [
+        "#9fc0e4",
+        "#709ad4",
+        "#9084ad",
+        "#a365ba",
+        "#b9acd8",
+        "#9fc0e4",
+      ];
+
+      $scope.find("[id^='chart_']").each(function () {
+        const canvasId = $(this).attr("id");
+        const loaderId = "loader-" + canvasId;
+        const canvas = document.getElementById(canvasId);
+        const loader = document.getElementById(loaderId);
+        const tabName = $(this)
+          .closest(".card")
+          .find(".card-header")
+          .text()
+          .trim();
+        const currentQuarter =
+          (window.getSelectedQuarter && window.getSelectedQuarter()) || "";
+        const currentMonth =
+          (window.getSelectedMonth && window.getSelectedMonth()) || "";
+
+        if (!canvas) {
+          console.warn("⚠️ Canvas element not found:", canvasId);
+          return;
+        }
+
+        $(canvas).css("height", "350px");
+
+        const ctx = canvas.getContext("2d");
+        if (loader) $(loader).fadeIn(200);
+
+        $.ajax({
+          url: "{% url 'dashboard:upload_excel' %}",
+          method: "GET",
+          data: { tab: tabName, quarter: currentQuarter, month: currentMonth },
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          success: function (res) {
+            if (loader) $(loader).fadeOut(200);
+            if (!res.chart_data || !res.chart_data.length) {
+              $(canvas)
+                .parent()
+                .append(
+                  "<div class='text-center text-muted mt-3'>⚠️ No data available.</div>"
+                );
+              return;
+            }
+
+            const chart_info = res.chart_data[0];
+            const chartType = (chart_info.type || "bar").toLowerCase();
+            const labels = chart_info.dataPoints.map((dp) => dp.label);
+            const values = chart_info.dataPoints.map((dp) => Number(dp.y));
+
+            const targetDataset = res.chart_data.find((ds) =>
+              ds.name?.toLowerCase().includes("target")
+            );
+            let targetValue = null;
+            if (targetDataset && targetDataset.dataPoints.length) {
+              const validValues = targetDataset.dataPoints
+                .map((dp) => Number(dp.y))
+                .filter((v) => !isNaN(v));
+              if (validValues.length) {
+                targetValue =
+                  validValues.reduce((a, b) => a + b, 0) / validValues.length;
+              }
+            }
+            if (isNaN(targetValue) || targetValue === null) targetValue = 0;
+
+            const showTarget = false;
+            let chartConfig = {};
+
+            if (chartType === "pie" || chartType === "doughnut") {
+              chartConfig = {
+                type: "doughnut",
+                data: {
+                  labels: labels,
+                  datasets: [
+                    {
+                      data: values,
+                      backgroundColor: chartColors.slice(0, values.length),
+                      borderWidth: 2,
+                      hoverOffset: 10,
+                    },
+                  ],
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  layout: { padding: { top: 50 } },
+                  cutout: "60%",
+                  plugins: {
+                    legend: { position: "bottom" },
+                    tooltip: {
+                      callbacks: {
+                        label: (ctx) =>
+                          `${ctx.label}: ${ctx.parsed.toFixed(1)}%`,
+                      },
+                    },
+                    datalabels: {
+                      color: "#000",
+                      font: { weight: "bold" },
+                      formatter: (v) => `${v.toFixed(1)}%`,
+                    },
+                  },
+                },
+                plugins: getChartPlugins(),
+              };
+            } else {
+              chartConfig = {
+                type: "bar",
+                data: {
+                  labels: labels,
+                  datasets: [
+                    {
+                      label: "Performance %",
+                      data: values,
+                      backgroundColor: tabName
+                        .toLowerCase()
+                        .includes("rejections")
+                        ? chartColors
+                        : "#bfbfbf",
+                      borderRadius: 10,
+                      barThickness: 30,
+                    },
+                  ],
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  layout: { padding: { top: 40 } },
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                      callbacks: {
+                        label: (ctx) =>
+                          `${ctx.label}: ${ctx.parsed.toFixed(1)}%`,
+                      },
+                    },
+                    datalabels: {
+                      color: "#003366",
+                      anchor: "end",
+                      align: "center",
+                      offset: 10,
+                      backgroundColor: "rgba(173, 216, 230, 0.85)",
+                      borderColor: "rgba(100, 149, 237, 0.9)",
+                      borderWidth: 1,
+                      borderRadius: 6,
+                      font: { weight: "bold", size: 11 },
+                      padding: 4,
+                      formatter: (v) => `${v.toFixed(1)}%`,
+                    },
+                    annotation: showTarget
+                      ? {
+                          annotations: {
+                            targetLine: {
+                              type: "line",
+                              yMin: targetValue,
+                              yMax: targetValue,
+                              borderColor: "red",
+                              borderWidth: 2.5,
+                              borderDash: [6, 6],
+                              label: {
+                                display: true,
+                                content: `🎯 Target ${(
+                                  targetValue ?? 0
+                                ).toFixed(1)}%`,
+                                enabled: true,
+                                position: "end",
+                                backgroundColor: "rgba(255,255,255,0.9)",
+                                color: "red",
+                                font: { weight: "bold", size: 13 },
+                                padding: 5,
+                                yAdjust: -10,
+                              },
+                            },
+                          },
+                        }
+                      : {},
+                  },
+                  scales: {
+                    x: { grid: { display: false }, ticks: { color: "#000" } },
+                    y: {
+                      beginAtZero: true,
+                      grid: { color: "rgba(0,0,0,0.05)" },
+                      ticks: { color: "#000" },
+                    },
+                  },
+                },
+                plugins: getChartPlugins(),
+              };
+            }
+
+            if (window.chartInstances[canvasId])
+              window.chartInstances[canvasId].destroy();
+            const chartInstance = new Chart(ctx, chartConfig);
+            window.chartInstances[canvasId] = chartInstance;
+          },
+          error: function (err) {
+            if (loader) $(loader).fadeOut(200);
+            console.error("❌ Error while loading data:", err);
+          },
+        });
+      });
+    };
+
+    document.addEventListener("DOMContentLoaded", function () {
+      window.initOverviewCharts(document);
+    });
+  })();
+</script>
+<script>
+  function loadMeetingPoints(status, buttonElement) {
+    console.log("🔄 Changing filter to:", status);
+
+    // ✅ تحديث حالة الأزرار
+    document.querySelectorAll(".filter-buttons button").forEach((btn) => {
+      btn.classList.remove("active");
+    });
+    if (buttonElement) {
+      buttonElement.classList.add("active");
+    }
+
+    // ✅ إظهار loader
+    const container = document.querySelector("#meeting-section-container");
+    const tableContainer = container
+      ? container.querySelector(".table-responsive")
+      : null;
+    const buttonsContainer = container
+      ? container.querySelector(".filter-buttons")
+      : null;
+
+    if (tableContainer) {
+      const originalContent = tableContainer.innerHTML;
+      tableContainer.innerHTML =
+        '<div class="text-center p-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    }
+
+    // ✅ استخدام endpoint منفصل للحصول على قسم Meeting Points فقط
+    const params = new URLSearchParams();
+    params.set("status", status);
+
+    fetch(`?${params.toString()}`, {
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        console.log("✅ Response received:", data);
+
+        if (data.meeting_section_html && container) {
+          // ✅ استبدال محتوى الأزرار والجدول
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(
+            data.meeting_section_html,
+            "text/html"
+          );
+
+          // ✅ تحديث الأزرار
+          const newButtons = doc.querySelector(".filter-buttons");
+          if (newButtons && buttonsContainer) {
+            buttonsContainer.innerHTML = newButtons.innerHTML;
+            // ✅ إعادة ربط event handlers للأزرار الجديدة
+            buttonsContainer.querySelectorAll("button").forEach((btn) => {
+              const onclickAttr = btn.getAttribute("onclick");
+              if (onclickAttr) {
+                btn.setAttribute("onclick", onclickAttr);
+              }
+            });
+          }
+
+          // ✅ تحديث الجدول
+          const newTable = doc.querySelector(".table-responsive");
+          if (newTable && tableContainer) {
+            tableContainer.innerHTML = newTable.innerHTML;
+          }
+
+          console.log("✅ Meeting section content updated successfully");
+        } else if (data.error) {
+          console.warn("⚠️ Error in response:", data.error);
+          if (tableContainer) {
+            tableContainer.innerHTML =
+              '<div class="alert alert-warning text-center">⚠️ ' +
+              data.error +
+              "</div>";
+          }
+        } else {
+          console.warn("⚠️ Response does not contain meeting_section_html");
+          if (tableContainer) {
+            tableContainer.innerHTML =
+              '<div class="alert alert-warning text-center">⚠️ No data received. Please refresh the page.</div>';
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("❌ Error updating meeting points:", err);
+        if (tableContainer) {
+          tableContainer.innerHTML =
+            '<div class="alert alert-danger text-center">❌ An error occurred while loading meeting points. Please refresh the page.</div>';
+        }
+      });
+  }
+</script>

@@ -1,0 +1,93 @@
+{% load static %}
+<div class="filter-buttons mb-4 text-center">
+  <button
+    class="btn btn-secondary mx-1 {% if status_filter == 'all' or not status_filter %}active{% endif %}"
+    onclick="loadMeetingPoints('all', this)"
+    style="
+      font-weight: 600;
+      background-color: #9fc0e4 !important;
+      border-color: #9fc0e4 !important;
+      color: #000 !important;
+    "
+  >
+    All
+  </button>
+  <button
+    class="btn btn-warning mx-1 {% if status_filter == 'pending' %}active{% endif %}"
+    onclick="loadMeetingPoints('pending', this)"
+    style="
+      font-weight: 600;
+      background-color: #b8b8b8 !important;
+      border-color: #b8b8b8 !important;
+      color: #000 !important;
+    "
+  >
+    In Progress
+  </button>
+  <button
+    class="btn btn-success mx-1 {% if status_filter == 'done' %}active{% endif %}"
+    onclick="loadMeetingPoints('done', this)"
+    style="
+      font-weight: 600;
+      background-color: #9fc0e4 !important;
+      border-color: #9fc0e4 !important;
+      color: #000 !important;
+    "
+  >
+    Completed
+  </button>
+</div>
+<div class="table-responsive">
+  <table class="table align-middle table-hover meeting-table">
+    <thead class="table-light">
+      <tr>
+        <th>#</th>
+        <th>Description</th>
+        <th class="text-center">Status</th>
+        <th class="text-center">Created At</th>
+        <th class="text-center">Target Date</th>
+        <th class="text-center">Assigned To</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if meeting_data %} {% for point in meeting_data reversed %}
+      <tr
+        class="{% if point.status == 'Done' %}row-gray-light{% elif point.status == 'Pending' %}row-gray-dark{% endif %}"
+      >
+        <td>{{ forloop.counter }}</td>
+        <td class="fw-semibold text-secondary">{{ point.description }}</td>
+        <td class="text-center">
+          {% if point.status == 'Done' %}
+          <span class="badge bg-success px-3 py-2">Done</span>
+          {% else %}
+          <span class="badge bg-warning text-dark px-3 py-2">Pending</span>
+          {% endif %}
+        </td>
+        <td class="text-center text-muted">
+          {{ point.created_at|date:"Y-m-d" }}
+        </td>
+        <td class="text-center text-muted">
+          {{ point.target_date|date:"Y-m-d"|default:"-" }}
+        </td>
+        <td class="text-center text-muted">
+          {{ point.assigned_to|default:"-" }}
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6" class="text-center text-muted py-4">
+          <i class="bi bi-info-circle me-1"></i> No meeting points available at
+          the moment.
+        </td>
+      </tr>
+      {% endfor %} {% else %}
+      <tr>
+        <td colspan="6" class="text-center text-muted py-4">
+          <i class="bi bi-info-circle me-1"></i> No meeting points available at
+          the moment.
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>

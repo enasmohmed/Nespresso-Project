@@ -1,0 +1,1053 @@
+{% load static %} {% load sass_tags %} {% csrf_token %}
+<style>
+  .nav-tabs .nav-link {
+    background-color: #f7f9fc;
+    color: #007bff;
+    border: none;
+    transition: all 0.2s ease-in-out;
+  }
+  .nav-tabs .nav-link:hover {
+    background-color: #eaf2ff;
+  }
+  .nav-tabs .nav-link.active {
+    background-color: #9084ad;
+    color: #fff !important;
+  }
+
+  /* 🎨 تنسيق التابات بشكل احترافي */
+  #dashboard-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+
+  #dashboard-tabs button {
+    background: #e8f1fb;
+    color: #004b8d;
+    border: 1px solid #c9e0fa;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-weight: 600;
+    font-size: 15px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 75, 141, 0.1);
+  }
+
+  #dashboard-tabs button:hover {
+    background: #d4e7ff;
+    color: #003366;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 75, 141, 0.15);
+  }
+
+  #dashboard-tabs button.active {
+    background: #9084ad !important;
+    color: #ffff;
+    border-color: #9084ad !important;
+    box-shadow: 0 3px 6px rgba(0, 123, 255, 0.25);
+    transform: scale(1.03);
+    font-weight: bold;
+  }
+
+  .btn-download-excel {
+    background: #9084ad !important;
+    color: #ffff !important;
+    border-color: #9084ad !important;
+    box-shadow: 0 3px 6px rgba(0, 123, 255, 0.25);
+    transform: scale(1.03);
+    font-weight: bold;
+  }
+
+  /* 🩵 تابات أصغر على الموبايل */
+  @media (max-width: 768px) {
+    #dashboard-tabs button {
+      padding: 8px 14px;
+      font-size: 14px;
+    }
+  }
+
+  /* تغليف الـ select علشان نتحكم في الشكل */
+  .custom-select-wrapper {
+    position: relative;
+    width: 160px;
+  }
+
+  /* تصميم الـ dropdown الأساسي */
+  .custom-select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 2px solid #007fa3;
+    border-radius: 10px;
+    background-color: #fff;
+    color: #007fa3;
+    font-weight: 600;
+    font-size: 15px;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+
+  /* سهم صغير مخصص بدل السهم العادي */
+  .custom-select-wrapper::after {
+    content: "▼";
+    font-size: 12px;
+    color: #007fa3;
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    transition: transform 0.3s ease;
+  }
+
+  /* تأثير hover */
+  .custom-select:hover {
+    border-color: #0095c8;
+    box-shadow: 0 0 8px rgba(0, 127, 163, 0.3);
+  }
+
+  /* تأثير التركيز عند الضغط */
+  .custom-select:focus {
+    outline: none;
+    border-color: #0095c8;
+    box-shadow: 0 0 10px rgba(0, 127, 163, 0.4);
+  }
+
+  /* حركة السهم أثناء الفتح */
+  .custom-select:focus + .custom-select-wrapper::after {
+    transform: translateY(-50%) rotate(180deg);
+  }
+
+  /* زر رفع الملف */
+  .upload-btn-small {
+    background-color: #9fc0e4;
+    color: #000;
+    font-weight: 600;
+    padding: 7px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 13.5px;
+    box-shadow: 0 2px 6px rgba(0, 127, 163, 0.25);
+    border: none;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .upload-btn-small:hover {
+    background: linear-gradient(90deg, #009cc7, #007fa3);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 127, 163, 0.35);
+  }
+
+  .upload-btn-small i {
+    font-size: 14px;
+  }
+
+  .custom-select {
+    padding: 6px 10px;
+    border: 1.5px solid #007fa3;
+    border-radius: 6px;
+    color: #007fa3;
+    font-weight: 500;
+    font-size: 14px;
+    background-color: #fff;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .custom-select:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0, 127, 163, 0.2);
+  }
+
+  .custom-select:hover {
+    border-color: #009cc7;
+  }
+
+  .custom-select-wrapper {
+    min-width: 170px;
+  }
+
+  /* للتجاوب */
+  @media (max-width: 768px) {
+    .d-flex.flex-wrap.align-items-center.justify-content-end.gap-3.mb-4 {
+      justify-content: center !important;
+      gap: 10px;
+    }
+  }
+
+  .custom-select-wrapper {
+    min-width: 200px;
+  }
+
+  .gap-3 {
+    gap: 1rem !important; /* زيادة المسافة بين الفلاتر */
+  }
+</style>
+<!-- Container-fluid starts  -->
+<div class="container-fluid mt-5">
+  <div class="row">
+    <div class="col-md-12 mt-5">
+      <div class="card">
+        <div
+          class="card-header card-no-border pb-0"
+          style="display: flex; align-items: center; gap: 12px"
+        >
+          <!-- 🟦 اللوجو -->
+          <img
+            src="{% static 'assets/images/logo-nes.png' %}"
+            alt="Nespresso Logo"
+            style="
+              height: 48px;
+              width: auto;
+              margin-top: -15px;
+              background: #e8f1fb;
+              border-radius: 6px;
+              padding: 4px;
+              border: 2px solid #e8f1fb;
+            "
+          />
+          <!-- 🟦 العنوان والنص -->
+          <div>
+            <h4
+              style="font-size: 20px; font-weight: 800; color: #000; margin: 0"
+            >
+              Nespresso
+            </h4>
+            <p
+              class="mt-1 f-m-light"
+              style="font-size: 16px; font-weight: 400; color: gray; margin: 0"
+            >
+              All-Tabs KPI — Complete View
+            </p>
+          </div>
+        </div>
+        <div class="card-body mb-5">
+          {% if not data_is_uploaded %}
+          <!-- رسالة في أول الموقع عند عدم رفع ملف الإكسل -->
+          <div class="alert alert-info d-flex align-items-center mb-4" role="alert">
+            <span class="me-2">ℹ️</span>
+            <span><strong>Please upload the Excel file to complete and display the data.</strong></span>
+          </div>
+          <!-- ✅ أول مرة (رفع ملف Excel) -->
+          <div class="card shadow-sm p-4 border-0 text-center">
+            <h5 class="fw-bold mb-3 text-primary">
+              📊 Upload Roche KPI Excel File
+            </h5>
+            <form
+              method="post"
+              enctype="multipart/form-data"
+              class="d-inline-block"
+              id="uploadForm"
+            >
+              {% csrf_token %}
+              <input type="hidden" name="upload_code" id="hidden_upload_code" />
+              <div class="mb-3">
+                <label for="excel_file" class="form-label fw-semibold"
+                  >Select Excel File:</label
+                >
+                {{ form.excel_file }}
+              </div>
+              <button
+                type="button"
+                class="btn btn-primary px-4"
+                data-bs-toggle="modal"
+                data-bs-target="#codeModalInitial"
+              >
+                Upload & Analyze
+              </button>
+            </form>
+            <!-- 💬 مودال إدخال الكود -->
+            <div
+              class="modal fade"
+              id="codeModalInitial"
+              tabindex="-1"
+              aria-hidden="true"
+            >
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                  <form id="codeForm">
+                    <div class="modal-header">
+                      <h5 class="modal-title">Enter Upload Code</h5>
+                      <button
+                        type="button"
+                        class="btn-close"
+                        data-bs-dismiss="modal"
+                        aria-label="Close"
+                      ></button>
+                    </div>
+                    <div class="modal-body">
+                      <input
+                        type="password"
+                        id="upload_code"
+                        maxlength="4"
+                        class="form-control text-center"
+                        placeholder="****"
+                        required
+                      />
+                    </div>
+                    <div class="modal-footer">
+                      <button type="submit" class="btn btn-primary">
+                        Confirm
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <!-- ✅ حالة وجود بيانات -->
+          <div
+            class="d-flex flex-wrap align-items-center justify-content-end gap-3 mb-4"
+          >
+            <!-- اختيار الشهر -->
+            <div class="d-flex align-items-center">
+              <div class="custom-select-wrapper">
+                <select id="month-select" class="custom-select">
+                  <option value="">-- All Months --</option>
+                  {% for m in months %}
+                  <option value="{{ m }}">{{ m }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <!-- فلتر الكوارتر -->
+
+              <!-- 
+              <div class="custom-select-wrapper">
+                <select id="quarter-select" class="custom-select">
+                  <option value="">-- All Quarters --</option>
+                  <option value="Q1-2025">Q1 - 2025 (Jan - Feb - Mar)</option>
+                  <option value="Q2-2025">Q2 - 2025 (Apr - May - Jun)</option>
+                  <option value="Q3-2025">Q3 - 2025 (Jul - Aug - Sep)</option>
+                  <option value="Q4-2025">Q4 - 2025 (Oct - Nov - Dec)</option>
+                </select>
+              </div>
+              -->
+              <button id="export-excel-btn" class="btn btn-download-excel ms-3">
+                📥 Download Excel
+              </button>
+<!--              <a href="?action=clear_excel" class="btn btn-outline-secondary ms-2" title="Clear data to see upload message again">-->
+<!--                🗑️ Clear Data-->
+<!--              </a>-->
+            </div>
+            <!-- زر رفع الملف -->
+            <button id="uploadBtn" class="upload-btn-small mb-0">
+              Upload File
+            </button>
+            <input
+              type="file"
+              id="uploadExcelInput"
+              name="excel_file"
+              class="d-none"
+            />
+            <!-- مودال كود الرفع -->
+            <div
+              class="modal fade"
+              id="codeModal"
+              tabindex="-1"
+              aria-hidden="true"
+            >
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                  <form id="codeForm">
+                    <div class="modal-header">
+                      <h5 class="modal-title">Enter Upload Code</h5>
+                      <button
+                        type="button"
+                        class="btn-close"
+                        data-bs-dismiss="modal"
+                        aria-label="Close"
+                      ></button>
+                    </div>
+                    <div class="modal-body">
+                      <input
+                        type="password"
+                        id="upload_code"
+                        maxlength="4"
+                        class="form-control text-center"
+                        placeholder="****"
+                        required
+                      />
+                    </div>
+                    <div class="modal-footer">
+                      <button type="submit" class="btn btn-primary">
+                        Confirm
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% if data_is_uploaded %} 
+          {% include 'components/ui-kits/alert/components/alert.html' %} 
+          {% endif %}
+          <div id="filter-message"></div>
+          <!-- 🔹 تبويبات علوية بشكل أنيق -->
+          <!-- 🔹 تبويبات علوية -->
+          <ul
+            class="nav nav-tabs mt-4 justify-content-start"
+            id="dashboard-tabs"
+            role="tablist"
+          >
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" data-tab="all">All-in-One</button>
+            </li>
+            {% for tab in excel_tabs %} {% if tab.display|lower != "all" %}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-tab="{{ tab.original }}">
+                {{ tab.display }}
+              </button>
+            </li>
+            {% endif %} {% endfor %}
+          </ul>
+          <!-- 🔹 محتوى التابات -->
+          <div id="tab-content" class="card p-4 shadow-sm bg-white mt-3">
+            {% if active_tab == "all" %}
+            {% include 'components/ui-kits/tab-bootstrap/components/dashboard-overview.html' %}
+            {% elif active_tab == "overview" %}
+            {% include 'general/widget/general-widget/components/top.html' %}
+            {% elif active_tab == "dashboard" %}
+            {% include 'container-fluid-dashboard.html' %}
+            {% else %} {% if raw_tab_data %}
+            {% include "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html" with tab=raw_tab_data %}
+            {% else %}
+            <p class="text-muted text-center mb-0">
+              No data available for this tab.
+            </p>
+            {% endif %} {% endif %}
+          </div>
+          <!-- 🔹 محتوى التابات -->
+          <div id="cards-section" class="row mt-3"></div>
+          <div
+            id="quarter-loader"
+            class="text-center my-4"
+            style="display: none"
+          >
+            <div
+              class="spinner-border text-primary"
+              role="status"
+              style="width: 3rem; height: 3rem"
+            >
+              <span class="visually-hidden">Loading...</span>
+            </div>
+          </div>
+          <div id="data-container"></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Container-fluid Ends-->
+{% block scriptcontent %}
+<!-- jQuery -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<!-- Bootstrap JS (Bundle includes Popper) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  $(document).ready(function () {
+    const uploadBtn = $('#uploadBtn');
+    const uploadInput = $('#uploadExcelInput');
+    const codeModalEl = document.getElementById('codeModal');
+    const codeModal = new bootstrap.Modal(codeModalEl);
+
+    // ✅ لما يضغط المستخدم على زر الرفع
+    uploadBtn.on('click', function () {
+      uploadInput.click();
+    });
+
+    // ✅ لما يختار ملف
+    uploadInput.on('change', function () {
+      if (this.files.length > 0) {
+        codeModal.show();
+      }
+    });
+
+    // ✅ عند تأكيد كود الرفع
+    $('#codeForm').on('submit', function (e) {
+      e.preventDefault(); // منع إعادة تحميل الصفحة
+      const code = $('#upload_code').val().trim();
+
+      if (!code) {
+        alert('⚠️ Please enter the code first');
+        return;
+      }
+
+      // ✅ أغلق المودال بعد إدخال الكود
+      codeModal.hide();
+
+      // ✅ استرجاع الملف المختار
+      const file = uploadInput[0].files[0];
+      if (!file) {
+        alert('⚠️ No file selected');
+        return;
+      }
+
+      // ✅ عرض في الكونسول للتجربة
+      console.log('📁 Selected file:', file.name);
+      console.log('🔑 Entered code:', code);
+
+      // ✅ مثال لرفع الملف عبر AJAX
+      const formData = new FormData();
+      formData.append('excel_file', file);
+      formData.append('upload_code', code);
+
+      fetch('{% url 'dashboard:upload_excel' %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+        .then(res => {
+          if (!res.ok) {
+            return res.json().then(err => Promise.reject(err));
+          }
+          return res.json();
+        })
+        .then(data => {
+          console.log('✅ Upload succeeded:', data);
+          if (data.error) {
+            alert(data.error);
+          } else {
+            alert(data.message || '✅ File uploaded successfully!');
+            // Reload the page to show the new data
+            window.location.reload();
+          }
+        })
+        .catch(err => {
+          console.error('❌ Upload error:', err);
+          const errorMsg = err.error || err.message || '❌ An error occurred during upload.';
+          alert(errorMsg);
+        });
+    });
+  });
+</script>
+<script>
+  $(document).ready(function () {
+    console.log("🚀 Page is ready");
+
+    const csrftoken = document.querySelector(
+      "[name=csrfmiddlewaretoken]",
+    ).value;
+    let selectedTab = "all";
+    let selectedQuarter = "";
+    const TAB_CACHE_PREFIX = "dashboard_tab_cache";
+    const TAB_CACHE_VERSION = "v7_table_style"; // زيدي الرقم عند تحديث شكل الجداول
+    const TAB_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+    function buildTabCacheKey(tab, month, quarter) {
+      const safeTab = (tab || "all").toLowerCase();
+      const safeMonth = month && month !== "" ? month : "all";
+      const safeQuarter = quarter && quarter !== "" ? quarter : "all";
+      return `${TAB_CACHE_PREFIX}:${TAB_CACHE_VERSION}:${safeTab}:${safeMonth}:${safeQuarter}`;
+    }
+
+    function readTabCache(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed.timestamp || !parsed.payload) {
+          localStorage.removeItem(key);
+          return null;
+        }
+        const isExpired = Date.now() - parsed.timestamp > TAB_CACHE_TTL_MS;
+        if (isExpired) {
+          localStorage.removeItem(key);
+          return null;
+        }
+        return parsed.payload;
+      } catch (err) {
+        console.warn("⚠️ Failed to read tab cache:", err);
+        return null;
+      }
+    }
+
+    function writeTabCache(key, payload) {
+      try {
+        localStorage.setItem(
+          key,
+          JSON.stringify({ timestamp: Date.now(), payload }),
+        );
+      } catch (err) {
+        console.warn("⚠️ Failed to write tab cache:", err);
+      }
+    }
+
+    $("#dashboard-tabs button[data-tab='all']").addClass("active");
+    $("#cards-section").show();
+
+    // 🔹 دالة عرض الكروت (Overview)
+    function renderCardsHTML(tabCards) {
+      return tabCards
+        .map((tab) => {
+          const targetHtml =
+            tab.target_pct !== null && tab.target_pct !== undefined
+              ? `<p class="text-danger mb-0" style="opacity:0.6;"><strong>Target:</strong> ${tab.target_pct}%</p>`
+              : "";
+          return `
+      <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100 border-primary" style="border-width:2px; border-radius:12px;">
+          <div class="card-header text-center fw-bold bg-light" style="color:#000; font-size:18px;">
+            ${tab.name}
+          </div>
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <p class="mb-0" style="color: #9084ad !important;"><strong>Hit:</strong> ${tab.hit_pct}%</p>
+              ${targetHtml}
+            </div>
+            <div class="progress" style="height:20px; border-radius:10px; overflow:hidden;">
+              <div class="progress-bar" role="progressbar" style="width: ${tab.hit_pct}%; background-color: #9fc0e4;" aria-valuenow="${tab.hit_pct}" aria-valuemin="0" aria-valuemax="100">
+                ${tab.hit_pct}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+        })
+        .join("");
+    }
+
+    // 🔹 تحميل بيانات التاب المحدد
+    function reinitializeScripts(container) {
+      if (!container) return;
+      const scripts = container.querySelectorAll("script");
+      scripts.forEach((oldScript) => {
+        const newScript = document.createElement("script");
+        Array.from(oldScript.attributes).forEach((attr) =>
+          newScript.setAttribute(attr.name, attr.value),
+        );
+        newScript.text = oldScript.textContent;
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
+    }
+
+    function attachInnerTabListeners(container) {
+      if (!container) return;
+      const tabTriggers = container.querySelectorAll(
+        'button[data-bs-toggle="tab"]',
+      );
+      tabTriggers.forEach((tab) => {
+        tab.addEventListener("shown.bs.tab", function (event) {
+          const targetId = event.target.getAttribute("data-bs-target");
+          if (!targetId) return;
+          const activePane = document.querySelector(targetId);
+          if (!activePane) return;
+
+          const canvas = activePane.querySelector("canvas");
+          if (canvas && window.chartInstances) {
+            const chartInstance = window.chartInstances[canvas.id];
+            if (chartInstance) {
+              chartInstance.resize();
+              chartInstance.update();
+            }
+          }
+        });
+      });
+    }
+
+    function refreshVisibleCharts(container) {
+      if (!container) return;
+      let attempts = 0;
+      const canvases = () => container.querySelectorAll("canvas");
+
+      const performRefresh = () => {
+        if (!window.chartInstances) return;
+        let hasRefreshed = false;
+        canvases().forEach((canvas) => {
+          const chartInstance = window.chartInstances[canvas.id];
+          if (chartInstance) {
+            chartInstance.resize();
+            chartInstance.update("none");
+            hasRefreshed = true;
+          }
+        });
+        attempts += 1;
+        if (!hasRefreshed && attempts < 5) {
+          setTimeout(performRefresh, 250);
+        }
+      };
+
+      requestAnimationFrame(performRefresh);
+    }
+
+    function queueInitialChartRefresh(container) {
+      if (!container) return;
+      refreshVisibleCharts(container);
+      setTimeout(() => refreshVisibleCharts(container), 400);
+      setTimeout(() => refreshVisibleCharts(container), 900);
+      setTimeout(() => refreshVisibleCharts(container), 1500);
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 1600);
+    }
+
+    function initInboundShipmentsDataTable(container) {
+      if (!container) return;
+      const table = container.querySelector("#inbound-shipments-detail-table");
+      if (!table || !window.$ || !$.fn.DataTable) return;
+      try {
+        if (!$.fn.DataTable.isDataTable(table)) {
+          $(table).DataTable();
+        }
+      } catch (e) {
+        console.warn("DataTable init:", e);
+      }
+    }
+
+    document.addEventListener("chart:rendered", function () {
+      queueInitialChartRefresh(document.getElementById("tab-content"));
+    });
+
+    function handleTabResponse(data, options = {}) {
+      const fromCache = options.fromCache || false;
+      if (!fromCache) {
+        console.log("📦 [DATA RECEIVED]", data);
+      } else {
+        console.log("⚡ Rendering cached data for tab:", selectedTab);
+      }
+
+      $("#quarter-loader").hide();
+
+      if (data.error) {
+        $("#tab-content").html(
+          `<div class='alert alert-warning text-center'>${data.error}</div>`,
+        );
+        $("#cards-section").html("");
+        return;
+      }
+
+      if (selectedTab.toLowerCase() === "overview") {
+        if (data.tab_cards && data.tab_cards.length > 0) {
+          $("#cards-section")
+            .html(`<div class="row">${renderCardsHTML(data.tab_cards)}</div>`)
+            .show();
+        } else {
+          $("#cards-section")
+            .html("<p class='text-muted text-center'>⚠️ No data available.</p>")
+            .show();
+        }
+        $("#tab-content").html(
+          "<div class='text-center text-muted'>📊 Overview Tabs</div>",
+        );
+        return;
+      }
+
+      if (selectedTab.toLowerCase() === "all") {
+        const tabContent = $("#tab-content");
+        if (data.detail_html && data.detail_html.trim() !== "") {
+          tabContent.html(data.detail_html).show();
+          reinitializeScripts(tabContent[0]);
+          attachInnerTabListeners(tabContent[0]);
+
+          // ✅ تحميل الشارتات مع delay أطول لضمان تحميل DOM بالكامل
+          setTimeout(() => {
+            if (window.initOverviewCharts) {
+              window.initOverviewCharts("#tab-content");
+            }
+            queueInitialChartRefresh(tabContent[0]);
+          }, 500);
+
+          // ✅ محاولة إضافية بعد delay أطول
+          setTimeout(() => {
+            queueInitialChartRefresh(tabContent[0]);
+            window.dispatchEvent(new Event("resize"));
+          }, 1500);
+        } else {
+          tabContent
+            .html("<p class='text-muted text-center'>⚠️ No data available.</p>")
+            .show();
+        }
+        return;
+      }
+
+      if (data.detail_html && data.detail_html.trim() !== "") {
+        $("#tab-content").html(data.detail_html).show();
+        reinitializeScripts(document.getElementById("tab-content"));
+        attachInnerTabListeners(document.getElementById("tab-content"));
+        queueInitialChartRefresh(document.getElementById("tab-content"));
+        initInboundShipmentsDataTable(document.getElementById("tab-content"));
+        if (selectedTab && selectedTab.toLowerCase() === "dashboard") {
+          setTimeout(function () {
+            if (window.initInboundPendingDonut) {
+              window.initInboundPendingDonut();
+              window.dispatchEvent(new Event("resize"));
+            }
+          }, 100);
+          setTimeout(function () {
+            if (window.initInboundPendingDonut) {
+              window.initInboundPendingDonut();
+              window.dispatchEvent(new Event("resize"));
+            }
+          }, 500);
+          setTimeout(function () {
+            if (window.initInboundPendingDonut) {
+              window.initInboundPendingDonut();
+              window.dispatchEvent(new Event("resize"));
+            }
+          }, 1200);
+          if (window.initPodsComplianceChart) {
+            setTimeout(window.initPodsComplianceChart, 100);
+            setTimeout(window.initPodsComplianceChart, 500);
+          }
+          if (window.initPodsStatusDonut) {
+            setTimeout(window.initPodsStatusDonut, 100);
+            setTimeout(window.initPodsStatusDonut, 500);
+          }
+          if (window.initReturnsComplianceChart) {
+            setTimeout(window.initReturnsComplianceChart, 100);
+            setTimeout(window.initReturnsComplianceChart, 500);
+          }
+          if (window.initInventoryCapacityChart) {
+            setTimeout(window.initInventoryCapacityChart, 100);
+            setTimeout(window.initInventoryCapacityChart, 500);
+          }
+        }
+        setTimeout(function () {
+          initInboundShipmentsDataTable(document.getElementById("tab-content"));
+        }, 300);
+        setTimeout(function () {
+          initInboundShipmentsDataTable(document.getElementById("tab-content"));
+        }, 500);
+        setTimeout(function () {
+          initInboundShipmentsDataTable(document.getElementById("tab-content"));
+        }, 1000);
+      } else {
+        $("#tab-content").html(
+          "<div class='text-center text-muted'>No data available to display.</div>",
+        );
+      }
+    }
+
+    window.getSelectedQuarter = function () {
+      return selectedQuarter;
+    };
+
+    window.getSelectedMonth = function () {
+      return $("#month-select").val() || "";
+    };
+
+    function loadTabData() {
+      const month = $("#month-select").val() || "";
+      const quarter = selectedQuarter || "";
+      const cacheKey = buildTabCacheKey(selectedTab, month, quarter);
+      const cachedPayload = readTabCache(cacheKey);
+      const skipLoader = !!cachedPayload;
+
+      if (cachedPayload) {
+        handleTabResponse(cachedPayload, { fromCache: true });
+      }
+
+      $.ajax({
+        url: "{% url 'dashboard:upload_excel' %}",
+        method: "GET",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        data: { tab: selectedTab, month: month, quarter: quarter },
+        beforeSend: function () {
+          if (skipLoader) return;
+          if (quarter) {
+            $("#quarter-loader").show();
+          }
+          $("#tab-content").html(
+            "<div class='text-center p-3 text-muted'>⏳ Loading data...</div>",
+          );
+        },
+        success: function (data) {
+          writeTabCache(cacheKey, data);
+          handleTabResponse(data);
+        },
+        error: function (err) {
+          $("#quarter-loader").hide();
+          console.error("❌ Error while loading data:", err);
+          let msg = "⚠️ An error occurred while loading data.";
+          try {
+            const resp = err.responseJSON;
+            if (resp && resp.error) msg = resp.error;
+          } catch (e) {}
+          $("#tab-content").html(
+            "<div class='alert alert-danger text-center'>" + msg + "</div>",
+          );
+        },
+      });
+    }
+
+    window.loadTabData = loadTabData;
+    window.reinitializeScripts = reinitializeScripts;
+
+    // 🔹 التعامل مع ضغط التاب
+    $("#dashboard-tabs").on("click", "button", function () {
+      selectedTab = $(this).data("tab");
+      $("#dashboard-tabs button").removeClass("active");
+      $(this).addClass("active");
+
+      // 🧹 تنظيف المحتوى القديم قبل تحميل الجديد
+      $("#tab-content").empty();
+      $("#cards-section").empty().hide();
+
+      if (selectedTab.toLowerCase() === "all") {
+        $("#cards-section").show();
+      }
+
+      loadTabData();
+    });
+
+    $("#quarter-select").on("change", function () {
+      selectedQuarter = this.value || "";
+      if (selectedQuarter) {
+        $("#month-select").val("");
+      }
+      loadTabData();
+    });
+
+    // 🔹 عند تغيير الشهر
+    $("#month-select").on("change", function () {
+      if (selectedQuarter) {
+        selectedQuarter = "";
+        $("#quarter-select").val("");
+      }
+      // نجيب اسم التاب الحالي
+      selectedTab = $(".nav-link.active").data("tab") || "overview";
+      loadTabData();
+    });
+
+    // 🔹 أول تحميل
+    loadTabData();
+  });
+
+  async function loadTab(tabName) {
+    const cacheKey = `tab_${tabName}`;
+    const cached = localStorage.getItem(cacheKey);
+
+    if (cached) {
+      renderTab(JSON.parse(cached));
+      console.log("✅ Loaded from local cache:", tabName);
+      return;
+    }
+
+    const response = await fetch(`/your-url?tab=${tabName}`, {
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    const data = await response.json();
+
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+    renderTab(data);
+  }
+</script>
+<!-- Charts Tabs -->
+<script>
+  function loadChart(tabName, chartId) {
+    const ctx = document.getElementById(chartId)?.getContext("2d");
+    if (!ctx) return console.warn("⚠️ Canvas element not found:", chartId);
+    $("#tab-content").empty();
+    $("#cards-section").empty();
+
+    $.ajax({
+      url: "{% url 'dashboard:upload_excel' %}",
+      method: "GET",
+      data: { tab: tabName },
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      success: function (res) {
+        if (!res.chart_data || !res.chart_data.length) {
+          console.warn("⚠️ No chart data available:", tabName);
+          return;
+        }
+
+        if (typeof ChartDataLabels !== "undefined")
+          Chart.register(ChartDataLabels);
+        if (window["chartjs-plugin-annotation"])
+          Chart.register(window["chartjs-plugin-annotation"]);
+
+        const chartData = res.chart_data.map((kpi) => {
+          let type = (kpi.type || "").toLowerCase();
+          if (type === "column") type = "bar";
+          if (kpi.name?.toLowerCase().includes("target")) type = "line";
+          return { ...kpi, type };
+        });
+
+        const labels = chartData[0]?.dataPoints.map((dp) => dp.label) || [];
+        const datasets = chartData.map((kpi) => ({
+          label: kpi.name,
+          data: kpi.dataPoints.map((dp) => Number(dp.y)),
+          type: kpi.type || "bar",
+          backgroundColor: kpi.color || "#36a2eb",
+          borderRadius: 6,
+        }));
+
+        new Chart(ctx, {
+          data: { labels, datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { position: "top" },
+              datalabels: {
+                display: true,
+                color: "#000",
+                formatter: (v) => v + "%",
+                anchor: "end",
+                align: "top",
+              },
+            },
+            scales: {
+              y: { beginAtZero: true, ticks: { callback: (v) => v + "%" } },
+            },
+          },
+        });
+      },
+      error: function (err) {
+        console.error("❌ Error while loading chart:", err);
+      },
+    });
+  }
+</script>
+<script>
+  document
+    .getElementById("month-select")
+    .addEventListener("change", function () {
+      const selectedMonth = this.value;
+      const container = document.getElementById("data-container");
+
+      if (!selectedMonth) {
+        container.innerHTML = "";
+        return;
+      }
+
+      fetch("{% url 'dashboard:upload_excel' %}?month=" + selectedMonth, {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.error) {
+            container.innerHTML = `<p class="text-danger">${data.error}</p>`;
+            return;
+          }
+          container.innerHTML = data.html;
+        })
+        .catch((err) => console.error("❌ Fetch Month Error:", err));
+    });
+</script>
+<script>
+  (function () {
+    var btn = document.getElementById("export-excel-btn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var monthEl = document.getElementById("month-select");
+      var month = (monthEl && monthEl.value) ? monthEl.value : "";
+      var params = new URLSearchParams(window.location.search);
+      params.set("action", "export_excel");
+      if (month) params.set("month", month);
+      var url = window.location.pathname + "?" + params.toString();
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  })();
+</script>
+
+{% endblock %}

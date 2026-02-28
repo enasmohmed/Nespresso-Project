@@ -1,0 +1,78 @@
+{% load static %}
+{% load sass_tags %}
+{% block css %}
+    <style>
+/* ✨ تأثير دخول ناعم */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade {
+  animation: fadeIn 0.6s ease-in-out;
+}
+
+/* عند تمرير الماوس — لمعان خفيف */
+.alert:hover {
+  background: linear-gradient(90deg, rgba(0,127,163,0.05), rgba(0,127,163,0.1));
+  transition: 0.3s ease-in-out;
+}
+    </style>
+{% endblock css %}
+<!-- Container-fluid starts-->
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card border-0 shadow-none">
+                <div class="card-body p-0">
+                    <div class="alert alert-dismissible fade show d-flex align-items-center w-100"
+                         role="alert"
+                         style="border: 2px solid #9fc0e4;
+                                background: transparent;
+                                color: #9fc0e4;
+                                box-shadow: none;
+                                border-radius: 10px;
+                                margin: 0;
+                                padding: 15px 20px;
+                                justify-content: center">
+                        <div class="d-flex align-items-center"
+                             style="gap: 10px;
+                                    flex-wrap: nowrap">
+                            <i class="mt-1"
+                               data-feather="file-text"
+                               style="color: #9fc0e4;
+                                      flex-shrink: 0;
+                                      width: 18px;
+                                      height: 18px;
+                                      top: 16px">
+                            </i>
+                            <p class="mb-0 fw-semibold"
+                               style="font-size: 16px;
+                                      white-space: nowrap">
+                                The latest <strong>Excel file</strong> has been automatically loaded.
+                            </p>
+                        </div>
+                        <button class="btn-close ms-3"
+                                type="button"
+                                data-bs-dismiss="alert"
+                                aria-label="Close"
+                                style="filter: invert(41%) sepia(95%) saturate(378%) hue-rotate(161deg) brightness(92%) contrast(90%)">
+                        </button>
+                    </div>
+                    {% if dashboard_missing_data %}
+                    <div class="alert alert-warning alert-dismissible fade show mt-2 mb-0" role="alert">
+                        <strong>Please upload the Excel file again (use &quot;Upload File&quot; above) to complete displaying the rest of the data.</strong>
+                        <span class="d-block mt-2 small">The following section(s) are showing zero (default) — data missing:</span>
+                        <ul class="mb-0 mt-1 small">
+                            {% for item in dashboard_missing_data %}
+                            <li><strong>{{ item.section }}</strong>: {{ item.cards|join:", " }}</li>
+                            {% endfor %}
+                        </ul>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Container-fluid Ends-->

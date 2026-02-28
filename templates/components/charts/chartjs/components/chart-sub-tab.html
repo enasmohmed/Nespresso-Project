@@ -1,0 +1,12 @@
+{% load static %}
+{% load sass_tags %}
+{% if tab.chart_data %}
+    {% for chart in tab.chart_data %}
+        {% if chart.related_table|lower|trim == sub.title|lower|trim %}
+            <div class="table-card">
+                <h6 class="text-center text-secondary mb-2">{{ chart.title }}</h6>
+                {% include 'components/charts/chartjs/components/chart-excel-sheet.html' with canvas_id="chart-{{ chart.title|slugify }}" %}
+            </div>
+        {% endif %}
+    {% endfor %}
+{% endif %}

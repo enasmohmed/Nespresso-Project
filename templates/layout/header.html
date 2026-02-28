@@ -1,0 +1,25 @@
+{% load static %}
+{% load sass_tags %}
+<!-- Page Header Start-->
+<div class="page-header"
+     style="box-shadow: none !important;
+            width: 100% !important;
+            margin-left: 0">
+    <div class="header-wrapper d-flex flex-wrap justify-content-center align-items-center text-center"
+         style="padding: 10px 0">
+        <!-- 🟦 اللوجو والعنوان في منتصف الصفحة -->
+        <div class="d-flex align-items-center justify-content-center gap-1 flex-wrap">
+            <!-- 🟥 لوجو الشركة -->
+            <img src="{% static 'assets/images/tamer_logistics_logo.png' %}"
+                 alt="tamer Logo"
+                 style="max-height: 55px;
+                        margin-right: 0px">
+            <!-- 🟦 النص -->
+            <div class="text-start" style="margin-top: 14px;margin-right: 5px;">
+                <h3 class="mb-0 fw-bold" style="color:#000 !important;font-size: 30px;">TAMER 3PL</h3>
+                <h6 class="text-muted ">{{ uploaded_month }}</h6>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Page Header Ends -->

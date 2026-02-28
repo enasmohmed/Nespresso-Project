@@ -1,0 +1,14 @@
+{% load static %}
+{% load sass_tags %}
+<div class="quarter-result">
+    <h5>Quarter: {{ quarter }} ({{ months }})</h5>
+    <p>
+        Total Shipments: {{ total_shipments }} | Missed: {{ miss_count }} | Valid:
+        {{ valid_shipments }}
+    </p>
+    <div class="table-responsive">{{ dedup_html|safe }}</div>
+    {% if miss_html %}
+        <h6 class="text-danger">Missed Shipments</h6>
+        <div class="table-responsive">{{ miss_html|safe }}</div>
+    {% endif %}
+</div>

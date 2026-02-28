@@ -1,0 +1,235 @@
+{% load static %}
+<style>
+.table-success { background-color: #d4edda !important; }
+.table-warning { background-color: #fff3cd !important; }
+.table-secondary { background-color: #f8f9fa !important; }
+.highlight-row {
+  animation: fadeHighlight 1.5s ease-in-out;
+}
+@keyframes fadeHighlight {
+  0% { background-color: #cde7ff; }
+  100% { background-color: inherit; }
+}
+</style>
+
+
+<div class="meeting" style="background-color: #24455e1f; padding: 50px 0;">
+    <div class="container">
+        <h3 class="mb-3 text-center" style="color: #007fa3; font-size: 24px;">Meeting Points & Actions</h3>
+        <!-- ✅ Add new point -->
+        <form id="meeting-form" class="mb-4">
+            {% csrf_token %}
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="description"
+                           class="form-label fw-semibold"
+                           style="color:#007fa3">Meeting Point</label>
+                    <input type="text"
+                           class="form-control bg-white"
+                           id="description"
+                           name="description"
+                           placeholder="Enter meeting point details"
+                           required>
+                </div>
+                <div class="col-md-3">
+                    <label for="target_date"
+                           class="form-label fw-semibold"
+                           style="color:#007fa3">Target Date</label>
+                    <input type="date"
+                           class="form-control bg-white"
+                           id="target_date"
+                           name="target_date">
+                </div>
+                <div class="col-md-3">
+                    <label for="assigned_to"
+                           class="form-label fw-semibold"
+                           style="color:#007fa3">Assigned To</label>
+                    <input type="text"
+                           class="form-control bg-white"
+                           id="assigned_to"
+                           name="assigned_to"
+                           placeholder="Enter assignee name">
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button type="submit"
+                            class="btn text-white fw-semibold"
+                            style="background-color: #9fc0e4">Save</button>
+                </div>
+            </div>
+        </form>
+        <!-- ✅ Counter -->
+        <h5 class="text-center text-muted mb-3" id="meeting-counter">
+            ✅ <span id="done-count">{{ done_count }}</span> out of <span id="total-count">{{ total_count }}</span> completed
+        </h5>
+        <!-- ✅ Filter buttons -->
+        <div class="filter-buttons mb-3 text-center">
+            <button onclick="loadMeetingPoints('all')"
+                    class="btn btn-secondary mx-1"
+                    style="font-weight: 600;
+                           background-color: #9fc0e4 !important;
+                           border-color: #9fc0e4 !important;
+                           color: #000 !important">All</button>
+            <button onclick="loadMeetingPoints('done')"
+                    class="btn btn-success mx-1"
+                    style="font-weight: 600;
+                           background-color: #b8b8b8 !important;
+                           border-color: #b8b8b8 !important;
+                           color: #000 !important">Completed</button>
+            <button onclick="loadMeetingPoints('pending')"
+                    class="btn btn-warning mx-1"
+                    style="font-weight: 600;
+                           background-color: #9fc0e4 !important;
+                           border-color: #9fc0e4 !important;
+                           color: #000 !important">In Progress</button>
+        </div>
+        <!-- ✅ Table -->
+        <div id="meeting-points-container">
+            <table class="table table-striped" id="meeting-table">
+                <thead class="" style="background-color: #9fc0e4;color:#000;">
+                    <tr>
+                        <th>Description</th>
+                        <th>Status</th>
+                        <th>Created At</th>
+                        <th>Target Date</th>
+                        <th>Assigned To</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="meeting-body">
+                    {% for point in meeting_points reversed %}
+                        <tr data-id="{{ point.id }}">
+                            <td>{{ point.description }}</td>
+                            <td class="status">
+                                {% if point.is_done %}
+                                    <span class="badge bg-success">Done</span>
+                                {% else %}
+                                    <span class="badge bg-warning text-dark">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ point.created_at|date:"Y-m-d" }}</td>
+                            <td>{{ point.target_date|date:"Y-m-d" }}</td>
+                            <td>
+                                {% if point.assigned_to %}
+                                    {{ point.assigned_to }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="checkbox"
+                                       class="toggle-done"
+                                       {% if point.is_done %}checked{% endif %}>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+$(document).ready(function () {
+  const doneCountEl = $("#done-count");
+  const totalCountEl = $("#total-count");
+  const meetingBody = $("#meeting-body");
+
+  function updateCounter() {
+    const total = meetingBody.find("tr").length;
+    const done = meetingBody.find("input.toggle-done:checked").length;
+    totalCountEl.text(total);
+    doneCountEl.text(done);
+  }
+
+  // ✅ Add new point at the bottom
+  $("#meeting-form").on("submit", async function (e) {
+    e.preventDefault();
+
+    const description = $("#description").val().trim();
+    const target_date = $("#target_date").val().trim();
+    if (!description) return alert("Please enter a description");
+
+    const csrfToken = $('[name=csrfmiddlewaretoken]').val();
+
+    const response = await fetch("{% url 'dashboard:meeting_points' %}", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-CSRFToken": csrfToken,
+      },
+      body: new URLSearchParams({
+        description: description,
+        target_date: target_date,
+        assigned_to: $("#assigned_to").val().trim()
+      }),
+    });
+
+    if (!response.ok) return alert("Failed to save");
+
+    const data = await response.json();
+    const checked = data.is_done ? "checked" : "";
+    const statusText = data.is_done
+      ? '<span class="badge bg-success">Done</span>'
+      : '<span class="badge bg-warning text-dark">Pending</span>';
+
+    const newRow = $(`
+      <tr data-id="${data.id}" class="highlight-row">
+        <td>${data.description}</td>
+        <td class="status">${statusText}</td>
+        <td>${data.created_at}</td>
+        <td>${data.target_date || '-'}</td>
+        <td>${data.assigned_to || '-'}</td>
+        <td><input type="checkbox" class="toggle-done" ${checked}></td>
+      </tr>
+    `);
+
+
+    meetingBody.append(newRow);
+    $("#description").val("");
+    $("#target_date").val("");
+    $("#assigned_to").val("");
+    updateCounter();
+  });
+
+  // ✅ Toggle Done/Pending
+  meetingBody.on("change", ".toggle-done", async function () {
+    const row = $(this).closest("tr");
+    const id = row.data("id");
+    const spanStatus = row.find(".status");
+
+    const res = await fetch(`/toggle-meeting-point/${id}/`, {
+      method: "POST",
+      headers: { "X-CSRFToken": $('[name=csrfmiddlewaretoken]').val() },
+    });
+
+    const data = await res.json();
+    const badge = data.is_done
+      ? '<span class="badge bg-success">Done</span>'
+      : '<span class="badge bg-warning text-dark">Pending</span>';
+    spanStatus.html(badge);
+    updateCounter();
+  });
+
+  updateCounter();
+});
+
+// ✅ Filter points inside the same table (no duplication)
+function loadMeetingPoints(status = 'all') {
+  const url = `{% url 'dashboard:upload_excel' %}?status=${status}`;
+
+  fetch(url)
+    .then(response => {
+      if (!response.ok) throw new Error("❌ Network response was not ok");
+      return response.json();
+    })
+    .then(data => {
+      $("#meeting-body").html($(data.detail_html).find("tbody").html());
+
+      if (data.done_count !== undefined && data.total_count !== undefined) {
+        $("#done-count").text(data.done_count);
+        $("#total-count").text(data.total_count);
+      }
+    })
+    .catch(error => console.error("❌ Fetch error:", error));
+}
+</script>

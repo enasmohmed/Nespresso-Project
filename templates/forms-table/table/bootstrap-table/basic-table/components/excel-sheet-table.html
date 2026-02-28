@@ -1,0 +1,1897 @@
+{% load static %} {% load custom_tags %} {% load sass_tags %}
+
+<style>
+  .table-top {
+    margin-top: 3rem !important;
+  }
+  .table-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.5rem;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1.5rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .table-card .table-responsive {
+    flex: 1;
+  }
+
+  .custom-scrollbar {
+    max-height: 500px;
+    overflow-y: auto;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+  .table-responsive {
+    padding: 1.5rem;
+    background-color: #fff;
+  }
+
+  .badge:empty {
+    display: block !important;
+  }
+
+  /* KPI cards row — مثل Roche Monthly Business Review */
+  .kpi-cards-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+ .kpi-card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 34px 22px;
+  height: 100%;
+  box-shadow: 0 10px 28px rgba(0,0,0,.08);
+  transition: all .25s ease;
+}
+
+.kpi-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 16px 36px rgba(0,0,0,.12);
+}
+
+.kpi-icon {
+  font-size: 44px;
+  margin-bottom: 16px;
+}
+
+.kpi-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #6c757d;
+  margin-bottom: 6px;
+}
+
+.kpi-value {
+  font-size: 36px;
+  font-weight: 800;
+}
+
+.kpi-card.success {
+  border-top: 5px solid #198754;
+}
+
+.kpi-card.danger {
+  border-top: 5px solid #dc3545;
+}
+
+.form-select {
+  border-radius: 10px;
+}
+
+.card {
+  border-radius: 16px;
+}
+
+.filter-row .form-select {
+  min-height: 40px;
+  font-size: 0.95rem;
+}
+
+.filter-row .form-label {
+  white-space: nowrap;
+}
+
+</style>
+
+
+{% if not tab.outbound_html and not tab.inbound_html and tab.name|lower != 'return & refusal' and tab.name|lower != 'expiry' and tab.name|lower != 'pods update' and tab.name|lower != 'outbound shipments' and tab.name|lower != 'capacity + expiry' %}
+{% if tab.name|lower == 'inbound' %}
+{# كروت Inbound من tab.stats (الـ view بيمرّرها مع tab_data) #}
+<div class="container-fluid px-0">
+  <div class="row g-4 mx-0">
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center">
+        <div class="kpi-icon text-primary"><i class="bi bi-truck"></i></div>
+        <div class="kpi-title">Total Shipments</div>
+        <div class="kpi-value">{% if tab.stats %}{{ tab.stats.total|default:0 }}{% else %}0{% endif %}</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center success">
+        <div class="kpi-icon text-success"><i class="bi bi-check-circle-fill"></i></div>
+        <div class="kpi-title">Successful Shipments</div>
+        <div class="kpi-value">{% if tab.stats %}{{ tab.stats.hit_pct|default:0|floatformat:0 }}{% else %}0{% endif %}%</div>
+        <small class="text-success">Target 99%</small>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center danger">
+        <div class="kpi-icon text-danger"><i class="bi bi-x-circle-fill"></i></div>
+        <div class="kpi-title">Failed Shipments</div>
+        <div class="kpi-value">{% if tab.stats %}{{ tab.stats.miss|default:0 }}{% else %}0{% endif %}</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center">
+        <div class="kpi-icon text-secondary"><i class="bi bi-bullseye"></i></div>
+        <div class="kpi-title">Target</div>
+        <div class="kpi-value">≥ 99%</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% else %}
+{% with kpi_table=tab.sub_tables.0.data %}
+<div class="container-fluid px-0">
+  <div class="row g-4 mx-0">
+
+    {# Total Shipments #}
+    {% for row in kpi_table %}
+    {% if row.KPI == 'Total Shipments' %}
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center">
+        <div class="kpi-icon text-primary">
+          <i class="bi bi-truck"></i>
+        </div>
+        <div class="kpi-title">Total Shipments</div>
+        <div class="kpi-value">{{ row.2025|default:0 }}</div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+
+    {# Hit % #}
+    {% for row in kpi_table %}
+    {% if row.KPI == 'Hit %' %}
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center success">
+        <div class="kpi-icon text-success">
+          <i class="bi bi-check-circle-fill"></i>
+        </div>
+        <div class="kpi-title">Successful Shipments</div>
+        <div class="kpi-value">{{ row.2025|floatformat:0 }}%</div>
+        <small class="text-success">Target 99%</small>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+
+    {# Failed Shipments — دائمًا تظهر، وقيمتها من Miss أو Miss (>24h) أو 0 #}
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center danger">
+        <div class="kpi-icon text-danger">
+          <i class="bi bi-x-circle-fill"></i>
+        </div>
+        <div class="kpi-title">Failed Shipments</div>
+        <div class="kpi-value">{{ kpi_table|get_failed_shipments_count }}</div>
+      </div>
+    </div>
+
+    {# Target — مع التلاتة في نفس الصف #}
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center">
+        <div class="kpi-icon text-secondary">
+          <i class="bi bi-bullseye"></i>
+        </div>
+        <div class="kpi-title">Target</div>
+        <div class="kpi-value">≥ 99%</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endwith %}
+{% endif %}
+{% endif %}
+
+
+
+
+{% with tab.name|default:''|lower as tab_name_lower %}
+<div class="card-body row align-items-start">
+  {% if tab.outbound_html %}
+  <div
+    class="col-12 mb-4 p-3 shadow-sm border rounded"
+    style="background-color: #f8f9fa"
+  >
+    {{ tab.outbound_html|safe }}
+  </div>
+  {% endif %} {% if tab.inbound_html %}
+  <div
+    class="col-12 mb-4 p-3 shadow-sm border rounded"
+    style="background-color: #f8f9fa"
+  >
+    {{ tab.inbound_html|safe }}
+  </div>
+  {% endif %} {% if tab.sub_tables %}
+  {# ================= RETURN & REFUSAL: كروت KPI ثم جدول Return ================= #}
+  {% if tab_name_lower == 'return & refusal' %}
+  <div class="col-12">
+    {% if tab.return_kpi %}
+    <div class="row g-4 mx-0 mb-3">
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-primary">
+            <i class="bi bi-truck"></i>
+          </div>
+          <div class="kpi-title">Total Shipments</div>
+          <div class="kpi-value">{{ tab.return_kpi.total_shipments|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center success">
+          <div class="kpi-icon text-success">
+            <i class="bi bi-check-circle-fill"></i>
+          </div>
+          <div class="kpi-title">Successful Shipments</div>
+          <div class="kpi-value">{{ tab.return_kpi.successful|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center danger">
+          <div class="kpi-icon text-danger">
+            <i class="bi bi-x-circle-fill"></i>
+          </div>
+          <div class="kpi-title">Failed Shipments</div>
+          <div class="kpi-value">{{ tab.return_kpi.failed|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-secondary">
+            <i class="bi bi-bullseye"></i>
+          </div>
+          <div class="kpi-title">Target</div>
+          <div class="kpi-value">≥ {{ tab.return_kpi.target|default:99 }}%</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% for sub in tab.sub_tables %}
+    <div class="table-card mb-4">
+      <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+      <div class="table-responsive custom-scrollbar table-top">
+        <table class="table table-striped table-bordered text-center align-middle">
+          <thead class="table-light">
+            <tr>
+              {% for col in sub.columns %}
+              <th>{{ col }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in sub.data %}
+            <tr>
+              {% for col in sub.columns %}
+              <td>{{ row|get_item:col }}</td>
+              {% endfor %}
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="{{ sub.columns|length }}" class="text-muted">No data available.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ================= EXPIRY: كروت 1–3 / 3–6 / 6–9 + فلاتر + جدول ================= #}
+  {% elif tab_name_lower == 'expiry' %}
+  <div class="col-12">
+    {% if tab.expiry_counts %}
+    <div class="row g-4 mb-3">
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-warning">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+          </div>
+          <div class="kpi-title">Nearly expired (1–3 months)</div>
+          <div class="kpi-value">{{ tab.expiry_counts.within_1_3|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="kpi-card text-center danger">
+          <div class="kpi-icon text-danger">
+            <i class="bi bi-exclamation-circle-fill"></i>
+          </div>
+          <div class="kpi-title">Nearly expired (3–6 months)</div>
+          <div class="kpi-value">{{ tab.expiry_counts.within_3_6|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-secondary">
+            <i class="bi bi-clock-history"></i>
+          </div>
+          <div class="kpi-title">Nearly expired (6–9 months)</div>
+          <div class="kpi-value">{{ tab.expiry_counts.within_6_9|default:0 }}</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% for sub in tab.sub_tables %}
+    <div class="card mb-4">
+      <div class="card-header pb-0 card-no-border">
+        <h4 class="mb-2">{{ sub.title }}</h4>
+      </div>
+      {% if sub.filter_options %}
+      <div class="card-body py-2 px-3 border-0">
+        <div class="row g-3 align-items-end filter-row">
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Facility</label>
+            <select class="form-select expiry-detail-filter w-100" data-filter="facility">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.facility_codes %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Company</label>
+            <select class="form-select expiry-detail-filter w-100" data-filter="company">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.companies %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Status</label>
+            <select class="form-select expiry-detail-filter w-100" data-filter="status">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.statuses %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Expiry Date</label>
+            <select class="form-select expiry-detail-filter w-100" data-filter="expiry">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.expiry_dates %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+      <div class="card-body">
+        <div class="table-responsive custom-scrollbar">
+          <table class="table table-striped table-bordered text-center align-middle" id="expiry-detail-table">
+            <thead class="table-light">
+              <tr>
+                {% for col in sub.columns %}
+                <th class="text-nowrap">{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in sub.data %}
+              <tr data-facility="{{ row|get_item:'Facility'|default:'' }}"
+                  data-company="{{ row|get_item:'Company'|default:'' }}"
+                  data-status="{{ row|get_item:'Status'|default:'' }}"
+                  data-expiry="{{ row|get_item:'Expiry Date'|default:'' }}">
+                {% for col in sub.columns %}
+                {% with value=row|get_item:col %}
+                {% if col|lower == "status" %}
+                <td class="text-center">
+                  {% if value|default_if_none:""|trim|lower == "located" %}
+                  <span class="badge bg-info text-dark rounded-pill">Located</span>
+                  {% elif value|default_if_none:""|trim|lower == "allocated" %}
+                  <span class="badge bg-primary rounded-pill">Allocated</span>
+                  {% elif value|default_if_none:""|trim|lower == "partly allocated" %}
+                  <span class="badge bg-warning text-dark rounded-pill">Partly Allocated</span>
+                  {% else %}
+                  <span class="badge bg-secondary rounded-pill">{{ value|default:"N/A" }}</span>
+                  {% endif %}
+                </td>
+                {% elif col|lower == "expiry date" %}
+                <td class="text-nowrap text-muted small">
+                  <i class="bi bi-clock"></i>
+                  {% if value %} {{ value }} {% else %} — {% endif %}
+                </td>
+                {% else %}
+                <td>{{ value }}</td>
+                {% endif %}
+                {% endwith %}
+                {% endfor %}
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="{{ sub.columns|length }}" class="text-muted text-center">No data available.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {# ================= ORDER GENERAL INFORMATION ================= #}
+  {% elif tab_name_lower == 'order general information' %}
+  <div class="col-12">
+    <div class="accordion" id="accordionOrderGeneral">
+      {% for sub in tab.sub_tables %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button
+            class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
+            data-bs-toggle="collapse"
+            data-bs-target="#collapse-{{ forloop.counter }}"
+          >
+            {{ sub.title }}
+          </button>
+        </h2>
+        <div
+          id="collapse-{{ forloop.counter }}"
+          class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+        >
+          <div class="accordion-body">
+            <div class="row">
+              <div
+                class="{% if sub.title == 'Quality Exceptions' %}col-12{% else %}col-md-7{% endif %}"
+              >
+                <div class="table-card">
+                  <h5
+                    class="text-center mt-3 mb-3 fw-bold"
+                    style="color: #9084ad"
+                  >
+                    {{ sub.title }}
+                  </h5>
+                  <div class="table-responsive custom-scrollbar table-top">
+                    <table
+                      class="table table-striped table-bordered text-center align-middle"
+                    >
+                      <thead class="table-light">
+                        <tr>
+                          {% for col in sub.columns %}
+                          <th>{{ col }}</th>
+                          {% endfor %}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for row in sub.data %}
+                        <tr>
+                          {% for col in sub.columns %}
+                          <td>{{ row|get_item:col }}</td>
+                          {% endfor %}
+                        </tr>
+                        {% empty %}
+                        <tr>
+                          <td
+                            colspan="{{ sub.columns|length }}"
+                            class="text-muted"
+                          >
+                            No data available.
+                          </td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              {% if sub.title != 'Quality Exceptions' %}
+              <div class="col-md-5">
+                <div class="table-card">
+                  {% if sub.id %}
+                  {% render_chart sub.id %} {% else %}
+                  {% render_chart sub.title %} {% endif %}
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {# ================= INBOUND: شارت واحد كبير (داتا الجدولين) ثم الجدولان تحته ================= #}
+  {% elif tab_name_lower == 'inbound' %}
+  <div class="col-12">
+    {# ===== 1) شارت واحد كبير فوق — داتا ≤24h و ≤18h (كل عمود = داتا جدول) ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'inbound-combined-chart' and sub.chart_data %}
+    <div class="row mb-4" id="inbound-combined-chart-row" data-chart-canvas="chart-inbound-combined">
+      <div class="col-12">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">Inbound KPI — ≤24h & ≤18h</h5>
+          <div class="chart-container" style="min-height: 380px;">
+            {% render_chart "inbound-combined-chart" %}
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+    {# ===== 2) الجدولان جنب بعض (بدون شارتين منفصلين — الداتا على الشارت الكبير فوق) ===== #}
+    <div class="row mb-4">
+      {% for sub in tab.sub_tables %}
+        {% if sub.id == 'inbound-aggregated-kpi' and not sub.full_width %}
+      <div class="col-md-6">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% empty %}
+                <tr><td colspan="99" class="text-muted">No data available.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+      {% endfor %}
+      {% for sub in tab.sub_tables %}
+        {% if sub.id == 'inbound-aggregated-kpi-18h' and not sub.full_width %}
+      <div class="col-md-6">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% empty %}
+                <tr><td colspan="99" class="text-muted">No data available.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {# ===== 2) جداول المناطق (لو موجودة — الشيت القديم): كل جدول في صف كامل ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.facility_name %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0 inbound-facility-table">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+    {# ===== جدول الإكسل (Inbound Shipments Detail) في كارد تحت — زي Outbound ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.full_width and sub.id != 'inbound-combined-chart' %}
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header pb-0 card-no-border text-center">
+            <h4 class="mb-2">{{ sub.title }}</h4>
+          </div>
+          {% if sub.filter_options and sub.filter_options.facility_codes %}
+          <div class="card border-0 shadow-sm mb-2 mx-3">
+            <div class="card-body py-2 px-3">
+              <div class="row g-3 align-items-end filter-row">
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Facility</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="facility">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.facility_codes %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                {% if sub.filter_options.months %}
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Month</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="month">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.months %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                {% endif %}
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Order Nbr</label>
+                  <input
+                    type="text"
+                    class="form-control inbound-detail-filter"
+                    data-filter="order-nbr"
+                    placeholder="Search Order Nbr"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+          <div class="card-body text-center">
+            <div class="table-responsive custom-scrollbar">
+              <table class="table table-bordered" id="inbound-shipments-detail-table">
+                <thead class="table-primary">
+                  <tr role="row">
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap fw-semibold">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr role="row" {% if sub.filter_options %}data-facility="{{ row|get_item:'Facility Code'|default:'' }}" data-month="{{ row|get_item:'Month'|default:'' }}" data-order-nbr="{{ row|get_item:'Order Nbr'|default:'' }}"{% endif %}>
+                    {% for col in sub.columns %}
+                    {% with value=row|get_item:col %}
+                    {% if sub.id == 'sub-table-inbound-detail' %}
+                    {% if col|lower == "shipment_nbr" or col|lower == "shipment nbr" %}
+                    <td><span class="badge bg-primary rounded-pill">{{ value|default:"—" }}</span></td>
+                    {% elif col == "HIT or MISS" %}
+                    <td>{% if value|default:""|trim|lower == "hit" %}<span class="badge bg-success rounded-pill">{{ value }}</span>{% elif value|default:""|trim|lower == "miss" %}<span class="badge bg-danger rounded-pill">{{ value }}</span>{% else %}{{ value|default:"—" }}{% endif %}</td>
+                    {% else %}
+                    <td>{{ value }}</td>
+                    {% endif %}
+                    {% else %}
+                    {% if col|lower == "shipment_nbr" or col|lower == "shipment nbr" %}
+                    <td><span class="badge bg-primary rounded-pill">{{ value|default:"—" }}</span></td>
+                    {% elif col == "HIT or MISS" %}
+                    <td>{% if value|default:""|trim|lower == "hit" %}<span class="badge bg-success rounded-pill">{{ value }}</span>{% elif value|default:""|trim|lower == "miss" %}<span class="badge bg-danger rounded-pill">{{ value }}</span>{% else %}{{ value|default:"—" }}{% endif %}</td>
+                    {% elif "received" in col|lower and "qty" in col|lower %}
+                    <td><span class="badge bg-info rounded-pill">{{ value|default:"—" }}</span></td>
+                    {% else %}
+                    <td>{{ value }}</td>
+                    {% endif %}
+                    {% endif %}
+                    {% endwith %}
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr><td colspan="{{ sub.columns|length }}" class="text-muted text-center">No data available</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {# ================= CAPACITY + EXPIRY: كروت مثل Expiry + رسمة Capacity Used vs Available + جداول + جدول الإكسل بفلتر Facility و Status و Expiry Date ================= #}
+  {% elif tab_name_lower == 'capacity + expiry' %}
+  <div class="col-12">
+    <div class="row g-4 mb-3">
+      {% if tab.expiry_counts %}
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-warning"><i class="bi bi-exclamation-triangle-fill"></i></div>
+          <div class="kpi-title">Nearly expired (1–3 months)</div>
+          <div class="kpi-value">{{ tab.expiry_counts.within_1_3|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="kpi-card text-center danger">
+          <div class="kpi-icon text-danger"><i class="bi bi-exclamation-circle-fill"></i></div>
+          <div class="kpi-title">Nearly expired (3–6 months)</div>
+          <div class="kpi-value">{{ tab.expiry_counts.within_3_6|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-secondary"><i class="bi bi-clock-history"></i></div>
+          <div class="kpi-title">Nearly expired (6–9 months)</div>
+          <div class="kpi-value">{{ tab.expiry_counts.within_6_9|default:0 }}</div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="row mb-4 align-items-start">
+      <div class="col-12 col-md-6">
+        {% for sub in tab.sub_tables %}
+          {% if not sub.full_width and sub.id == 'capacity-summary' %}
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0 capacity-summary-table">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr class="{% if row|get_item:'_is_total' %}fw-bold{% endif %}">
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% empty %}
+                <tr><td colspan="99" class="text-muted">No data available.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="col-12 col-md-6">
+        {% if tab.capacity_chart and tab.capacity_chart.utilization_pct_list %}
+        <div class="card h-100">
+          <div class="card-header pb-0 card-no-border">
+            <h5 class="mb-2 fw-bold" style="color: #9084ad">Capacity — Utilization %</h5>
+          </div>
+          <div class="card-body">
+            <div id="chart-capacity-used-available" style="min-height: 280px;" data-pcts="{{ tab.capacity_chart.utilization_pct_list|join:',' }}"></div>
+            <script>
+            (function() {
+              var container = document.getElementById('chart-capacity-used-available');
+              if (!container) return;
+              var pctStr = container.getAttribute('data-pcts') || '';
+              var pcts = pctStr ? pctStr.split(',').map(function(x) { return parseFloat(x) || 0; }) : [];
+              if (typeof ApexCharts === 'undefined') {
+                container.innerHTML = '<p class="text-muted text-center py-4">' + (pcts.length ? pcts.map(function(p, i) { return 'Segment ' + (i+1) + ': ' + p + '%'; }).join(' — ') : 'No data') + '</p>';
+                return;
+              }
+              if (window._capacityUsedAvailableChart) {
+                try { window._capacityUsedAvailableChart.destroy(); } catch (e) {}
+                window._capacityUsedAvailableChart = null;
+              }
+              var colors = ['#82c9b3', '#6ab39a', '#52a383', '#d9ece6', '#b8dfd4'];
+              var series = pcts.map(function(p, i) { return { name: 'Segment ' + (i + 1) + ' (' + p + '%)', data: [p] }; });
+              if (!series.length) series = [{ name: 'Utilization', data: [0] }];
+              var options = {
+                chart: { type: 'bar', height: 280, stacked: true, toolbar: { show: false } },
+                plotOptions: {
+                  bar: {
+                    horizontal: true,
+                    columnWidth: '70%',
+                    borderRadius: 6,
+                    barHeight: '60%',
+                  },
+                },
+                colors: colors,
+                series: series,
+                xaxis: {
+                  categories: [''],
+                  min: 0,
+                  max: 100,
+                  tickAmount: 5,
+                  labels: { formatter: function(v) { return v + '%'; } },
+                },
+                yaxis: { show: false },
+                grid: {
+                  borderColor: '#E1E5EA',
+                  strokeDashArray: 4,
+                  xaxis: { lines: { show: true } },
+                  yaxis: { lines: { show: false } },
+                },
+                legend: { show: true, position: 'bottom', horizontalAlign: 'left' },
+                dataLabels: { enabled: true, formatter: function(v) { return v ? v.toFixed(1) + '%' : ''; } },
+                tooltip: { y: { formatter: function(v) { return v + '%'; } } },
+              };
+              var chart = new ApexCharts(container, options);
+              chart.render();
+              window._capacityUsedAvailableChart = chart;
+            })();
+            </script>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% for sub in tab.sub_tables %}
+      {% if sub.full_width and sub.id == 'capacity-expiry-detail' %}
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header pb-0 card-no-border text-center">
+            <h4 class="mb-2">{{ sub.title }}</h4>
+          </div>
+          {% if sub.filter_options %}
+          <div class="card-body py-2 px-3 border-0">
+            <div class="row g-3 align-items-end filter-row">
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label small fw-semibold mb-1">Facility</label>
+                <select class="form-select capacity-expiry-detail-filter w-100" data-filter="facility">
+                  <option value="">All</option>
+                  {% for opt in sub.filter_options.facility_codes %}
+                  <option value="{{ opt }}">{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label small fw-semibold mb-1">Status</label>
+                <select class="form-select capacity-expiry-detail-filter w-100" data-filter="status">
+                  <option value="">All</option>
+                  {% for opt in sub.filter_options.statuses %}
+                  <option value="{{ opt }}">{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label small fw-semibold mb-1">Expiry Date</label>
+                <select class="form-select capacity-expiry-detail-filter w-100" data-filter="expiry">
+                  <option value="">All</option>
+                  {% for opt in sub.filter_options.expiry_dates %}
+                  <option value="{{ opt }}">{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+          <div class="card-body text-center">
+            <div class="table-responsive custom-scrollbar">
+              <table class="table table-bordered" id="capacity-expiry-detail-table">
+                <thead class="table-primary">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap fw-semibold">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr class="{% if row|get_item:'_near_expiry' %}table-warning{% endif %}" data-facility="{{ row|get_item:sub.filter_options.facility_column|default:'' }}" data-status="{{ row|get_item:sub.filter_options.status_column|default:'' }}" data-expiry="{{ row|get_item:sub.filter_options.expiry_column|default:'' }}">
+                    {% for col in sub.columns %}
+                    <td>{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr><td colspan="{{ sub.columns|length }}" class="text-muted text-center">No data available</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {# ================= OUTBOUND SHIPMENTS: الشارت أولاً ثم 3 جداول (المدن) ثم جدول الإكسل بالتفاصيل ================= #}
+  {% elif tab_name_lower == 'outbound shipments' %}
+  <div class="col-12">
+    {# ===== 0) كروت KPI: Total / Successful / Failed Shipments + Target (تظهر فقط لو في داتا) ===== #}
+    {% if tab.stats.total %}
+    <div class="row g-4 mx-0 mb-4">
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-primary"><i class="bi bi-truck"></i></div>
+          <div class="kpi-title">Total Shipments</div>
+          <div class="kpi-value">{{ tab.stats.total|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center success">
+          <div class="kpi-icon text-success"><i class="bi bi-check-circle-fill"></i></div>
+          <div class="kpi-title">Successful Shipments</div>
+          <div class="kpi-value">{{ tab.stats.hit_pct|default:0|floatformat:0 }}%</div>
+          <small class="text-success">Hit (≤2 days)</small>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center danger">
+          <div class="kpi-icon text-danger"><i class="bi bi-x-circle-fill"></i></div>
+          <div class="kpi-title">Failed Shipments</div>
+          <div class="kpi-value">{{ tab.stats.miss|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-secondary"><i class="bi bi-bullseye"></i></div>
+          <div class="kpi-title">Target</div>
+          <div class="kpi-value">≥ {{ tab.stats.target|default:99 }}%</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ===== 1) الشارت في أول ديف ===== #}
+    {% if tab.chart_data %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card">
+          {% render_chart tab.name %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ===== 2) جداول المناطق (الدمام / الرياض / جدة): كل جدول في صف كامل مع scroll أفقي ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.facility_name %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0 outbound-facility-table">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== 3) جدول الإكسل بالتفاصيل (ARAMCO Outbound Report) مع الفلاتر والبادجات ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.full_width %}
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header pb-0 card-no-border text-center">
+            <h4 class="mb-2">{{ sub.title }}</h4>
+          </div>
+
+          {% if sub.filter_options and sub.id == 'sub-table-outbound-detail' %}
+          <div class="card border-0 shadow-sm mb-2">
+            <div class="card-body py-2 px-3">
+              <div class="row g-3 align-items-end filter-row">
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Facility</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="facility">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.facility_codes %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Month</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="month">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.months %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Order Nbr</label>
+                  <input type="text" class="form-control inbound-detail-filter" data-filter="order-nbr" placeholder="Search Order Nbr" />
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="card-body text-center">
+            <div class="table-responsive custom-scrollbar">
+              <table class="table table-bordered" {% if sub.id == 'sub-table-outbound-detail' %}id="outbound-shipments-detail-table"{% endif %}>
+                <thead class="table-primary">
+                  <tr role="row">
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap fw-semibold">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr role="row" class="even" {% if sub.filter_options %}data-facility="{{ row|get_item:'Facility Code'|default:'' }}" data-month="{{ row|get_item:'Month'|default:'' }}" data-order-nbr="{{ row|get_item:'Order Nbr'|default:'' }}"{% endif %}>
+                    {% for col in sub.columns %}
+                    {% with value=row|get_item:col %}
+                    {% if col|lower == "status" %}
+                    <td class="text-center">
+                      {% if value|default_if_none:""|trim|lower == "in transit" %}
+                      <span class="badge bg-warning text-dark rounded-pill">
+                        <i class="bi bi-arrow-repeat"></i> In Transit</span>
+                      {% elif value|default_if_none:""|trim|lower == "receiving complete" %}
+                      <span class="badge bg-success rounded-pill">
+                        <i class="bi bi-hourglass-split"></i> Receiving
+                        Complete</span>
+                      {% elif value|default_if_none:""|trim|lower == "verified" %}
+                      <span class="badge bg-primary rounded-pill"
+                        ><i class="bi bi-check-circle-fill"></i> Verified</span>
+                      {% elif value|default_if_none:""|trim|lower == "receiving started" %}
+                      <span class="badge bg-info text-dark rounded-pill">
+                        Receiving Started</span>
+                      {% elif value|default_if_none:""|trim|lower == "cancelled" %}
+                      <span class="badge bg-danger rounded-pill"
+                        ><i class="bi bi-x-circle-fill"></i> Cancelled</span>
+                      {% else %}
+                      <span class="badge bg-secondary rounded-pill"
+                        >{{ value|default:"N/A" }}</span>
+                      {% endif %}
+                    </td>
+
+                    {% elif col|lower == "hit or miss" or col|lower == "hit/miss" %}
+                    <td>
+                      {% if value|default_if_none:""|trim|lower == "hit" %}
+                      <span
+                        class="badge bg-success rounded-pill d-inline-flex align-items-center gap-1 text-uppercase"
+                      >
+                        <i class="bi bi-check-circle-fill"></i> Hit
+                      </span>
+                      {% elif value|default_if_none:""|trim|lower == "miss" %}
+                      <span
+                        class="badge bg-danger rounded-pill d-inline-flex align-items-center gap-1 text-uppercase"
+                      >
+                        <i class="bi bi-x-circle-fill"></i> Miss
+                      </span>
+                      {% elif value|default_if_none:""|trim|lower == "pending" %}
+                      <span class="badge bg-warning text-dark rounded-pill"
+                        >Pending</span>
+                      {% else %}
+                      <span class="badge bg-light text-dark rounded-pill"
+                        >{{ value|default:"—" }}</span>
+                      {% endif %}
+                    </td>
+
+                    {% elif col|lower == "create timestamp" or col|lower == "arrival date" or col|lower == "offloading date" or col|lower == "packed timestamp" or col|lower == "ship date" %}
+                    <td class="text-nowrap text-muted small">
+                      <i class="bi bi-clock"></i>
+                      {% if value %} {{ value }} {% else %} — {% endif %}
+                    </td>
+
+                    {% elif col|lower == "customer city" %}
+                    <td class="text-center">
+                      {% if value %}
+                      <span class="badge rounded-pill
+                        {% if value|lower == 'jeddah' %}bg-primary
+                        {% elif value|lower == 'riyadh' %}bg-success
+                        {% elif value|lower == 'dammam' or value|lower == 'damam' %}bg-info
+                        {% elif value|lower == 'makkah' or value|lower == 'mecca' %}bg-warning text-dark
+                        {% elif value|lower == 'medina' or value|lower == 'madinah' %}bg-secondary
+                        {% elif value|lower == 'khobar' or value|lower == 'al khobar' %}bg-dark
+                        {% else %}bg-light text-dark border
+                        {% endif %}">{{ value }}</span>
+                      {% else %}—{% endif %}
+                    </td>
+
+                    {% else %}
+                    <td>{{ value }}</td>
+                    {% endif %}
+                    {% endwith %}
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td
+                      colspan="{{ sub.columns|length }}"
+                      class="text-muted text-center"
+                    >
+                      No data available
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {# ================= TABS (>=4) ================= #}
+  {% elif tab.sub_tables|length >= 4 %}
+  <div class="col-12">
+    <ul class="nav nav-tabs mb-3">
+      {% for sub in tab.sub_tables %}
+      <li class="nav-item">
+        <button
+          class="nav-link {% if forloop.first %}active{% endif %}"
+          data-bs-toggle="tab"
+          data-bs-target="#tab-{{ forloop.counter }}"
+        >
+          {{ sub.title }}
+        </button>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="tab-content p-3 border rounded bg-white shadow-sm">
+      {% for sub in tab.sub_tables %}
+      <div
+        class="tab-pane fade {% if forloop.first %}show active{% endif %}"
+        id="tab-{{ forloop.counter }}"
+      >
+        <div class="row">
+          <div class="col-md-7">
+            <div class="table-card">
+              <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">
+                {{ sub.title }}
+              </h5>
+              <div class="table-responsive custom-scrollbar table-top">
+                <table
+                  class="table table-striped table-bordered text-center align-middle"
+                >
+                  <thead class="table-light">
+                    <tr>
+                      {% for col in sub.columns %}
+                      <th>{{ col }}</th>
+                      {% endfor %}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in sub.data %}
+                    <tr>
+                      {% for col in sub.columns %}
+                      <td>{{ row|get_item:col }}</td>
+                      {% endfor %}
+                    </tr>
+                    {% empty %}
+                    <tr>
+                      <td colspan="{{ sub.columns|length }}" class="text-muted">
+                        No data available.
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-5">
+            <div class="table-card">
+              {% if sub.id %} {% render_chart sub.id %} {% else %}
+              {% render_chart sub.title %} {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {# ================= PODs: كروت KPI + جدول واحد وشارت واحد ================= #}
+  {% elif tab_name_lower == 'pods update' %}
+  <div class="col-12">
+    {% if tab.stats %}
+    <div class="row g-4 mb-3">
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-primary">
+            <i class="bi bi-truck"></i>
+          </div>
+          <div class="kpi-title">Total Shipments</div>
+          <div class="kpi-value">{{ tab.stats.total_shipments|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center success">
+          <div class="kpi-icon text-success">
+            <i class="bi bi-check-circle-fill"></i>
+          </div>
+          <div class="kpi-title">Hit %</div>
+          <div class="kpi-value">{{ tab.stats.hit_pct|default:0|floatformat:0 }}%</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center danger">
+          <div class="kpi-icon text-danger">
+            <i class="bi bi-x-circle-fill"></i>
+          </div>
+          <div class="kpi-title">Miss %</div>
+          <div class="kpi-value">{{ tab.stats.miss_pct|default:0|floatformat:0 }}%</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-secondary">
+            <i class="bi bi-bullseye"></i>
+          </div>
+          <div class="kpi-title">Target</div>
+          <div class="kpi-value">≥ 100%</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# جدول واحد وشارت واحد #}
+    {% if tab.sub_tables %}
+    {% with sub=tab.sub_tables.0 %}
+    <div class="row mb-4">
+      <div class="col-md-7">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top">
+            <table class="table table-striped table-bordered text-center align-middle">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th>{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td>{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% empty %}
+                <tr>
+                  <td colspan="{{ sub.columns|length }}" class="text-muted">No data available.</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-5">
+        <div class="table-card">
+          {% if sub.id %}{% render_chart sub.id %}{% else %}{% render_chart sub.title %}{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endwith %}
+    {% endif %}
+
+    {# جدول التفاصيل الكامل مع الفلاتر والبادجات #}
+    {% for sub in tab.sub_tables %}
+    {% if sub.full_width %}
+    <div class="card mb-4">
+      <div class="card-header pb-0 card-no-border">
+        <h4 class="mb-2">{{ sub.title }}</h4>
+      </div>
+      {% if sub.filter_options %}
+      <div class="card-body py-2 px-3 border-0">
+        <div class="row g-3 align-items-end filter-row">
+          {% if sub.filter_options.whnames %}
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">W.HNAME</label>
+            <select class="form-select pods-detail-filter w-100" data-filter="whname">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.whnames %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if sub.filter_options.statuses %}
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Hit or Miss</label>
+            <select class="form-select pods-detail-filter w-100" data-filter="status">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.statuses %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if sub.filter_options.months %}
+          <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Month</label>
+            <select class="form-select pods-detail-filter w-100" data-filter="month">
+              <option value="">All</option>
+              {% for opt in sub.filter_options.months %}
+              <option value="{{ opt }}">{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      <div class="card-body">
+        <div class="table-responsive custom-scrollbar">
+          <table class="table table-striped table-bordered text-center align-middle" id="pods-detail-table">
+            <thead class="table-light">
+              <tr>
+                {% for col in sub.columns %}
+                <th class="text-nowrap">{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in sub.data %}
+              <tr data-whname="{{ row|get_item:'W.HNAME'|default:'' }}"
+                  data-status="{{ row|get_item:'Hit or Miss'|default:'' }}"
+                  data-month="{{ row|get_item:'Month'|default:'' }}">
+                {% for col in sub.columns %}
+                {% with value=row|get_item:col %}
+                {% if col|lower == "hit or miss" %}
+                <td class="text-center">
+                  {% if value|default_if_none:""|trim|lower == "hit" %}
+                  <span class="badge bg-success rounded-pill">Hit</span>
+                  {% elif value|default_if_none:""|trim|lower == "miss" %}
+                  <span class="badge bg-danger rounded-pill">Miss</span>
+                  {% elif value|default_if_none:""|trim|lower == "pending" %}
+                  <span class="badge bg-warning text-dark rounded-pill">Pending</span>
+                  {% else %}
+                  <span class="badge bg-secondary rounded-pill">{{ value|default:"N/A" }}</span>
+                  {% endif %}
+                </td>
+                {% elif col|lower == "w.hname" or col|lower == "whname" %}
+                <td>
+                  <span class="badge bg-info text-dark rounded-pill">{{ value|default:"—" }}</span>
+                </td>
+                {% elif col|lower in "created on" or col|lower == "pgi date" %}
+                <td class="text-nowrap text-muted small">
+                  <i class="bi bi-clock"></i>
+                  {% if value %} {{ value }} {% else %} — {% endif %}
+                </td>
+                {% else %}
+                <td>{{ value }}</td>
+                {% endif %}
+                {% endwith %}
+                {% endfor %}
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="{{ sub.columns|length }}" class="text-muted text-center">No data available.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+
+  {# ================= LESS THAN 4 (OTHER TABS) ================= #}
+  {% else %}
+  <div class="col-12">
+    {# ===== ROW 1: KPI TABLES + CHART ===== #}
+    <div class="row">
+      <div class="col-md-7">
+        {% for sub in tab.sub_tables %} {% if not sub.full_width %}
+        <div class="table-card mb-4">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #9084ad">
+            {{ sub.title }}
+          </h5>
+          <div class="table-responsive custom-scrollbar table-top">
+            <table
+              class="table table-striped table-bordered text-center align-middle"
+            >
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th>{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td>{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% empty %}
+                <tr>
+                  <td colspan="{{ sub.columns|length }}" class="text-muted">
+                    No data available.
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %} {% endfor %}
+      </div>
+      <div class="col-md-5">
+        {% if tab.chart_data %}
+        <div class="table-card mb-4">{% render_chart tab.name %}</div>
+        {% endif %}
+      </div>
+    </div>
+    {# ===== ROW 2: FULL WIDTH DETAIL TABLE ===== #}
+    {% for sub in tab.sub_tables %} {% if sub.full_width %}
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header pb-0 card-no-border text-center">
+            <h4 class="mb-2">{{ sub.title }}</h4>
+          </div>
+
+
+
+          {% if sub.filter_options %}
+            <div class="card border-0 shadow-sm mb-2">
+              <div class="card-body py-2 px-3">
+
+                <div class="row g-3 align-items-end filter-row">
+
+                  <!-- Facility Code (Outbound only) -->
+                  {% if sub.id == 'sub-table-outbound-detail' and sub.filter_options.facility_code_list %}
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1">Facility Code</label>
+                    <select class="form-select inbound-detail-filter w-100" data-filter="facility-code">
+                      <option value="">All</option>
+                      {% for opt in sub.filter_options.facility_code_list %}
+                      <option value="{{ opt }}">{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  {% endif %}
+                  <!-- Facility / Customer -->
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1">
+                      {% if sub.id == 'sub-table-outbound-detail' %}Customer Name{% else %}Facility{% endif %}
+                    </label>
+                    <select class="form-select inbound-detail-filter w-100" data-filter="facility">
+                      <option value="">All</option>
+                      {% for opt in sub.filter_options.facility_codes %}
+                      <option value="{{ opt }}">{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <!-- Status -->
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1">Status</label>
+                    <select class="form-select inbound-detail-filter w-100" data-filter="status">
+                      <option value="">All</option>
+                      {% for opt in sub.filter_options.statuses %}
+                      <option value="{{ opt }}">{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <!-- Month -->
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+                    <label class="form-label small fw-semibold mb-1">Month</label>
+                    <select class="form-select inbound-detail-filter w-100" data-filter="month">
+                      <option value="">All</option>
+                      {% for opt in sub.filter_options.months %}
+                      <option value="{{ opt }}">{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <!-- City -->
+                  {% if sub.filter_options.customer_cities %}
+                  <div class="col-12 col-sm-6 col-md-6 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1">Customer City</label>
+                    <select class="form-select inbound-detail-filter w-100" data-filter="city">
+                      <option value="">All</option>
+                      {% for opt in sub.filter_options.customer_cities %}
+                      <option value="{{ opt }}">{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  {% endif %}
+
+                  {% if sub.filter_options.hit_miss %}
+                  <!-- Hit / Miss (Outbound etc.) -->
+                  <div class="col-12 col-sm-6 col-md-6 col-lg-2">
+                    <label class="form-label small fw-semibold mb-1">Hit / Miss</label>
+                    <select class="form-select inbound-detail-filter w-100" data-filter="hit-miss">
+                      <option value="">All</option>
+                      {% for opt in sub.filter_options.hit_miss %}
+                      <option value="{{ opt }}">{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  {% endif %}
+
+                </div>
+
+              </div>
+            </div>
+            {% endif %}
+
+
+
+
+
+          <div class="card-body text-center ">
+            <div class="table-responsive custom-scrollbar">
+              <table class="table table-bordered" {% if sub.id == 'sub-table-inbound-detail' %}id="inbound-shipments-detail-table"{% elif sub.id == 'sub-table-outbound-detail' %}id="outbound-shipments-detail-table"{% endif %}>
+                <thead class="table-primary">
+                  <tr role="row">
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap fw-semibold">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr role="row" class="even" {% if sub.filter_options %}data-facility="{% if sub.id == 'sub-table-outbound-detail' %}{{ row|get_item:'Customer Name'|default:'' }}{% else %}{{ row|get_item:'Facility Code'|default:'' }}{% endif %}" {% if sub.id == 'sub-table-outbound-detail' and sub.filter_options.facility_code_list %}data-facility-code="{{ row|get_item:'Facility Code'|default:'' }}"{% endif %} data-status="{{ row|get_item:'Status'|default:'' }}" data-month="{{ row|get_item:'Month'|default:'' }}" {% if sub.filter_options.customer_cities %}data-city="{{ row|get_item:'Customer City'|default:'' }}"{% endif %}{% if sub.filter_options.hit_miss %} data-hit-miss="{{ row|get_item:'HIT or MISS'|default:'' }}"{% endif %}{% endif %}>
+                    {% for col in sub.columns %}
+                    {% with value=row|get_item:col %}
+                    {# ===== INBOUND: Shipment_nbr & Received QTY badges only ===== #}
+                    {% if sub.id == 'sub-table-inbound-detail' %}
+                    {% if col|lower == "shipment_nbr" or col|lower == "shipment nbr" %}
+                    <td><span class="badge bg-primary rounded-pill">{{ value|default:"—" }}</span></td>
+                    {% elif col == "HIT or MISS" %}
+                    <td>{% if value|default:""|trim|lower == "hit" %}<span class="badge bg-success rounded-pill">{{ value }}</span>{% elif value|default:""|trim|lower == "miss" %}<span class="badge bg-danger rounded-pill">{{ value }}</span>{% else %}{{ value|default:"—" }}{% endif %}</td>
+                    {% elif "received" in col|lower and "qty" in col|lower %}
+                    <td><span class="badge bg-info rounded-pill">{{ value|default:"—" }}</span></td>
+                    {% else %}
+                    <td>{{ value }}</td>
+                    {% endif %}
+                    {# ===== OUTBOUND etc.: Status, Hit/Miss, Date, City ===== #}
+                    {% elif col|lower == "status" %}
+                    <td class="text-center">
+                      {% if value|default_if_none:""|trim|lower == "in transit" %}
+                      <span class="badge bg-warning text-dark rounded-pill">
+                        <i class="bi bi-arrow-repeat"></i> In Transit</span
+                      >
+                      {% elif value|default_if_none:""|trim|lower == "receiving complete" %}
+                      <span class="badge bg-success rounded-pill">
+                        <i class="bi bi-hourglass-split"></i> Receiving
+                        Complete</span
+                      >
+                      {% elif value|default_if_none:""|trim|lower == "verified" %}
+                      <span class="badge bg-primary rounded-pill"
+                        ><i class="bi bi-check-circle-fill"></i> Verified</span
+                      >
+                      {% elif value|default_if_none:""|trim|lower == "receiving started" %}
+                      <span class="badge bg-info text-dark rounded-pill">
+                        Receiving Started</span
+                      >
+                      {% elif value|default_if_none:""|trim|lower == "cancelled" %}
+                      <span class="badge bg-danger rounded-pill"
+                        ><i class="bi bi-x-circle-fill"></i> Cancelled</span
+                      >
+                      {% else %}
+                      <span class="badge bg-secondary rounded-pill"
+                        >{{ value|default:"N/A" }}</span
+                      >
+                      {% endif %}
+                    </td>
+
+                    {# ===== HIT / MISS BADGE (Outbound etc.) ===== #}
+                    {% elif col|lower == "hit or miss" or col|lower == "hit/miss" %}
+                    <td>
+                      {% if value|default_if_none:""|trim|lower == "hit" %}
+                      <span
+                        class="badge bg-success rounded-pill d-inline-flex align-items-center gap-1 text-uppercase"
+                      >
+                        <i class="bi bi-check-circle-fill"></i> Hit
+                      </span>
+                      {% elif value|default_if_none:""|trim|lower == "miss" %}
+                      <span
+                        class="badge bg-danger rounded-pill d-inline-flex align-items-center gap-1 text-uppercase"
+                      >
+                        <i class="bi bi-x-circle-fill"></i> Miss
+                      </span>
+                      {% elif value|default_if_none:""|trim|lower == "pending" %}
+                      <span class="badge bg-warning text-dark rounded-pill"
+                        >Pending</span
+                      >
+                      {% else %}
+                      <span class="badge bg-light text-dark rounded-pill"
+                        >{{ value|default:"—" }}</span
+                      >
+                      {% endif %}
+                    </td>
+
+                    {# ===== DATE / TIME ===== #}
+                    {% elif col|lower == "create timestamp" or col|lower == "arrival date" or col|lower == "offloading date" or col|lower == "packed timestamp" or col|lower == "ship date" %}
+                    <td class="text-nowrap text-muted small">
+                      <i class="bi bi-clock"></i>
+                      {% if value %} {{ value }} {% else %} — {% endif %}
+                    </td>
+
+                    {# ===== CUSTOMER CITY BADGE ===== #}
+                    {% elif col|lower == "customer city" %}
+                    <td class="text-center">
+                      {% if value %}
+                      <span class="badge rounded-pill
+                        {% if value|lower == 'jeddah' %}bg-primary
+                        {% elif value|lower == 'riyadh' %}bg-success
+                        {% elif value|lower == 'dammam' or value|lower == 'damam' %}bg-info
+                        {% elif value|lower == 'makkah' or value|lower == 'mecca' %}bg-warning text-dark
+                        {% elif value|lower == 'medina' or value|lower == 'madinah' %}bg-secondary
+                        {% elif value|lower == 'khobar' or value|lower == 'al khobar' %}bg-dark
+                        {% else %}bg-light text-dark border
+                        {% endif %}">{{ value }}</span>
+                      {% else %}—{% endif %}
+                    </td>
+
+                    {# ===== DEFAULT CELL ===== #} {% else %}
+                    <td>{{ value }}</td>
+                    {% endif %}
+                    {% endwith %}
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td
+                      colspan="{{ sub.columns|length }}"
+                      class="text-muted text-center"
+                    >
+                      No data available
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% if sub.filter_options %}
+
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% elif tab.data %}
+  {# ================= ONE TABLE ================= #}
+  <div class="row align-items-stretch">
+    <div class="col-md-7">
+      <div class="table-card">
+        <div class="table-responsive custom-scrollbar table-top">
+          <table
+            class="table table-striped table-bordered text-center align-middle"
+          >
+            <thead class="table-light">
+              <tr>
+                {% for col in tab.columns %}
+                <th>{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in tab.data %}
+              <tr>
+                {% for col in tab.columns %}
+                <td>{{ row|get_item:col }}</td>
+                {% endfor %}
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="{{ tab.columns|length }}" class="text-muted">
+                  No data available.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-5">
+      <div class="table-card">{% render_chart tab.name %}</div>
+    </div>
+  </div>
+  {% else %}
+  {% if not tab.outbound_html and not tab.inbound_html %}
+  <div class="col-12 text-center text-muted py-5">
+    No data available to display.
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endwith %}
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    // 🎯 معالجة Tabs (للتابات الأخرى)
+    const tabTriggers = document.querySelectorAll(
+      'button[data-bs-toggle="tab"]'
+    );
+
+    tabTriggers.forEach((tab) => {
+      tab.addEventListener("shown.bs.tab", function (event) {
+        const targetId = event.target.getAttribute("data-bs-target");
+        const activePane = document.querySelector(targetId);
+        if (!activePane) return;
+
+        const canvas = activePane.querySelector("canvas");
+        if (canvas && window.Chart && window.Chart.instances) {
+          const chartInstance = window.Chart.instances[canvas.id];
+          if (chartInstance) {
+            chartInstance.resize();
+            chartInstance.update();
+          }
+        }
+      });
+    });
+  });
+</script>
+
+<script>
+      (function() {
+        var table = document.getElementById('inbound-shipments-detail-table') || document.getElementById('outbound-shipments-detail-table');
+        if (!table) return;
+        var card = table.closest('.card');
+        var tbody = table.querySelector('tbody');
+        var selects = card ? card.querySelectorAll('.inbound-detail-filter') : [];
+        function applyFilters() {
+          var facility = (card.querySelector('[data-filter="facility"]') || {}).value || '';
+          var facilityCode = (card.querySelector('[data-filter="facility-code"]') || {}).value || '';
+          var status = (card.querySelector('[data-filter="status"]') || {}).value || '';
+          var month = (card.querySelector('[data-filter="month"]') || {}).value || '';
+          var cityEl = card.querySelector('[data-filter="city"]');
+          var city = (cityEl && cityEl.value) ? cityEl.value : '';
+          var orderNbrInput = card.querySelector('[data-filter="order-nbr"]');
+          var orderNbr = (orderNbrInput && orderNbrInput.value) ? orderNbrInput.value.trim() : '';
+          var rows = tbody ? tbody.querySelectorAll('tr[data-facility]') : [];
+          rows.forEach(function(tr) {
+            var f = (tr.getAttribute('data-facility') || '').trim();
+            var fc = (tr.getAttribute('data-facility-code') || '').trim();
+            var s = (tr.getAttribute('data-status') || '').trim();
+            var m = (tr.getAttribute('data-month') || '').trim();
+            var c = (tr.getAttribute('data-city') || '').trim();
+            var on = (tr.getAttribute('data-order-nbr') || '').trim();
+            var show = (!facility || f === facility) &&
+                       (!facilityCode || fc === facilityCode) &&
+                       (!status || s === status) &&
+                       (!month || m === month) &&
+                       (!city || c === city) &&
+                       (!orderNbr || on.indexOf(orderNbr) !== -1);
+            tr.style.display = show ? '' : 'none';
+          });
+        }
+        for (var i = 0; i < selects.length; i++) {
+          var el = selects[i];
+          var isInput = el.tagName && el.tagName.toLowerCase() === 'input';
+          el.addEventListener(isInput ? 'input' : 'change', applyFilters);
+        }
+      })();
+
+      (function() {
+        var table = document.getElementById('expiry-detail-table');
+        if (!table) return;
+        var card = table.closest('.card');
+        var tbody = table.querySelector('tbody');
+        function applyExpiryFilters() {
+          var facility = (card.querySelector('[data-filter="facility"]') || {}).value || '';
+          var company = (card.querySelector('[data-filter="company"]') || {}).value || '';
+          var status = (card.querySelector('[data-filter="status"]') || {}).value || '';
+          var expiry = (card.querySelector('[data-filter="expiry"]') || {}).value || '';
+          var rows = tbody ? tbody.querySelectorAll('tr[data-facility]') : [];
+          rows.forEach(function(tr) {
+            var f = (tr.getAttribute('data-facility') || '').trim();
+            var c = (tr.getAttribute('data-company') || '').trim();
+            var s = (tr.getAttribute('data-status') || '').trim();
+            var e = (tr.getAttribute('data-expiry') || '').trim();
+            var show = (!facility || f === facility) && (!company || c === company) && (!status || s === status) && (!expiry || e === expiry);
+            tr.style.display = show ? '' : 'none';
+          });
+        }
+        var selects = card ? card.querySelectorAll('.expiry-detail-filter') : [];
+        for (var i = 0; i < selects.length; i++) {
+          selects[i].addEventListener('change', applyExpiryFilters);
+        }
+      })();
+
+      (function() {
+        var table = document.getElementById('pods-detail-table');
+        if (!table) return;
+        var card = table.closest('.card');
+        var tbody = table.querySelector('tbody');
+        function applyPodsFilters() {
+          var whname = (card.querySelector('[data-filter="whname"]') || {}).value || '';
+          var status = (card.querySelector('[data-filter="status"]') || {}).value || '';
+          var month = (card.querySelector('[data-filter="month"]') || {}).value || '';
+          var rows = tbody ? tbody.querySelectorAll('tr[data-whname]') : [];
+          rows.forEach(function(tr) {
+            var w = (tr.getAttribute('data-whname') || '').trim();
+            var s = (tr.getAttribute('data-status') || '').trim();
+            var m = (tr.getAttribute('data-month') || '').trim();
+            var show = (!whname || w === whname) && (!status || s === status) && (!month || m === month);
+            tr.style.display = show ? '' : 'none';
+          });
+        }
+        var selects = card ? card.querySelectorAll('.pods-detail-filter') : [];
+        for (var i = 0; i < selects.length; i++) {
+          selects[i].addEventListener('change', applyPodsFilters);
+        }
+      })();
+
+      (function() {
+        var table = document.getElementById('capacity-expiry-detail-table');
+        if (!table) return;
+        var card = table.closest('.card');
+        var tbody = table.querySelector('tbody');
+        var filters = card ? card.querySelectorAll('.capacity-expiry-detail-filter') : [];
+        function applyCapacityExpiryFilters() {
+          var facility = (card.querySelector('[data-filter="facility"]') || {}).value || '';
+          var status = (card.querySelector('[data-filter="status"]') || {}).value || '';
+          var expiry = (card.querySelector('[data-filter="expiry"]') || {}).value || '';
+          var rows = tbody ? tbody.querySelectorAll('tr') : [];
+          rows.forEach(function(tr) {
+            var f = (tr.getAttribute('data-facility') || '').trim();
+            var s = (tr.getAttribute('data-status') || '').trim();
+            var e = (tr.getAttribute('data-expiry') || '').trim();
+            var show = (!facility || f === facility) && (!status || s === status) && (!expiry || e === expiry);
+            tr.style.display = show ? '' : 'none';
+          });
+        }
+        for (var i = 0; i < filters.length; i++) {
+          filters[i].addEventListener('change', applyCapacityExpiryFilters);
+        }
+      })();
+</script>

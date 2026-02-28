@@ -1,0 +1,106 @@
+{% load static %}
+{% load sass_tags %}
+{% block css %}
+    <style>
+/* 🎨 الكارت بتدرّج ناعم + أنيميشن */
+.dashboard-card {
+  background: linear-gradient(135deg, #f3f9fb 0%, #eaf4f8 40%, #ffffff 100%);
+  box-shadow: 0 4px 10px rgba(0, 127, 163, 0.1);
+  transition: all 0.5s ease;
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+}
+
+/* ✨ تأثير اللمعة */
+.dashboard-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 150%;
+  height: 100%;
+  background: linear-gradient(
+    120deg,
+    rgba(0,127,163,0) 0%,
+    rgba(0,127,163,0.12) 40%,
+    rgba(0,127,163,0.2) 60%,
+    rgba(0,127,163,0) 100%
+  );
+  transition: all 0.6s ease;
+}
+
+/* 💫 عند الـ hover */
+.dashboard-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 8px 25px rgba(0,127,163,0.25);
+}
+.dashboard-card:hover::before {
+  left: 150%;
+  transition: left 1.2s ease;
+}
+
+/* 🌀 الأيقونة */
+.icon-container {
+  background: rgba(0,127,163,0.08);
+  transition: all 0.5s ease;
+}
+.dashboard-card:hover .icon-container {
+  animation: border-spin 1.4s linear infinite;
+  border: 2px dotted rgba(0,127,163,0.6);
+}
+@keyframes border-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+
+@keyframes load {
+  to { width: var(--target); }
+}
+
+    </style>
+{% endblock css %}
+<!-- Container-fluid starts-->
+<div class="container-fluid general-widget mt-4">
+    {# ✅ رسالة من الفيو لو موجودة #}
+    {% if message %}<div class="alert alert-info small mb-4">{{ message }}</div>{% endif %}
+    <!-- ========================================================= -->
+    <!-- 🔹 التابات الرئيسية (All Tabs) -->
+    <!-- ========================================================= -->
+    <div class="row g-3">
+        {% if tab_summaries %}
+            {% for tab in tab_summaries %}
+                {% if tab.type == "tab" %}
+                    <div class="col-md-6 mb-4">
+                        <div class="card border-0 rounded-4 shadow-sm h-100"
+                             style="background-color:#e8f1fbcc !important">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h5 class="fw-bold mb-0 text-truncate" style="color:#000 !important;">{{ tab.name }}</h5>
+                                    {% if tab.hit_pct %}
+                                        <span class="badge bg-success rounded-pill px-3 py-2 small">{{ tab.hit_pct }}%</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary rounded-pill px-3 py-2 small">No Data</span>
+                                    {% endif %}
+                                </div>
+                                <div class="overflow-auto small" style="max-height: 400px;">{{ tab.detail_html|safe }}</div>
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    </div>
+</div>
+<!-- Container-fluid Ends-->
+<!-- Animation Script -->
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll('.progress-bar').forEach((bar, index) => {
+    const pct = {{ tab_summaries|length }} > 0 ? {{ tab_summaries|length }} : 0;
+    const width = bar.closest('.card-body').querySelector('.fw-semibold.text-success').innerText.replace('%','');
+    setTimeout(() => { bar.style.width = width + '%'; }, 100 * index);
+  });
+});
+</script>

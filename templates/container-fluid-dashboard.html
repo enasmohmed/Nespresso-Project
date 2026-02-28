@@ -1,0 +1,1759 @@
+{% load static %} {% load sass_tags %}
+
+<style>
+  /* ═══ Aramco palette – تطبيق الألوان على الداشبورد ═══ */
+  .page-body-wrapper,
+  .page-body-wrapper .page-body {
+    background-color: #F3F5F7 !important;
+  }
+  .card,
+  .inbound-section .card,
+  .outbound-section .card,
+  .dashboard-section-returns .card,
+  .dashboard-section-inventory .card {
+    background-color: #FFFFFF !important;
+    border-color: #E1E5EA !important;
+  }
+  .card-header {
+    background-color: #FFFFFF !important;
+    border-color: #E1E5EA !important;
+    color: #2C2F33 !important;
+  }
+  .header-top .card-title-inline,
+  .header-top .card-title-inline-outbound,
+  .header-top .card-title-inline-return,
+  .header-top .card-title-inline-inventory {
+    color: #2C2F33 !important;
+  }
+  .inbound-kpi-card .inbound-kpi-label,
+  .dashboard-kpi-card .dashboard-kpi-label {
+    color: #9AA3AD !important;
+  }
+  .inbound-kpi-card .inbound-kpi-value,
+  .dashboard-kpi-card .dashboard-kpi-value {
+    color: #2C2F33 !important;
+  }
+  .inbound-kpi-icon.bg-success-soft {
+    {% comment %} background-color: rgba(63, 143, 122, 0.2) !important; {% endcomment %}
+    color: #2F6F5F !important;
+  }
+  .inbound-kpi-icon.bg-primary-soft {
+    {% comment %} background-color: rgba(76, 143, 214, 0.2) !important; {% endcomment %}
+    color: #2F6F5F !important;
+  }
+  .card-header-icon.text-primary {
+    color: #4C8FD6 !important;
+  }
+  .dashboard-data-table th {
+    background-color: #F8FAFB !important;
+    border-color: #E1E5EA !important;
+    color: #2C2F33 !important;
+  }
+  .dashboard-data-table td,
+  .dashboard-data-table {
+    border-color: #E1E5EA !important;
+  }
+  .fw-bold.text-dark,
+  h6.text-dark {
+    color: #2C2F33 !important;
+  }
+  .text-muted {
+    color: #9AA3AD !important;
+  }
+  .btn-primary {
+    background-color: #4C8FD6 !important;
+    border-color: #4C8FD6 !important;
+  }
+  .btn-success {
+    background-color: #3F8F7A !important;
+    border-color: #3F8F7A !important;
+  }
+  .text-primary { color: #4C8FD6 !important; }
+  .text-success { color: #3F8F7A !important; }
+  .bg-primary { background-color: #4C8FD6 !important; }
+  .bg-success { background-color: #3F8F7A !important; }
+
+  .title-card {
+    color: #4C8FD6;
+  }
+  .vertical-hr {
+    border-left: 2px solid #231c1c;
+    height: 100%;
+    /*margin-right: 60px;*/
+  }
+  .custom-box {
+    border: 1px solid #6c757d;
+    border-radius: 0.25rem;
+    padding: 10px;
+    transition:
+      background-color 0.3s,
+      color 0.3s;
+    text-align: center;
+    margin-bottom: 15px;
+  }
+  .container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 10px;
+    margin-bottom: 25px;
+  }
+
+  .custom-box-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px; /* المسافة بين العناصر */
+  }
+
+  .custom-box {
+    background-color: #f0f0f0;
+    padding: 20px;
+    border-radius: 10px;
+    width: 100%; /* عرض كامل */
+    box-sizing: border-box;
+  }
+
+  .box-header {
+    text-align: center;
+    margin-top: 10px;
+  }
+
+  .box-title {
+    font-size: 1.2em;
+    margin: 0;
+  }
+
+  .box-number {
+    font-size: 1.3em;
+    font-weight: bold;
+    text-align: center;
+  }
+  .card .card-header {
+    padding: 12px !important;
+  }
+  .header-top {
+    position: relative;
+  }
+  .header-top.card-header-inline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .header-top.card-header-inline .card-header-icon,
+  .header-top.card-header-inline .flip-icon {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 6px;
+  }
+  .header-top.card-header-inline .title-card,
+  .header-top.card-header-inline .card-title-inline {
+    margin: 0;
+    flex-shrink: 0;
+    color: #000 !important;
+    font-size: 1.25rem !important;
+    font-weight: 600;
+    line-height: 1.4;
+    visibility: visible;
+    opacity: 1;
+    margin-right: 76%;
+  }
+  .header-top.card-header-inline .card-title-inline-outbound {
+    margin: 0;
+    flex-shrink: 0;
+    color: #000 !important;
+    font-size: 1.25rem !important;
+    font-weight: 600;
+    line-height: 1.4;
+    visibility: visible;
+    opacity: 1;
+    margin-right: 74%;
+  }
+  .header-top.card-header-inline .card-title-inline-return {
+    margin: 0;
+    flex-shrink: 0;
+    color: #000 !important;
+    font-size: 1.25rem !important;
+    font-weight: 600;
+    line-height: 1.4;
+    visibility: visible;
+    opacity: 1;
+    margin-right: 78%;
+  }
+  .header-top.card-header-inline .card-title-inline-inventory {
+    margin: 0;
+    flex-shrink: 0;
+    color: #000 !important;
+    font-size: 1.25rem !important;
+    font-weight: 600;
+    line-height: 1.4;
+    visibility: visible;
+    opacity: 1;
+    margin-right: 74%;
+  }
+  /* عناوين الأقسام الفرعية (نفس حجم Inbound / Inventory) */
+  .dashboard-section-title {
+    font-size: 1.25rem !important;
+    font-weight: 600;
+    line-height: 1.4;
+    color: #2C2F33 !important;
+  }
+  /* كارد بوضوح: بورد خفيف + شادور (للاستخدام على Inbound وباقي الكروت) */
+  .dashboard-card-elevated {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    border-radius: 12px !important;
+  }
+  /* ========== Inbound section (new design) ========== */
+  .inbound-section .inbound-kpi-card,
+  .outbound-section .inbound-kpi-card,
+  .dashboard-section-returns .inbound-kpi-card,
+  .dashboard-section-inventory .inbound-kpi-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 1.25rem;
+    border: 1px solid #eee;
+    transition: box-shadow 0.2s;
+    box-shadow: 11px 12px 20px rgba(0, 0, 0, 0.15);
+    height: 100%;
+  }
+  .inbound-section .inbound-kpi-card:hover,
+  .outbound-section .inbound-kpi-card:hover,
+  .dashboard-section-returns .inbound-kpi-card:hover,
+  .dashboard-section-inventory .inbound-kpi-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  .inbound-section .inbound-kpi-card .inbound-kpi-label,
+  .outbound-section .inbound-kpi-card .inbound-kpi-label,
+  .dashboard-section-returns .inbound-kpi-card .inbound-kpi-label,
+  .dashboard-section-inventory .inbound-kpi-card .inbound-kpi-label {
+    color: #000;
+    margin-bottom: 0.35rem;
+    font-size: 16px;
+    font-weight: 500;
+    text-align: center;
+  }
+  .inbound-section .inbound-kpi-card .inbound-kpi-value,
+  .outbound-section .inbound-kpi-card .inbound-kpi-value,
+  .dashboard-section-returns .inbound-kpi-card .inbound-kpi-value,
+  .dashboard-section-inventory .inbound-kpi-card .inbound-kpi-value {
+    font-size: 2rem;
+    font-weight: 400;
+    color: #212529;
+  }
+
+  .inbound-kpi-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+  }
+
+  /* خلفيات فاتحة (باليت Aramco) */
+  .bg-success-soft {
+    color: #2F6F5F !important;
+  }
+
+  .bg-primary-soft {
+    color: #2F6F5F !important;
+  }
+
+  .bg-info-soft {
+    color: #e0f2f1;
+  }
+
+  .bg-warning-soft {
+    color: #fff8e1;
+  }
+  .inbound-section .pending-shipments-card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 1px solid #eee;
+    overflow: hidden;
+  }
+  .inbound-section .pending-shipments-list .pending-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.95rem;
+  }
+  /*
+  .inbound-kpi-icon img {
+    color: #0d6efd;
+  }
+  */
+
+  .inbound-section .pending-shipments-list .pending-item:last-child {
+    border-bottom: none;
+  }
+  .inbound-section .pending-item-bullet {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+    margin-right: 0.5rem;
+  }
+  .inbound-section .pending-item-label {
+    color: #495057;
+  }
+  .inbound-section .pending-item-value {
+    font-weight: 600;
+    color: #1a237e;
+  }
+  .inbound-section .pending-item-value.text-success {
+    color: #2e7d32;
+  }
+  .inbound-section #inbound-pending-donut {
+    min-height: 280px;
+  }
+  @media (max-width: 767.98px) {
+    .inbound-section .inbound-kpi-card .inbound-kpi-value {
+      font-size: 1.5rem;
+    }
+  }
+
+  /* Outbound / Returns / Inventory shared KPI card style */
+  .dashboard-kpi-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 1rem;
+    height: 100%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 1px solid #eee;
+  }
+  .dashboard-kpi-card .dashboard-kpi-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+  }
+  .dashboard-kpi-card .dashboard-kpi-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #1a237e;
+  }
+  .dashboard-data-table {
+    font-size: 0.875rem;
+  }
+  .dashboard-data-table th {
+    background: #f8f9fa;
+  }
+  @media (max-width: 767.98px) {
+    .dashboard-kpi-card .dashboard-kpi-value {
+      font-size: 1.25rem;
+    }
+  }
+
+  .line-button {
+    position: absolute;
+    width: 100%;
+    bottom: -13px;
+    border: 1px solid #118dec;
+    margin-top: 10px;
+    opacity: unset;
+  }
+
+  #box1 {
+    border: 1px solid #64b5f6;
+    border-radius: 0.25rem;
+    padding: 6px;
+    text-align: center;
+    margin-bottom: 15px;
+    width: 50%;
+    font-size: 28px;
+    background-color: #64b5f6;
+    color: #fff;
+    font-weight: 500;
+  }
+
+  #box2 {
+    border: 1px solid #9fa8da;
+    border-radius: 0.25rem;
+    padding: 6px;
+    text-align: center;
+    margin-bottom: 15px;
+    width: 50%;
+    font-size: 28px;
+    background-color: #9fa8da;
+    color: #fff;
+    font-weight: 500;
+  }
+
+  #box3 {
+    border: 1px solid #80cbc4;
+    border-radius: 0.25rem;
+    padding: 6px;
+    text-align: center;
+    margin-bottom: 15px;
+    width: 50%;
+    font-size: 28px;
+    background-color: #80cbc4;
+    color: #fff;
+    font-weight: 500;
+  }
+  .box-title {
+    color: #000;
+  }
+  .custom-label {
+    position: absolute;
+    white-space: normal;
+    text-align: center;
+    width: 100px; /* Adjust width as needed */
+  }
+  .apexcharts-legend {
+    display: flex;
+    flex-direction: column; /* تجعل النصوص تظهر تحت بعضها */
+    align-items: center;
+  }
+  .inbound {
+    float: left;
+    position: absolute;
+    left: 6%;
+    font-size: 23px;
+  }
+  .outbound-h4 {
+    float: left;
+    position: absolute;
+    left: 9%;
+    font-size: 23px;
+  }
+  .returns {
+    float: left;
+    position: absolute;
+    left: 12%;
+    font-size: 23px;
+  }
+  .inventory-h4 {
+    float: left;
+    position: absolute;
+    left: 11%;
+    font-size: 23px;
+  }
+  .location-h4 {
+    float: left;
+    position: absolute;
+    left: 7%;
+    font-size: 23px;
+  }
+
+  .flip-icon {
+    transform: scaleX(-1);
+  }
+
+  .outbound .card-header {
+    border: 2px solid #64b5f6;
+    border-radius: 10px;
+    background-color: #64b5f6;
+    color: #fff;
+
+    text-align: center;
+  }
+  .outbound .card-title {
+    font-size: 18px;
+  }
+  .outbound .custom-card {
+    border: 2px solid #ddd;
+    border-radius: 10px;
+    text-align: center;
+  }
+  .outbound .card-number {
+    font-size: 20px;
+    font-weight: bold;
+  }
+  .outbound {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    margin-bottom: 20px; /* Add margin bottom to create space between cards and footer */
+  }
+
+  .outbound .card-header {
+    font-size: 16px;
+    margin-bottom: 5px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+  }
+  .outbound .card-title {
+    font-size: 16px;
+    margin: 0 auto;
+  }
+  .outbound .custom-card {
+    font-size: 24px;
+    font-weight: bold;
+  }
+  .details-container {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+  }
+  .detail {
+    text-align: center;
+    flex: 1;
+  }
+  .detail-text {
+    font-size: 16px;
+    margin-bottom: 10px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+  }
+  .detail-number {
+    font-size: 24px;
+    font-weight: bold;
+    margin: 0 auto;
+  }
+
+  .expiry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .text {
+    flex: 1;
+    margin-right: 10px;
+    font-size: 16px;
+  }
+  .number-box {
+    width: 30%;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 22px;
+    color: #fff;
+    border-radius: 5px;
+  }
+  .color1 {
+    background-color: #64b5f6; /* Red */
+  }
+  .color2 {
+    background-color: #9fa8da; /* Green */
+  }
+  .color3 {
+    background-color: #80cbc4; /* Blue */
+  }
+  .color4 {
+    background-color: #64b5f6; /* Yellow */
+  }
+  .employee {
+    margin-top: -10px !important;
+  }
+
+  .employee .card {
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+  }
+  .employee .card-header {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+    background-color: #f8f8f8;
+  }
+  .employee .card-body {
+    padding: 20px;
+  }
+  .employee .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .employee .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 60px;
+    height: 40px;
+  }
+  .employee .number-circle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background-color: #64b5f6;
+    color: #fff;
+    font-size: 18px;
+  }
+  .employee .icon svg {
+    fill: #118dec;
+  }
+  .chart-container {
+    width: 100%;
+    height: 100%;
+    min-height: 300px;
+  }
+
+  .location {
+    border: 2px solid #ddd;
+    color: #118df0de;
+  }
+
+  /* Div Years and Month and Day */
+  .calendar {
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    margin-bottom: 10px;
+  }
+  .calendar .card-header {
+    background-color: #f5f5f5;
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+  }
+  .calendar .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .calendar .line-button {
+    width: 100%;
+    margin: 0;
+    border: none;
+    border-bottom: 1px solid #ddd;
+  }
+  .calendar .card-body {
+    padding: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .calendar .stat-box {
+    margin-top: 10px;
+  }
+
+  @media (min-width: 1440px) {
+    .employee {
+      padding: 7% !important;
+    }
+    .inbound {
+      left: 4%;
+    }
+    .outbound-h4 {
+      left: 7%;
+    }
+    .returns {
+      left: 10%;
+    }
+    .line-button {
+      bottom: -20px;
+    }
+  }
+
+  @media (min-width: 2880px) {
+    .employee {
+      padding: 4% !important;
+    }
+    .inbound {
+      left: 2%;
+    }
+    .outbound-h4 {
+      left: 4%;
+    }
+    .returns {
+      left: 4%;
+    }
+    .inventory-h4 {
+      left: 5%;
+    }
+    .location-h4 {
+      left: 3%;
+    }
+    .line-button {
+      bottom: -20px;
+    }
+  }
+
+  #chart-inventory {
+    margin-top: 5px;
+  }
+  .edit-data {
+  }
+
+  .flex-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    margin: 0px 0px 0px -50px;
+  }
+
+  #chart-part-1,
+  #chart-part-2 {
+    width: 45%;
+    text-align: center;
+  }
+
+  .chart-inbound {
+    display: flex;
+    justify-content: space-between;
+  }
+  #chart-part-1 {
+    width: 50%;
+  }
+  .divider {
+    width: 1px;
+    background-color: #d3d3d3;
+    height: 100%;
+    margin: 0 20px;
+    position: absolute;
+  }
+  #chart-part-2 {
+    width: 50%;
+  }
+
+  #arrival-chart,
+  #report-chart {
+    width: 100%;
+  }
+  #report-chart {
+    margin-left: 20px; /* مسافة إضافية إذا لزم الأمر */
+  }
+
+  /* Dashboard grid: responsive + equal height cards */
+  .default-dashboard .dashboard-row {
+    display: flex;
+    flex-wrap: wrap;
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+  }
+  .default-dashboard .dashboard-row > [class*="col-"] {
+    margin-bottom: 1.25rem;
+  }
+  .default-dashboard .dashboard-row .card {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .default-dashboard .dashboard-row .card .card-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  @media (max-width: 991.98px) {
+    .default-dashboard .dashboard-row > [class*="col-"] {
+      flex: 0 0 100%;
+      max-width: 100%;
+    }
+    .default-dashboard #chart-container {
+      flex-direction: column !important;
+      margin-left: 0 !important;
+    }
+    .default-dashboard #chart-part-1,
+    .default-dashboard #chart-part-2 {
+      width: 100% !important;
+    }
+    .default-dashboard .divider {
+      width: 100%;
+      height: 1px;
+      margin: 1rem 0;
+    }
+  }
+  @media (max-width: 767.98px) {
+    .default-dashboard .vertical-hr {
+      border-left: none;
+      border-top: 2px solid #231c1c;
+      width: 100%;
+      height: 0;
+      margin: 0.5rem 0;
+    }
+  }
+</style>
+
+<!-- Container-fluid starts-->
+<div class="container-fluid default-dashboard general-widget px-0 px-md-2">
+  <!-- Row 1: Inbound (left) | Outbound (right) - 2x2 layout like reference -->
+  <div class="row dashboard-row g-3 g-lg-4">
+    <div class="col-12 col-lg-6 inbound-section">
+      <div class="card border-0 shadow-sm h-100 dashboard-card-elevated">
+        <div class="card-header bg-white border-0 pb-0">
+          <div class="header-top card-header-inline">
+            <span class="card-header-icon">
+              <img
+                src="{% static 'assets/svg/truck_inbound.svg' %}"
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                alt="inbound Truck"
+              />
+            </span>
+            <span class="card-title-inline">Inbound</span>
+            <hr class="line-button" />
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-2">
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Number of Shipments</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inbound_kpi.number_of_shipments|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-primary-soft text-primary">
+                    <i class="bi-truck-flatbed"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Number of Pallets (LPNs)</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inbound_kpi.number_of_pallets|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-info-soft text-info">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="row g-3 mb-4">
+            {% if inbound_kpi.card4_label %}
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Total Quantity</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inbound_kpi.total_quantity_display|default:inbound_kpi.total_quantity|default:"0" }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-warning-soft text-warning">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">{{ inbound_kpi.card4_label }}</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inbound_kpi.card4_value|default:"" }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-secondary bg-opacity-25 text-secondary">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% else %}
+            <div class="col-12">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Total Quantity</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inbound_kpi.total_quantity_display|default:inbound_kpi.total_quantity|default:"0" }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-warning-soft text-warning">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12">
+              <div
+                class="pending-shipments-card p-3 dashboard-card-elevated rounded-3"
+              >
+                <h5 class="dashboard-section-title text-dark mb-3">
+                  Pending Shipments
+                </h5>
+
+                <div class="row align-items-center">
+                  <!-- LEFT: list -->
+                  <div class="col-12 col-lg-6">
+                    <div class="pending-shipments-list">
+                      {% for item in pending_shipments %}
+                      <div
+                        class="pending-item d-flex justify-content-between align-items-center mb-2"
+                      >
+                        <div class="d-flex align-items-center gap-2">
+                          <span
+                            class="pending-item-bullet"
+                            style="background-color: {{ item.color }};"
+                          ></span>
+                          <span class="pending-item-label"
+                            >{{ item.label }}</span
+                          >
+                        </div>
+                        <span class="fw-semibold">{{ item.value }}</span>
+                      </div>
+                      {% endfor %}
+                    </div>
+                  </div>
+
+                  <!-- RIGHT: donut + بيانات الشارت في نفس الكارت -->
+                  <div
+                    class="col-12 col-lg-6 d-flex justify-content-center align-items-center"
+                  >
+                    <div
+                      class="pending-donut-wrapper"
+                      style="
+                        position: relative;
+                        width: 100%;
+                        min-height: 280px;
+                        max-width: 320px;
+                      "
+                    >
+                      <div
+                        id="inbound-pending-donut"
+                        style="width: 100%; min-height: 280px"
+                      ></div>
+                      <div
+                        id="inbound-pending-donut-center"
+                        class="pending-donut-center-label"
+                        aria-hidden="true"
+                        style="
+                          position: absolute;
+                          left: 50%;
+                          top: 50%;
+                          transform: translate(-50%, -50%);
+                          text-align: center;
+                          pointer-events: none;
+                          z-index: 5;
+                          font-size: 22px;
+                          font-weight: 700;
+                          color: #2c2f33;
+                          line-height: 1;
+                        "
+                      ></div>
+                    </div>
+                    {{ pending_shipments|json_script:"pending-shipments-data" }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Outbound card (right) - مثل الصورة بدون POD by Region -->
+    <div class="col-12 col-lg-6 outbound-section">
+      <div class="card border-0 shadow-sm h-100 dashboard-card-elevated">
+        <div class="card-header bg-white border-0 pb-0">
+          <div class="header-top card-header-inline">
+            <span class="card-header-icon text-secondary">
+              <img
+                src="{% static 'assets/svg/truck_outbound.svg' %}"
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                alt="Outbound Truck"
+              />
+            </span>
+            <span class="card-title-inline-outbound">Outbound</span>
+            <hr class="line-button" />
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-2">
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Released Orders</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ outbound_kpi.released_orders|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-primary-soft text-primary">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Picked Orders</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ outbound_kpi.picked_orders|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-success-soft text-success">
+                    <i class="bi bi-check2-square"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="row g-3 mb-4">
+            {% if outbound_kpi.card4_label %}
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Number of Pallets (LPNs)</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ outbound_kpi.number_of_pallets|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-info-soft text-info">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">{{ outbound_kpi.card4_label }}</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ outbound_kpi.card4_value|default:"" }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-secondary bg-opacity-25 text-secondary">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% else %}
+            <div class="col-12">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Number of Pallets (LPNs)</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ outbound_kpi.number_of_pallets|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-info-soft text-info">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+          </div>
+          <div
+            class="pod-compliance-block mb-3 p-3 dashboard-card-elevated rounded-3"
+          >
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <span class="dashboard-section-title fw-bold text-dark"
+                >PODs Compliance</span
+              >
+              <!--              <span class="dashboard-kpi-value mb-0">{{ outbound_kpi.pod_compliance_pct|default:94 }}%</span>-->
+              <!--              <select class="form-select form-select-sm w-auto" id="outbound-period">-->
+              <!--                <option value="6">Last 6 Months</option>-->
+              <!--                <option value="12">Last 12 Months</option>-->
+              <!--              </select>-->
+            </div>
+            <div
+              id="chart-outbound-sla"
+              class="pods-chart-container"
+              style="height: 280px; min-height: 280px"
+            ></div>
+            <div class="d-flex flex-wrap justify-content-center gap-3 gap-md-4 mt-2 pt-2 border-top border-light">
+              <div class="d-flex align-items-center gap-2">
+                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #7FB7A6;"></span>
+                <span class="small text-dark">On Time</span>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #A8C8EB;"></span>
+                <span class="small text-dark">Pending</span>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #E8A8A2;"></span>
+                <span class="small text-dark">Late</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Returns (left) | Inventory (right) -->
+  <div class="row dashboard-row g-3 g-lg-4">
+    <div class="col-12 col-lg-6 dashboard-section-returns">
+      <div class="card border-0 shadow-sm h-100 dashboard-card-elevated">
+        <div class="card-header bg-white border-0 pb-0">
+          <div class="header-top card-header-inline">
+            <span class="card-header-icon text-primary">
+              <img
+                src="{% static 'assets/svg/return.svg' %}"
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                alt="inbound Truck"
+              />
+            </span>
+            <span class="card-title-inline-return">Returns</span>
+            <hr class="line-button" />
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row g-2 mb-3">
+            <div class="col-12 col-sm-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Total SKUs</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ returns_kpi.total_skus|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-success-soft text-success">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-sm-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Total LPNs</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ returns_kpi.total_lpns|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-success-soft text-success">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="pod-compliance-block mb-3 p-3 dashboard-card-elevated rounded-3"
+          >
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <span class="dashboard-section-title fw-bold text-dark"
+                >Order Process Time</span
+              >
+            </div>
+            <div
+              id="chart-returns-sla"
+              class="pods-chart-container"
+              style="height: 280px; min-height: 280px"
+            ></div>
+          </div>
+          <div class="dashboard-card-elevated rounded-3 p-3 mt-3">
+            <h6 class="dashboard-section-title text-dark mb-2">Region</h6>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered dashboard-data-table">
+                <thead>
+                  <tr>
+                    <th>Region</th>
+                    <th>SKUs</th>
+                    <th>Available</th>
+                    <th>Utilization %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in returns_region_table %}
+                  <tr>
+                    <td>{{ row.region|default:"" }}</td>
+                    <td>{{ row.skus|default:"" }}</td>
+                    <td>{{ row.available|default:"" }}</td>
+                    <td>{{ row.utilization_pct|default:"" }}</td>
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td colspan="4" class="text-center text-muted">
+                      No region data available.
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6 dashboard-section-inventory">
+      <div class="card border-0 shadow-sm h-100 dashboard-card-elevated">
+        <div class="card-header bg-white border-0 pb-0">
+          <div class="header-top card-header-inline">
+            <span class="card-header-icon text-primary">
+              <img
+                src="{% static 'assets/svg/inventory.svg' %}"
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                alt="inbound Truck"
+              />
+            </span>
+            <span class="card-title-inline-inventory">Inventory</span>
+            <hr class="line-button" />
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row g-2 mb-3">
+            <div class="col-12 col-sm-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Total SKUs</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inventory_kpi.total_skus|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-success-soft text-success">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12 col-sm-6">
+              <div class="inbound-kpi-card p-3">
+                <div class="inbound-kpi-label mb-2">Total LPNs</div>
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="inbound-kpi-value">
+                    {{ inventory_kpi.total_lpns|default:0 }}
+                  </div>
+                  <div class="inbound-kpi-icon bg-success-soft text-success">
+                    <i class="bi bi-truck"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            id="inventory-capacity-section"
+            class="mb-3 p-3 dashboard-card-elevated rounded-3"
+          >
+            <div class="mb-2">
+              <span class="dashboard-section-title fw-bold text-dark"
+                >Capacity Used vs Available</span
+              >
+            </div>
+            <div
+              id="chart-inventory-capacity"
+              class="dashboard-chart-container"
+              style="height: 280px; min-height: 280px"
+            ></div>
+          </div>
+          <div class="dashboard-card-elevated rounded-3 p-3 mt-3">
+            <h6 class="dashboard-section-title text-dark mb-2">Warehouse</h6>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered dashboard-data-table">
+                <thead>
+                  <tr>
+                    <th>Warehouse</th>
+                    <th>SKUs</th>
+                    <th>Available Space</th>
+                    <th>Utilization %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in inventory_warehouse_table %}
+                  <tr>
+                    <td>{{ row.warehouse|default:"" }}</td>
+                    <td>{{ row.skus|default:"" }}</td>
+                    <td>{{ row.available_space|default:"" }}</td>
+                    <td>{{ row.utilization_pct|default:"" }}</td>
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td>Main Warehouse</td>
+                    <td>117</td>
+                    <td>9,536,995</td>
+                    <td>223</td>
+                  </tr>
+                  <tr>
+                    <td>Dammam DC</td>
+                    <td>108</td>
+                    <td>9,260,995</td>
+                    <td>553</td>
+                  </tr>
+                  <tr>
+                    <td>Riyadh DC</td>
+                    <td>145</td>
+                    <td>9,827,955</td>
+                    <td>535</td>
+                  </tr>
+                  <tr>
+                    <td>Jeddah DC</td>
+                    <td>159</td>
+                    <td>5,324,353</td>
+                    <td>279</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!--Inbound -->
+
+<script>
+  (function () {
+    // ─── مكان الألوان: عدّل هنا الألوان اللي انت عايزها (بالترتيب: أول قطعة، ثاني قطعة، ...) ───
+    var PENDING_DONUT_COLORS = [
+      "#B8D4F0", // أزرق فاتح (sky)
+      "#A8C8EB", // أزرق فاتح (light blue)
+      "#9BC4B7", // أخضر مريح (sage)
+      "#B5D4CB", // أخضر فاتح (seafoam)
+      "#D4E8C8", // أخضر باهت (pale green)
+    ];
+
+    function applyPendingDonut() {
+      var donutEl = document.getElementById("inbound-pending-donut");
+      if (!donutEl) return false;
+      if (typeof ApexCharts === "undefined") {
+        setTimeout(applyPendingDonut, 150);
+        return false;
+      }
+      var card = donutEl.closest && donutEl.closest(".pending-shipments-card");
+      var dataEl =
+        (card && card.querySelector("#pending-shipments-data")) ||
+        document.getElementById("pending-shipments-data");
+      var chartItems = [];
+      if (dataEl && dataEl.textContent && dataEl.textContent.trim()) {
+        try {
+          var raw = JSON.parse(dataEl.textContent.trim());
+          chartItems = (raw || []).filter(function (item) {
+            return item && item.pct != null;
+          });
+        } catch (e) {
+          console.warn("Pending shipments JSON error", e);
+        }
+      }
+      if (!chartItems.length) {
+        chartItems = [
+          { label: "In Transit", pct: 1 },
+          { label: "Receiving Complete", pct: 96 },
+          { label: "Verified", pct: 3 },
+        ];
+      }
+      if (window._inboundPendingDonutChart) {
+        try {
+          window._inboundPendingDonutChart.destroy();
+        } catch (e) {}
+        window._inboundPendingDonutChart = null;
+      }
+      donutEl.innerHTML = "";
+      var series = chartItems.map(function (i) {
+        return i.pct;
+      });
+      var labels = chartItems.map(function (i) {
+        return i.label;
+      });
+      var colors = chartItems.map(function (i, idx) {
+        return PENDING_DONUT_COLORS[idx] || PENDING_DONUT_COLORS[0];
+      });
+      var maxPct = 0;
+      var maxLabel = "";
+      chartItems.forEach(function (i) {
+        if (i.pct != null && i.pct >= maxPct) {
+          maxPct = i.pct;
+          maxLabel = i.label || "";
+        }
+      });
+      var options = {
+        series: series,
+        labels: labels,
+        colors: colors,
+        chart: {
+          type: "donut",
+          height: 280,
+          width: "100%",
+          animations: { enabled: true },
+        },
+        legend: { show: false },
+        dataLabels: {
+          enabled: true,
+          formatter: function (val) {
+            return val.toFixed(0) + "%";
+          },
+          style: { fontSize: "14px", colors: ["#fff"] },
+        },
+        plotOptions: {
+          pie: {
+            donut: {
+              size: "65%",
+              labels: { show: false },
+            },
+            dataLabels: { offset: -5 },
+          },
+        },
+        responsive: [{ breakpoint: 480, options: { chart: { height: 300 } } }],
+      };
+      var chart = new ApexCharts(donutEl, options);
+      donutEl.style.position = "relative";
+      var centerEl = document.getElementById("inbound-pending-donut-center");
+      var wrapper = donutEl.closest(".pending-donut-wrapper");
+      chart.render().then(function () {
+        if (centerEl) {
+          centerEl.textContent = String(maxPct) + "%";
+          centerEl.style.display = "";
+        }
+        if (wrapper) {
+          var oldCenter = wrapper.querySelector(
+            ".pending-donut-center-label:not(#inbound-pending-donut-center)",
+          );
+          if (oldCenter) oldCenter.remove();
+        }
+      });
+      if (centerEl) {
+        centerEl.textContent = String(maxPct) + "%";
+        centerEl.style.display = "";
+      }
+      window._inboundPendingDonutChart = chart;
+      return true;
+    }
+    window.initInboundPendingDonut = applyPendingDonut;
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", applyPendingDonut);
+    } else {
+      setTimeout(applyPendingDonut, 0);
+    }
+  })();
+</script>
+
+<script>
+  (function () {
+    // ─── تحكم من الكونسول: غيّر PODS_CHART_CONFIG ثم نفّذ initPodsComplianceChart() ───
+    window.PODS_CHART_CONFIG = {
+      height: 350,
+      columnWidth: "100%",
+      borderRadius: 4,
+      colors: ["#7FB7A6", "#A8C8EB", "#E8A8A2"],
+    };
+
+    function renderPodsComplianceChart() {
+      var el = document.getElementById("chart-outbound-sla");
+      if (!el || typeof ApexCharts === "undefined") return;
+      var cfg = window.PODS_CHART_CONFIG || {};
+      var chartHeight =
+        el.offsetHeight || (cfg.height != null ? cfg.height : 280);
+      var columnWidth =
+        cfg.columnWidth != null && cfg.columnWidth !== ""
+          ? cfg.columnWidth
+          : "100%";
+      var borderRadius = cfg.borderRadius != null ? cfg.borderRadius : 4;
+      var colors =
+        Array.isArray(cfg.colors) && cfg.colors.length
+          ? cfg.colors
+          : ["#7FB7A6", "#A8C8EB", "#E8A8A2"];
+
+      var dataEl = document.getElementById("pod-compliance-chart-data");
+      var categories = [];
+      var series = [];
+      if (dataEl && dataEl.textContent && dataEl.textContent.trim()) {
+        try {
+          var data = JSON.parse(dataEl.textContent.trim());
+          categories = data.categories || [];
+          series = data.series || [];
+        } catch (e) {
+          console.warn("POD compliance chart data error", e);
+        }
+      }
+      if (!categories.length || !series.length) {
+        categories = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
+        series = [
+          { name: "On Time", data: [70, 72, 68, 75, 74, 78] },
+          { name: "Pending", data: [15, 14, 18, 12, 13, 10] },
+          { name: "Late", data: [15, 14, 14, 13, 13, 12] },
+        ];
+      }
+      if (window._podsComplianceChart) {
+        try {
+          window._podsComplianceChart.destroy();
+        } catch (e) {}
+        window._podsComplianceChart = null;
+      }
+      el.innerHTML = "";
+      var options = {
+        chart: {
+          type: "bar",
+          height: chartHeight,
+          zoom: { enabled: false },
+          toolbar: { show: false },
+        },
+        plotOptions: {
+          bar: {
+            horizontal: false,
+            columnWidth: columnWidth,
+            borderRadius: borderRadius,
+            dataLabels: { position: "top" },
+          },
+        },
+        xaxis: {
+          categories: categories,
+          labels: { style: { fontSize: "11px" } },
+        },
+        yaxis: {
+          min: 0,
+          max: 100,
+          tickAmount: 5,
+          labels: {
+            formatter: function (v) {
+              return v + "%";
+            },
+          },
+          title: { text: "" },
+        },
+        legend: { show: false },
+        colors: colors,
+        dataLabels: { enabled: false },
+        grid: { borderColor: "#E1E5EA", strokeDashArray: 4 },
+        tooltip: {
+          y: {
+            formatter: function (v) {
+              return v + "%";
+            },
+          },
+        },
+        series: series,
+      };
+      var chart = new ApexCharts(el, options);
+      chart.render();
+      window._podsComplianceChart = chart;
+    }
+    window.initPodsComplianceChart = renderPodsComplianceChart;
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", renderPodsComplianceChart);
+    } else {
+      setTimeout(renderPodsComplianceChart, 0);
+    }
+  })();
+</script>
+
+<script>
+  (function () {
+    window.RETURNS_CHART_CONFIG = {
+      height: 280,
+      columnWidth: "100%",
+      borderRadius: 4,
+      colors: ["#7FB7A6", "#A8C8EB", "#E8A8A2"],
+    };
+
+    function renderReturnsComplianceChart() {
+      var el = document.getElementById("chart-returns-sla");
+      if (!el || typeof ApexCharts === "undefined") return;
+      var cfg = window.RETURNS_CHART_CONFIG || {};
+      var chartHeight =
+        el.offsetHeight || (cfg.height != null ? cfg.height : 280);
+      var columnWidth =
+        cfg.columnWidth != null && cfg.columnWidth !== ""
+          ? cfg.columnWidth
+          : "100%";
+      var borderRadius = cfg.borderRadius != null ? cfg.borderRadius : 4;
+      var colors =
+        Array.isArray(cfg.colors) && cfg.colors.length
+          ? cfg.colors
+          : ["#7FB7A6", "#A8C8EB", "#E8A8A2"];
+
+      var dataEl = document.getElementById("returns-chart-data");
+      var categories = [];
+      var series = [];
+      if (dataEl && dataEl.textContent && dataEl.textContent.trim()) {
+        try {
+          var data = JSON.parse(dataEl.textContent.trim());
+          categories = data.categories || [];
+          series = data.series || [];
+        } catch (e) {
+          console.warn("Returns chart data error", e);
+        }
+      }
+      if (!categories.length || !series.length) {
+        categories = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
+        series = [
+          { name: "On Time", data: [70, 72, 68, 75, 74, 78] },
+          { name: "Pending", data: [15, 14, 18, 12, 13, 10] },
+          { name: "Late", data: [15, 14, 14, 13, 13, 12] },
+        ];
+      }
+      if (window._returnsComplianceChart) {
+        try {
+          window._returnsComplianceChart.destroy();
+        } catch (e) {}
+        window._returnsComplianceChart = null;
+      }
+      el.innerHTML = "";
+      var options = {
+        chart: {
+          type: "bar",
+          height: chartHeight,
+          zoom: { enabled: false },
+          toolbar: { show: false },
+        },
+        plotOptions: {
+          bar: {
+            horizontal: false,
+            columnWidth: columnWidth,
+            borderRadius: borderRadius,
+            dataLabels: { position: "top" },
+          },
+        },
+        xaxis: {
+          categories: categories,
+          labels: { style: { fontSize: "11px" } },
+        },
+        yaxis: {
+          min: 0,
+          max: 100,
+          tickAmount: 5,
+          labels: {
+            formatter: function (v) {
+              return v + "%";
+            },
+          },
+          title: { text: "" },
+        },
+        legend: { show: false },
+        colors: colors,
+        dataLabels: { enabled: false },
+        grid: { borderColor: "#E1E5EA", strokeDashArray: 4 },
+        tooltip: {
+          y: {
+            formatter: function (v) {
+              return v + "%";
+            },
+          },
+        },
+        series: series,
+      };
+      var chart = new ApexCharts(el, options);
+      chart.render();
+      window._returnsComplianceChart = chart;
+    }
+    window.initReturnsComplianceChart = renderReturnsComplianceChart;
+    if (document.readyState === "loading") {
+      document.addEventListener(
+        "DOMContentLoaded",
+        renderReturnsComplianceChart,
+      );
+    } else {
+      setTimeout(renderReturnsComplianceChart, 0);
+    }
+  })();
+</script>
+
+<script>
+  (function () {
+    window.INVENTORY_CAPACITY_CHART_CONFIG = {
+      height: 280,
+      usedColor: "#7FB7A6",
+      availableColor: "#C5E4DE",
+    };
+
+    function renderInventoryCapacityChart() {
+      var el = document.getElementById("chart-inventory-capacity");
+      if (!el || typeof ApexCharts === "undefined") return;
+      var cfg = window.INVENTORY_CAPACITY_CHART_CONFIG || {};
+      var chartHeight =
+        el.offsetHeight || (cfg.height != null ? cfg.height : 280);
+      var usedColor = cfg.usedColor || "#7FB7A6";
+      var availableColor = cfg.availableColor || "#C5E4DE";
+
+      var usedPct = 78;
+      var availablePct = 22;
+      var dataEl = document.getElementById("inventory-capacity-data");
+      if (dataEl && dataEl.textContent && dataEl.textContent.trim()) {
+        try {
+          var data = JSON.parse(dataEl.textContent.trim());
+          usedPct = typeof data.used === "number" ? data.used : 78;
+          availablePct =
+            typeof data.available === "number" ? data.available : 22;
+        } catch (e) {
+          console.warn("Inventory capacity chart data error", e);
+        }
+      }
+
+      if (window._inventoryCapacityChart) {
+        try {
+          window._inventoryCapacityChart.destroy();
+        } catch (e) {}
+        window._inventoryCapacityChart = null;
+      }
+      el.innerHTML = "";
+
+      var options = {
+        chart: {
+          type: "bar",
+          height: chartHeight,
+          stacked: true,
+          zoom: { enabled: false },
+          toolbar: { show: false },
+          sparkline: { enabled: false },
+        },
+        plotOptions: {
+          bar: {
+            horizontal: true,
+            columnWidth: "70%",
+            borderRadius: 6,
+            borderRadiusApplication: "end",
+            barHeight: "60%",
+            dataLabels: { position: "top" },
+          },
+        },
+        colors: [usedColor, availableColor],
+        series: [
+          { name: "Used", data: [usedPct] },
+          { name: "Available", data: [availablePct] },
+        ],
+        xaxis: {
+          categories: [""],
+          min: 0,
+          max: 100,
+          tickAmount: 5,
+          labels: {
+            formatter: function (v) {
+              return v + "%";
+            },
+          },
+        },
+        yaxis: { show: false },
+        grid: {
+          borderColor: "#E1E5EA",
+          strokeDashArray: 4,
+          xaxis: { lines: { show: true } },
+          yaxis: { lines: { show: false } },
+        },
+        legend: {
+          show: true,
+          position: "bottom",
+          horizontalAlign: "left",
+          fontSize: "13px",
+          markers: { width: 12, height: 12, radius: 2 },
+          itemMargin: { horizontal: 12, vertical: 4 },
+          formatter: function (seriesName, opts) {
+            if (seriesName === "Available") {
+              return seriesName + ": " + availablePct + "%";
+            }
+            return seriesName;
+          },
+        },
+        dataLabels: { enabled: false },
+        tooltip: {
+          y: {
+            formatter: function (v) {
+              return v + "%";
+            },
+          },
+        },
+      };
+      var chart = new ApexCharts(el, options);
+      chart.render();
+      window._inventoryCapacityChart = chart;
+    }
+    window.initInventoryCapacityChart = renderInventoryCapacityChart;
+    if (document.readyState === "loading") {
+      document.addEventListener(
+        "DOMContentLoaded",
+        renderInventoryCapacityChart,
+      );
+    } else {
+      setTimeout(renderInventoryCapacityChart, 0);
+    }
+  })();
+</script>
+
+<!-- Container-fluid Ends-->

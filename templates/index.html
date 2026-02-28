@@ -1,0 +1,80 @@
+{% extends 'base.html' %} {% load static %} {% load sass_tags %} {% block css %}
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="{% static 'assets/css/vendors/calendar.css' %}"
+/>
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="{% static 'assets/css/vendors/datatables.css' %}"
+/>
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="{% static 'assets/css/vendors/date-picker.css' %}"
+/>
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="{% static 'assets/css/vendors/vector-map.css' %}"
+/>
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="{% static 'assets/css/vendors/fullcalender.css' %}"
+/>
+<!-- Bootstrap Icons CDN -->
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+/>
+
+
+{% endblock css %}
+
+{% block extra_scripts %}
+<script src="{% static 'assets/js/datatable/datatables/jquery.dataTables.min.js' %}"></script>
+{% endblock extra_scripts %}
+
+{% block content %}
+{% include 'components/ui-kits/tab-bootstrap/components/dashboard-tabs.html' %}
+{% endblock content %}
+
+{% block scriptcontent %}
+
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'assets/js/clock.js' %}"></script>
+<script src="{% static 'assets/js/calendar/fullcalendar.min.js' %}"></script>
+<script src="{% static 'assets/js/calendar/fullcalendar-custom.js' %}"></script>
+<script src="{% static 'assets/js/calendar/fullcalender.js' %}"></script>
+<script src="{% static 'assets/js/calendar/custom-calendar.js' %}"></script>
+<script src="{% static 'assets/js/chart/apex-chart/apex-chart.js' %}"></script>
+<script src="{% static 'assets/js/chart/apex-chart/stock-prices.js' %}"></script>
+<script src="{% static 'assets/js/chart/apex-chart/moment.min.js' %}"></script>
+<script src="{% static 'assets/js/notify/bootstrap-notify.min.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/jquery-jvectormap-2.0.2.min.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-world-mill-en.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-us-aea-en.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-uk-mill-en.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-au-mill.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-chicago-mill-en.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-in-mill.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map/jquery-jvectormap-asia-mill.js' %}"></script>
+<script src="{% static 'assets/js/dashboard/default.js' %}"></script>
+<script src="{% static 'assets/js/notify/index.js' %}"></script>
+<script src="{% static 'assets/js/datatable/datatables/jquery.dataTables.min.js' %}"></script>
+<script src="{% static 'assets/js/datatable/datatables/datatable.custom.js' %}"></script>
+<script src="{% static 'assets/js/datatable/datatables/datatable.custom1.js' %}"></script>
+<script src="{% static 'assets/js/datepicker/date-picker/datepicker.js' %}"></script>
+<script src="{% static 'assets/js/datepicker/date-picker/datepicker.en.js' %}"></script>
+<script src="{% static 'assets/js/datepicker/date-picker/datepicker.custom.js' %}"></script>
+<script src="{% static 'assets/js/typeahead/handlebars.js' %}"></script>
+<script src="{% static 'assets/js/typeahead/typeahead.bundle.js' %}"></script>
+<script src="{% static 'assets/js/typeahead/typeahead.custom.js' %}"></script>
+<script src="{% static 'assets/js/typeahead-search/handlebars.js' %}"></script>
+<script src="{% static 'assets/js/typeahead-search/typeahead-custom.js' %}"></script>
+<script src="{% static 'assets/js/vector-map/map-vector.js' %}"></script>
+<!-- Plugins JS Ends-->
+{% endblock %}

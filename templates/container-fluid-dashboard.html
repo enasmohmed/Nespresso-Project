@@ -1,10 +1,10 @@
 {% load static %} {% load sass_tags %}
 
 <style>
-  /* ═══ Aramco palette – تطبيق الألوان على الداشبورد ═══ */
+  /* ═══ Nespresso palette – تطبيق الألوان على الداشبورد ═══ */
   .page-body-wrapper,
   .page-body-wrapper .page-body {
-    background-color: #F3F5F7 !important;
+    background-color: #EFDECD !important;
   }
   .card,
   .inbound-section .card,
@@ -12,77 +12,75 @@
   .dashboard-section-returns .card,
   .dashboard-section-inventory .card {
     background-color: #FFFFFF !important;
-    border-color: #E1E5EA !important;
+    border-color: #C3B091 !important;
   }
   .card-header {
     background-color: #FFFFFF !important;
-    border-color: #E1E5EA !important;
-    color: #2C2F33 !important;
+    border-color: #C3B091 !important;
+    color: #81613E !important;
   }
   .header-top .card-title-inline,
   .header-top .card-title-inline-outbound,
   .header-top .card-title-inline-return,
   .header-top .card-title-inline-inventory {
-    color: #2C2F33 !important;
+    color: #81613E !important;
   }
   .inbound-kpi-card .inbound-kpi-label,
   .dashboard-kpi-card .dashboard-kpi-label {
-    color: #9AA3AD !important;
+    color: #9F8170 !important;
   }
   .inbound-kpi-card .inbound-kpi-value,
   .dashboard-kpi-card .dashboard-kpi-value {
-    color: #2C2F33 !important;
+    color: #81613E !important;
   }
   .inbound-kpi-icon.bg-success-soft {
-    {% comment %} background-color: rgba(63, 143, 122, 0.2) !important; {% endcomment %}
-    color: #2F6F5F !important;
+    color: #81613E !important;
   }
   .inbound-kpi-icon.bg-primary-soft {
-    {% comment %} background-color: rgba(76, 143, 214, 0.2) !important; {% endcomment %}
-    color: #2F6F5F !important;
+    color: #81613E !important;
   }
   .card-header-icon.text-primary {
-    color: #4C8FD6 !important;
+    color: #9F8170 !important;
   }
   .dashboard-data-table th {
-    background-color: #F8FAFB !important;
-    border-color: #E1E5EA !important;
-    color: #2C2F33 !important;
+    background-color: #E3DAC9 !important;
+    border-color: #C3B091 !important;
+    color: #81613E !important;
   }
   .dashboard-data-table td,
   .dashboard-data-table {
-    border-color: #E1E5EA !important;
+    border-color: #C3B091 !important;
   }
   .fw-bold.text-dark,
   h6.text-dark {
-    color: #2C2F33 !important;
+    color: #81613E !important;
   }
   .text-muted {
-    color: #9AA3AD !important;
+    color: #9F8170 !important;
   }
   .btn-primary {
-    background-color: #4C8FD6 !important;
-    border-color: #4C8FD6 !important;
+    background-color: #9F8170 !important;
+    border-color: #9F8170 !important;
   }
   .btn-success {
-    background-color: #3F8F7A !important;
-    border-color: #3F8F7A !important;
+    background-color: #A0785A !important;
+    border-color: #A0785A !important;
   }
-  .text-primary { color: #4C8FD6 !important; }
-  .text-success { color: #3F8F7A !important; }
-  .bg-primary { background-color: #4C8FD6 !important; }
-  .bg-success { background-color: #3F8F7A !important; }
+  .text-primary { color: #9F8170 !important; }
+  .text-success { color: #A0785A !important; }
+  .bg-primary { background-color: #9F8170 !important; }
+  .bg-success { background-color: #A0785A !important; }
 
   .title-card {
-    color: #4C8FD6;
+    color: #9F8170;
   }
   .vertical-hr {
-    border-left: 2px solid #231c1c;
+    border-left: 2px solid #81613E;
     height: 100%;
     /*margin-right: 60px;*/
   }
   .custom-box {
-    border: 1px solid #6c757d;
+    border: 1px solid #C3B091;
     border-radius: 0.25rem;
     padding: 10px;
     transition:
@@ -107,7 +105,7 @@
   }
 
   .custom-box {
-    background-color: #f0f0f0;
+    background-color: #E3DAC9;
     padding: 20px;
     border-radius: 10px;
     width: 100%; /* عرض كامل */
@@ -198,7 +196,7 @@
     font-size: 1.25rem !important;
     font-weight: 600;
     line-height: 1.4;
-    color: #2C2F33 !important;
+    color: #81613E !important;
   }
   /* كارد بوضوح: بورد خفيف + شادور (للاستخدام على Inbound وباقي الكروت) */
   .dashboard-card-elevated {
@@ -256,11 +254,11 @@
 
   /* خلفيات فاتحة (باليت Aramco) */
   .bg-success-soft {
-    color: #2F6F5F !important;
+    color: #81613E !important;
   }
 
   .bg-primary-soft {
-    color: #2F6F5F !important;
+    color: #81613E !important;
   }
 
   .bg-info-soft {
@@ -282,7 +280,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.5rem 0;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid #E3DAC9;
     font-size: 0.95rem;
   }
   /*
@@ -331,7 +329,7 @@
   }
   .dashboard-kpi-card .dashboard-kpi-label {
     font-size: 0.8rem;
-    color: #6c757d;
+    color: #9F8170;
   }
   .dashboard-kpi-card .dashboard-kpi-value {
     font-size: 1.5rem;
@@ -764,7 +762,7 @@
   @media (max-width: 767.98px) {
     .default-dashboard .vertical-hr {
       border-left: none;
-      border-top: 2px solid #231c1c;
+      border-top: 2px solid #81613E;
       width: 100%;
       height: 0;
       margin: 0.5rem 0;
@@ -1055,15 +1053,15 @@
             ></div>
             <div class="d-flex flex-wrap justify-content-center gap-3 gap-md-4 mt-2 pt-2 border-top border-light">
               <div class="d-flex align-items-center gap-2">
-                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #7FB7A6;"></span>
+                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #9F8170;"></span>
                 <span class="small text-dark">On Time</span>
               </div>
               <div class="d-flex align-items-center gap-2">
-                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #A8C8EB;"></span>
+                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #A0785A;"></span>
                 <span class="small text-dark">Pending</span>
               </div>
               <div class="d-flex align-items-center gap-2">
-                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #E8A8A2;"></span>
+                <span class="rounded-circle d-inline-block" style="width: 10px; height: 10px; background-color: #81613E;"></span>
                 <span class="small text-dark">Late</span>
               </div>
             </div>
@@ -1295,11 +1293,7 @@
   (function () {
     // ─── مكان الألوان: عدّل هنا الألوان اللي انت عايزها (بالترتيب: أول قطعة، ثاني قطعة، ...) ───
     var PENDING_DONUT_COLORS = [
-      "#B8D4F0", // أزرق فاتح (sky)
-      "#A8C8EB", // أزرق فاتح (light blue)
-      "#9BC4B7", // أخضر مريح (sage)
-      "#B5D4CB", // أخضر فاتح (seafoam)
-      "#D4E8C8", // أخضر باهت (pale green)
+      "#9F8170", "#A0785A", "#81613E", "#C3B091", "#EDC9AF", "#E3DAC9", "#EFDECD",
     ];
 
     function applyPendingDonut() {
@@ -1371,7 +1365,7 @@
           formatter: function (val) {
             return val.toFixed(0) + "%";
           },
-          style: { fontSize: "14px", colors: ["#fff"] },
+          style: { fontSize: "14px", colors: ["#81613E"] },
         },
         plotOptions: {
           pie: {
@@ -1423,7 +1417,7 @@
       height: 350,
       columnWidth: "100%",
       borderRadius: 4,
-      colors: ["#7FB7A6", "#A8C8EB", "#E8A8A2"],
+      colors: ["#9F8170", "#A0785A", "#81613E"],
     };
 
     function renderPodsComplianceChart() {
@@ -1440,7 +1434,7 @@
       var colors =
         Array.isArray(cfg.colors) && cfg.colors.length
           ? cfg.colors
-          : ["#7FB7A6", "#A8C8EB", "#E8A8A2"];
+          : ["#9F8170", "#A0785A", "#81613E"];
 
       var dataEl = document.getElementById("pod-compliance-chart-data");
       var categories = [];
@@ -1502,7 +1496,7 @@
         legend: { show: false },
         colors: colors,
         dataLabels: { enabled: false },
-        grid: { borderColor: "#E1E5EA", strokeDashArray: 4 },
+        grid: { borderColor: "#C3B091", strokeDashArray: 4 },
         tooltip: {
           y: {
             formatter: function (v) {
@@ -1531,7 +1525,7 @@
       height: 280,
       columnWidth: "100%",
       borderRadius: 4,
-      colors: ["#7FB7A6", "#A8C8EB", "#E8A8A2"],
+      colors: ["#9F8170", "#A0785A", "#81613E"],
     };
 
     function renderReturnsComplianceChart() {
@@ -1548,7 +1542,7 @@
       var colors =
         Array.isArray(cfg.colors) && cfg.colors.length
           ? cfg.colors
-          : ["#7FB7A6", "#A8C8EB", "#E8A8A2"];
+          : ["#9F8170", "#A0785A", "#81613E"];
 
       var dataEl = document.getElementById("returns-chart-data");
       var categories = [];
@@ -1610,7 +1604,7 @@
         legend: { show: false },
         colors: colors,
         dataLabels: { enabled: false },
-        grid: { borderColor: "#E1E5EA", strokeDashArray: 4 },
+        grid: { borderColor: "#C3B091", strokeDashArray: 4 },
         tooltip: {
           y: {
             formatter: function (v) {
@@ -1640,8 +1634,8 @@
   (function () {
     window.INVENTORY_CAPACITY_CHART_CONFIG = {
       height: 280,
-      usedColor: "#7FB7A6",
-      availableColor: "#C5E4DE",
+      usedColor: "#9F8170",
+      availableColor: "#E3DAC9",
     };
 
     function renderInventoryCapacityChart() {
@@ -1650,8 +1644,8 @@
       var cfg = window.INVENTORY_CAPACITY_CHART_CONFIG || {};
       var chartHeight =
         el.offsetHeight || (cfg.height != null ? cfg.height : 280);
-      var usedColor = cfg.usedColor || "#7FB7A6";
-      var availableColor = cfg.availableColor || "#C5E4DE";
+      var usedColor = cfg.usedColor || "#9F8170";
+      var availableColor = cfg.availableColor || "#E3DAC9";
 
       var usedPct = 78;
       var availablePct = 22;
@@ -1712,7 +1706,7 @@
         },
         yaxis: { show: false },
         grid: {
-          borderColor: "#E1E5EA",
+          borderColor: "#C3B091",
           strokeDashArray: 4,
           xaxis: { lines: { show: true } },
           yaxis: { lines: { show: false } },

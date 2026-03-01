@@ -113,26 +113,25 @@
       type="text/css"
       href="{% sass_src 'assets/scss/responsive.scss' %}"
     />
-    <!-- Aramco theme palette (ألوان الموقع الموحدة) -->
+    <!-- Nespresso theme palette (لوحة ألوان Nespresso) -->
     <link
       rel="stylesheet"
       type="text/css"
-      href="{% static 'assets/css/theme-aramco.css' %}"
+      href="{% static 'assets/css/theme-nespresso.css' %}"
     />
     <style>
-      /* تطبيق فوري للألوان إذا تأخر تحميل الملف */
+      /* تطبيق فوري لألوان Nespresso إذا تأخر تحميل الملف */
       :root {
-        --aramco-primary-green: #3F8F7A;
-        --aramco-primary-blue: #4C8FD6;
-        --aramco-capacity-orange: #E7B17A;
-        --aramco-alert-red: #D9645A;
-        --aramco-bg-main: #F3F5F7;
-        --aramco-card: #FFFFFF;
-        --aramco-border: #E1E5EA;
-        --aramco-title: #2C2F33;
-        --aramco-muted: #9AA3AD;
+        --nespresso-primary: #9F8170;
+        --nespresso-bg-main: #EFDECD;
+        --nespresso-card: #FFFFFF;
+        --nespresso-card-secondary: #E3DAC9;
+        --nespresso-heading: #A0785A;
+        --nespresso-border: #C3B091;
+        --nespresso-soft: #EDC9AF;
+        --nespresso-dark: #81613E;
       }
-      .page-body-wrapper { background-color: #F3F5F7 !important; }
+      .page-body-wrapper { background-color: #EFDECD !important; }
     </style>
   </head>
   <body class="{{ layout }}">
@@ -148,7 +147,7 @@
       <!-- Page Body Start-->
       <div
         class="page-body-wrapper"
-        style="background-color: #F3F5F7 !important"
+        style="background-color: #EFDECD !important"
       >
         <div class="page-body" style="margin-left: 0 !important">
           {% block content %} {% endblock content %}

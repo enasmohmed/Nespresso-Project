@@ -143,16 +143,9 @@
     Chart.register(ChartDataLabels);
     Chart.register(window["chartjs-plugin-annotation"]);
 
-    // 🎨 ألوان مميزة
-    // 🎨 ألوان مميزة (درجات رمادي × أزرق فاتح)
+    // 🎨 ألوان Nespresso للشارت الدائري
     const backgroundColors = [
-      "#d0e7ff", // أزرق فاتح وواضح
-      "#c2e0ff", // أزرق باهت بسيط
-      "#e0e0e0", // رمادي فاتح جدًا
-      "#bdbdbd", // رمادي متوسط ناعم
-      "#cfd8dc", // رمادي أزرق خفيف
-      "#b3e5fc", // أزرق ثلجي جميل
-      "#d6d6d6", // رمادي متعادل
+      "#9F8170", "#A0785A", "#81613E", "#C3B091", "#EDC9AF", "#E3DAC9", "#EFDECD",
     ];
 
     // 🥧 إنشاء الشارت الدائري
@@ -192,10 +185,10 @@
             display: true,
             anchor: "center",
             align: "center",
-            color: "#000",
+            color: "#81613E",
             font: { weight: "bold", size: 12 },
-            backgroundColor: "rgba(255,255,255,0.9)",
-            borderColor: "#888",
+            backgroundColor: "rgba(239, 222, 205, 0.95)",
+            borderColor: "#C3B091",
             borderWidth: 1,
             borderRadius: 6,
             padding: 5,
@@ -508,16 +501,7 @@
           });
 
           const colors = [
-              "#007fa3",
-              "#00b3a6",
-              "#f4c430",
-              "#ef7b45",
-              "#b61c3f",
-              "#4a90e2",
-              "#8bc34a",
-              "#9c27b0",
-              "#ff9800",
-              "#cddc39",
+              "#9F8170", "#A0785A", "#81613E", "#C3B091", "#EDC9AF", "#E3DAC9", "#EFDECD", "#9F8170", "#A0785A", "#81613E",
             ];
 
             const datasetConfig = {
@@ -649,11 +633,11 @@
                     // ✅ توزيع labels: كل عمود يظهر أعلى من السابق
                     return -25 - (currentColumnIndex * 20);
                   },
-                   backgroundColor: "rgba(173, 216, 230, 0.8)", // ✅ أزرق فاتح شبه الباستيل
-                   borderColor: "rgba(100, 149, 237, 0.9)", // ✅ إطار أزرق ناعم
+                   backgroundColor: "rgba(227, 218, 201, 0.95)", // Nespresso E3DAC9
+                   borderColor: "#C3B091",
                    borderWidth: 1,
-                   borderRadius: 8, // ✅ زوايا ناعمة ومستديرة
-                   color: "#000", // ✅ لون النص أزرق غامق ليتناسق مع الخلفية
+                   borderRadius: 8,
+                   color: "#81613E",
                    z: 10,
                    font: { weight: "bold", size: 11 },
                    padding: { top: 4, bottom: 4, left: 6, right: 6 },

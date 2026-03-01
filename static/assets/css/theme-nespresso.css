@@ -1,0 +1,320 @@
+/**
+ * Nespresso Dashboard – لوحة الألوان الجديدة
+ * يُطبّق بعد موافقة العميل (استبدل theme-aramco.css بهذا الملف في base.html)
+ *
+ * الألوان: #9F8170, #EFDECD, #E3DAC9, #A0785A, #C3B091, #EDC9AF, #81613E
+ */
+
+:root {
+  /* لوحة Nespresso */
+  --nespresso-primary: #9F8170;        /* بني رمادي – Primary */
+  --nespresso-bg-main: #EFDECD;        /* لوزي – خلفية الصفحة */
+  --nespresso-card: #FFFFFF;
+  --nespresso-card-secondary: #E3DAC9; /* رمل عظمي – خلفيات ثانوية */
+  --nespresso-heading: #A0785A;        /* بني جمل – عناوين */
+  --nespresso-border: #C3B091;         /* كاكي – حدود */
+  --nespresso-soft: #EDC9AF;           /* رمل صحراوي – تنبيهات ناعمة */
+  --nespresso-dark: #81613E;           /* بني إسبريسو – نصوص داكنة */
+
+  /* ربط الثيم */
+  --aramco-bg-main: var(--nespresso-bg-main);
+  --aramco-card: var(--nespresso-card);
+  --aramco-card-secondary: var(--nespresso-card-secondary);
+  --aramco-border: var(--nespresso-border);
+  --aramco-title: var(--nespresso-dark);
+  --aramco-body: var(--nespresso-heading);
+  --aramco-muted: var(--nespresso-primary);
+  --aramco-icon: var(--nespresso-heading);
+  --aramco-primary-green: #8B7355;
+  --aramco-deep-green: #81613E;
+  --aramco-soft-green: var(--nespresso-soft);
+  --aramco-primary-blue: var(--nespresso-primary);
+  --aramco-medium-blue: #A0785A;
+  --aramco-light-blue: var(--nespresso-soft);
+  --aramco-capacity-orange: var(--nespresso-soft);
+  --aramco-soft-orange: var(--nespresso-soft);
+  --aramco-alert-red: #81613E;
+  --aramco-soft-red: var(--nespresso-soft);
+  --theme-default: var(--nespresso-primary);
+  --theme-secondary: var(--nespresso-heading);
+  --body-font-color: var(--nespresso-heading);
+  --light-background: var(--nespresso-bg-main);
+  --light-bg: var(--nespresso-bg-main);
+  --light2: var(--nespresso-card-secondary);
+  --recent-box-bg: var(--nespresso-card-secondary);
+  --chart-border: var(--nespresso-border);
+  --bs-heading-color: var(--nespresso-dark);
+  --bs-card-cap-color: var(--nespresso-muted);
+  --light-shade-primary: rgba(159, 129, 112, 0.2);
+}
+
+.page-body-wrapper,
+body .page-body-wrapper {
+  background-color: var(--nespresso-bg-main) !important;
+}
+.page-body-wrapper .page-body {
+  background-color: var(--nespresso-bg-main);
+}
+
+.card {
+  background-color: var(--nespresso-card);
+  border-color: var(--nespresso-border);
+  box-shadow: 0 1px 3px rgba(195, 176, 145, 0.25);
+}
+.card-header {
+  background-color: var(--nespresso-card) !important;
+  border-color: var(--nespresso-border);
+  color: var(--nespresso-dark);
+}
+
+/* Primary = بني رمادي #9F8170 */
+.bg-primary,
+.btn-primary,
+.badge.bg-primary,
+.alert-primary,
+.txt-primary,
+.text-primary,
+.border-primary,
+.table-primary,
+.bg-primary .svg-fill {
+  color: #fff !important;
+  border-color: var(--nespresso-primary) !important;
+}
+.bg-primary { background-color: var(--nespresso-primary) !important; }
+.btn-primary:not(.bg-primary) {
+  background-color: var(--nespresso-primary) !important;
+  border-color: var(--nespresso-primary) !important;
+}
+.btn-primary:hover {
+  background-color: var(--nespresso-heading) !important;
+  border-color: var(--nespresso-heading) !important;
+}
+.bg-light-primary,
+.light-primary {
+  background-color: var(--nespresso-soft) !important;
+  color: var(--nespresso-dark);
+}
+.text-primary,
+.txt-primary { color: var(--nespresso-primary) !important; }
+
+/* Success = درجات البني */
+.bg-success,
+.btn-success,
+.badge.bg-success,
+.alert-success { background-color: var(--nespresso-heading) !important; color: #fff !important; border-color: var(--nespresso-heading) !important; }
+.bg-success.txt-success,
+.bg-success.text-success { color: #fff !important; }
+.bg-light-success,
+.light-success {
+  background-color: var(--nespresso-soft) !important;
+  color: var(--nespresso-dark);
+}
+.text-success,
+.txt-success { color: var(--nespresso-heading) !important; }
+.btn-success:not(.bg-success) {
+  background-color: var(--nespresso-heading) !important;
+  border-color: var(--nespresso-heading) !important;
+}
+.btn-success:hover {
+  background-color: var(--nespresso-dark) !important;
+  border-color: var(--nespresso-dark) !important;
+}
+
+/* Warning = رمل صحراوي */
+.bg-warning,
+.btn-warning,
+.badge.bg-warning { background-color: var(--nespresso-soft) !important; color: var(--nespresso-dark) !important; border-color: var(--nespresso-border) !important; }
+.bg-light-warning { background-color: var(--nespresso-soft) !important; }
+.text-warning,
+.txt-warning { color: var(--nespresso-heading) !important; }
+
+/* Danger = بني غامق */
+.bg-danger,
+.btn-danger,
+.badge.bg-danger,
+.alert-danger { background-color: var(--nespresso-dark) !important; color: #fff !important; border-color: var(--nespresso-dark) !important; }
+.bg-light-danger { background-color: var(--nespresso-soft) !important; }
+.text-danger,
+.txt-danger { color: var(--nespresso-dark) !important; }
+.btn-danger:not(.bg-danger) {
+  background-color: var(--nespresso-dark) !important;
+  border-color: var(--nespresso-dark) !important;
+}
+
+h1, h2, h3, h4, h5, h6,
+.card-title,
+.fw-bold.text-dark {
+  color: var(--nespresso-dark) !important;
+}
+body,
+p,
+.inbound-kpi-label,
+.dashboard-kpi-label {
+  color: var(--nespresso-heading);
+}
+.small.text-muted,
+.text-muted,
+.label {
+  color: var(--nespresso-primary) !important;
+}
+
+.table-bordered,
+.dashboard-data-table,
+.border {
+  border-color: var(--nespresso-border) !important;
+}
+.table thead th,
+.dashboard-data-table th {
+  background-color: var(--nespresso-card-secondary) !important;
+  color: var(--nespresso-dark);
+}
+.table-responsive {
+  border-color: var(--nespresso-border);
+}
+
+.card-header-icon.text-primary { color: var(--nespresso-primary) !important; }
+.card-header-icon.text-secondary { color: var(--nespresso-primary) !important; }
+.inbound-kpi-icon.bg-success-soft,
+.inbound-kpi-icon.bg-primary-soft {
+  background-color: var(--nespresso-soft) !important;
+  color: var(--nespresso-dark) !important;
+}
+
+.progress-bar.bg-success,
+.progress-bar[class*="success"] {
+  background-color: var(--nespresso-heading) !important;
+}
+.progress-bar.bg-warning {
+  background-color: var(--nespresso-soft) !important;
+}
+.progress-bar.bg-danger {
+  background-color: var(--nespresso-dark) !important;
+}
+
+.inbound-kpi-card,
+.dashboard-kpi-card {
+  background: var(--nespresso-card) !important;
+  border-color: var(--nespresso-border) !important;
+  box-shadow: 0 2px 8px rgba(129, 97, 62, 0.15);
+}
+.inbound-kpi-card .inbound-kpi-value,
+.dashboard-kpi-card .dashboard-kpi-value {
+  color: var(--nespresso-dark) !important;
+}
+.inbound-kpi-card .inbound-kpi-label,
+.dashboard-kpi-card .dashboard-kpi-label {
+  color: var(--nespresso-primary) !important;
+}
+
+/* الهيدر – توحيد لون النص مع الثيم */
+.page-header {
+  background-color: var(--nespresso-card) !important;
+  border-bottom: 1px solid var(--nespresso-border);
+}
+.page-header .fw-bold,
+.page-header h3 {
+  color: var(--nespresso-dark) !important;
+}
+.page-header .text-muted {
+  color: var(--nespresso-primary) !important;
+}
+
+/* الجسم والنصوص العامة */
+body {
+  color: var(--nespresso-heading) !important;
+  background-color: var(--nespresso-bg-main) !important;
+}
+.text-dark,
+.text-body {
+  color: var(--nespresso-dark) !important;
+}
+a:not(.btn):not(.nav-link) {
+  color: var(--nespresso-primary) !important;
+}
+a:not(.btn):not(.nav-link):hover {
+  color: var(--nespresso-heading) !important;
+}
+
+/* الفوتر */
+.footer {
+  background-color: var(--nespresso-card-secondary) !important;
+  border-top: 1px solid var(--nespresso-border);
+  color: var(--nespresso-heading) !important;
+}
+.footer p,
+.footer .footer-copyright,
+.footer .heart {
+  color: var(--nespresso-heading) !important;
+}
+
+/* النماذج */
+.form-control,
+.form-select,
+.input-group-text,
+textarea {
+  border-color: var(--nespresso-border) !important;
+  color: var(--nespresso-dark) !important;
+  background-color: var(--nespresso-card) !important;
+}
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--nespresso-primary) !important;
+  box-shadow: 0 0 0 0.2rem rgba(159, 129, 112, 0.25) !important;
+}
+.form-label,
+label {
+  color: var(--nespresso-dark) !important;
+}
+
+/* خلفيات ثانوية */
+.bg-light {
+  background-color: var(--nespresso-card-secondary) !important;
+  color: var(--nespresso-dark) !important;
+}
+.bg-white {
+  background-color: var(--nespresso-card) !important;
+}
+.list-group-item {
+  background-color: var(--nespresso-card) !important;
+  border-color: var(--nespresso-border) !important;
+  color: var(--nespresso-heading) !important;
+}
+
+/* أزرار إضافية */
+.btn-secondary {
+  background-color: var(--nespresso-heading) !important;
+  border-color: var(--nespresso-heading) !important;
+  color: #fff !important;
+}
+.btn-outline-primary {
+  border-color: var(--nespresso-primary) !important;
+  color: var(--nespresso-primary) !important;
+}
+.btn-outline-primary:hover {
+  background-color: var(--nespresso-primary) !important;
+  color: #fff !important;
+}
+
+/* تبويبات وروابط تنقل */
+.nav-link {
+  color: var(--nespresso-heading) !important;
+}
+.nav-link.active,
+.nav-tabs .nav-link.active {
+  color: var(--nespresso-dark) !important;
+  border-color: var(--nespresso-border) var(--nespresso-border) var(--nespresso-card) !important;
+  background-color: var(--nespresso-card) !important;
+}
+.nav-tabs {
+  border-color: var(--nespresso-border) !important;
+}
+
+/* أيقونات */
+[data-feather],
+.feather,
+svg:not(.footer-icon) {
+  color: inherit;
+}
+.card-header-icon {
+  color: var(--nespresso-primary) !important;
+}

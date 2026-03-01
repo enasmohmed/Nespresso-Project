@@ -1,20 +1,21 @@
 {% load static %} {% load sass_tags %} {% csrf_token %}
 <style>
+  /* Nespresso: خلفية التابات */
   .nav-tabs .nav-link {
-    background-color: #f7f9fc;
-    color: #007bff;
+    background-color: #E3DAC9;
+    color: #81613E;
     border: none;
     transition: all 0.2s ease-in-out;
   }
   .nav-tabs .nav-link:hover {
-    background-color: #eaf2ff;
+    background-color: #EDC9AF;
   }
   .nav-tabs .nav-link.active {
-    background-color: #9084ad;
+    background-color: #9F8170;
     color: #fff !important;
   }
 
-  /* 🎨 تنسيق التابات بشكل احترافي */
+  /* 🎨 تنسيق التابات – ألوان Nespresso */
   #dashboard-tabs {
     display: flex;
     justify-content: center;
@@ -24,40 +25,45 @@
   }
 
   #dashboard-tabs button {
-    background: #e8f1fb;
-    color: #004b8d;
-    border: 1px solid #c9e0fa;
+    background: #E3DAC9;
+    color: #81613E;
+    border: 1px solid #C3B091;
     border-radius: 10px;
     padding: 10px 20px;
     font-weight: 600;
     font-size: 15px;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(0, 75, 141, 0.1);
+    box-shadow: 0 2px 4px rgba(129, 97, 62, 0.15);
   }
 
   #dashboard-tabs button:hover {
-    background: #d4e7ff;
-    color: #003366;
+    background: #EDC9AF;
+    color: #81613E;
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 75, 141, 0.15);
+    box-shadow: 0 4px 8px rgba(159, 129, 112, 0.2);
   }
 
   #dashboard-tabs button.active {
-    background: #9084ad !important;
-    color: #ffff;
-    border-color: #9084ad !important;
-    box-shadow: 0 3px 6px rgba(0, 123, 255, 0.25);
+    background: #9F8170 !important;
+    color: #fff !important;
+    border-color: #9F8170 !important;
+    box-shadow: 0 3px 6px rgba(159, 129, 112, 0.3);
     transform: scale(1.03);
     font-weight: bold;
   }
 
+  /* زر التحميل – Nespresso */
   .btn-download-excel {
-    background: #9084ad !important;
-    color: #ffff !important;
-    border-color: #9084ad !important;
-    box-shadow: 0 3px 6px rgba(0, 123, 255, 0.25);
-    transform: scale(1.03);
-    font-weight: bold;
+    background: #9F8170 !important;
+    color: #fff !important;
+    border-color: #9F8170 !important;
+    box-shadow: 0 2px 6px rgba(159, 129, 112, 0.25);
+    font-weight: 600;
+  }
+  .btn-download-excel:hover {
+    background: #A0785A !important;
+    border-color: #A0785A !important;
+    color: #fff !important;
   }
 
   /* 🩵 تابات أصغر على الموبايل */
@@ -74,14 +80,14 @@
     width: 160px;
   }
 
-  /* تصميم الـ dropdown الأساسي */
+  /* تصميم الـ dropdown – Nespresso */
   .custom-select {
     width: 100%;
     padding: 10px 14px;
-    border: 2px solid #007fa3;
+    border: 2px solid #C3B091;
     border-radius: 10px;
     background-color: #fff;
-    color: #007fa3;
+    color: #81613E;
     font-weight: 600;
     font-size: 15px;
     appearance: none;
@@ -91,11 +97,10 @@
     cursor: pointer;
   }
 
-  /* سهم صغير مخصص بدل السهم العادي */
   .custom-select-wrapper::after {
     content: "▼";
     font-size: 12px;
-    color: #007fa3;
+    color: #81613E;
     position: absolute;
     top: 50%;
     right: 12px;
@@ -104,17 +109,15 @@
     transition: transform 0.3s ease;
   }
 
-  /* تأثير hover */
   .custom-select:hover {
-    border-color: #0095c8;
-    box-shadow: 0 0 8px rgba(0, 127, 163, 0.3);
+    border-color: #9F8170;
+    box-shadow: 0 0 8px rgba(159, 129, 112, 0.25);
   }
 
-  /* تأثير التركيز عند الضغط */
   .custom-select:focus {
     outline: none;
-    border-color: #0095c8;
-    box-shadow: 0 0 10px rgba(0, 127, 163, 0.4);
+    border-color: #9F8170;
+    box-shadow: 0 0 10px rgba(159, 129, 112, 0.3);
   }
 
   /* حركة السهم أثناء الفتح */
@@ -122,26 +125,27 @@
     transform: translateY(-50%) rotate(180deg);
   }
 
-  /* زر رفع الملف */
+  /* زر رفع الملف – Nespresso */
   .upload-btn-small {
-    background-color: #9fc0e4;
-    color: #000;
+    background-color: #9F8170;
+    color: #fff;
     font-weight: 600;
     padding: 7px 16px;
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.3s ease;
     font-size: 13.5px;
-    box-shadow: 0 2px 6px rgba(0, 127, 163, 0.25);
+    box-shadow: 0 2px 6px rgba(159, 129, 112, 0.25);
     border: none;
     display: inline-flex;
     align-items: center;
   }
 
   .upload-btn-small:hover {
-    background: linear-gradient(90deg, #009cc7, #007fa3);
+    background: #A0785A;
+    color: #fff;
     transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0, 127, 163, 0.35);
+    box-shadow: 0 4px 10px rgba(160, 120, 90, 0.35);
   }
 
   .upload-btn-small i {
@@ -150,9 +154,9 @@
 
   .custom-select {
     padding: 6px 10px;
-    border: 1.5px solid #007fa3;
+    border: 1.5px solid #C3B091;
     border-radius: 6px;
-    color: #007fa3;
+    color: #81613E;
     font-weight: 500;
     font-size: 14px;
     background-color: #fff;
@@ -162,11 +166,11 @@
 
   .custom-select:focus {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(0, 127, 163, 0.2);
+    box-shadow: 0 0 0 3px rgba(159, 129, 112, 0.2);
   }
 
   .custom-select:hover {
-    border-color: #009cc7;
+    border-color: #9F8170;
   }
 
   .custom-select-wrapper {
@@ -188,15 +192,30 @@
   .gap-3 {
     gap: 1rem !important; /* زيادة المسافة بين الفلاتر */
   }
+
+  /* خلفية جسم الكارد الرئيسي والكروت داخل التابات – Nespresso */
+  .card-body.mb-5 {
+    background-color: #EFDECD;
+  }
+  #cards-section .card,
+  .tab-content .card {
+    background-color: #FFFFFF !important;
+    border-color: #C3B091 !important;
+  }
+  .tab-content .card-header {
+    background-color: #E3DAC9 !important;
+    color: #81613E !important;
+    border-color: #C3B091 !important;
+  }
 </style>
 <!-- Container-fluid starts  -->
 <div class="container-fluid mt-5">
   <div class="row">
     <div class="col-md-12 mt-5">
-      <div class="card">
+      <div class="card" style="background-color: #FFFFFF; border-color: #C3B091;">
         <div
           class="card-header card-no-border pb-0"
-          style="display: flex; align-items: center; gap: 12px"
+          style="display: flex; align-items: center; gap: 12px; background-color: #E3DAC9 !important; border-color: #C3B091;"
         >
           <!-- 🟦 اللوجو -->
           <img
@@ -206,22 +225,22 @@
               height: 48px;
               width: auto;
               margin-top: -15px;
-              background: #e8f1fb;
+              background: #E3DAC9;
               border-radius: 6px;
               padding: 4px;
-              border: 2px solid #e8f1fb;
+              border: 2px solid #C3B091;
             "
           />
           <!-- 🟦 العنوان والنص -->
           <div>
             <h4
-              style="font-size: 20px; font-weight: 800; color: #000; margin: 0"
+              style="font-size: 20px; font-weight: 800; color: #81613E; margin: 0"
             >
               Nespresso
             </h4>
             <p
               class="mt-1 f-m-light"
-              style="font-size: 16px; font-weight: 400; color: gray; margin: 0"
+              style="font-size: 16px; font-weight: 400; color: #9F8170; margin: 0"
             >
               All-Tabs KPI — Complete View
             </p>
@@ -596,17 +615,17 @@
               : "";
           return `
       <div class="col-md-6 mb-4">
-        <div class="card shadow-sm h-100 border-primary" style="border-width:2px; border-radius:12px;">
-          <div class="card-header text-center fw-bold bg-light" style="color:#000; font-size:18px;">
+        <div class="card shadow-sm h-100" style="border-width:2px; border-radius:12px; border-color: #C3B091 !important;">
+          <div class="card-header text-center fw-bold" style="background-color: #E3DAC9 !important; color:#81613E !important; font-size:18px; border-color: #C3B091;">
             ${tab.name}
           </div>
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-1">
-              <p class="mb-0" style="color: #9084ad !important;"><strong>Hit:</strong> ${tab.hit_pct}%</p>
+              <p class="mb-0" style="color: #9F8170 !important;"><strong>Hit:</strong> ${tab.hit_pct}%</p>
               ${targetHtml}
             </div>
             <div class="progress" style="height:20px; border-radius:10px; overflow:hidden;">
-              <div class="progress-bar" role="progressbar" style="width: ${tab.hit_pct}%; background-color: #9fc0e4;" aria-valuenow="${tab.hit_pct}" aria-valuemin="0" aria-valuemax="100">
+              <div class="progress-bar" role="progressbar" style="width: ${tab.hit_pct}%; background-color: #9F8170;" aria-valuenow="${tab.hit_pct}" aria-valuemin="0" aria-valuemax="100">
                 ${tab.hit_pct}%
               </div>
             </div>
@@ -973,11 +992,12 @@
         });
 
         const labels = chartData[0]?.dataPoints.map((dp) => dp.label) || [];
-        const datasets = chartData.map((kpi) => ({
+        const NESPRESSO_CHART_COLORS = ["#9F8170", "#A0785A", "#81613E", "#C3B091", "#EDC9AF", "#E3DAC9"];
+        const datasets = chartData.map((kpi, idx) => ({
           label: kpi.name,
           data: kpi.dataPoints.map((dp) => Number(dp.y)),
           type: kpi.type || "bar",
-          backgroundColor: kpi.color || "#36a2eb",
+          backgroundColor: kpi.color || NESPRESSO_CHART_COLORS[idx % NESPRESSO_CHART_COLORS.length],
           borderRadius: 6,
         }));
 
@@ -990,7 +1010,7 @@
               legend: { position: "top" },
               datalabels: {
                 display: true,
-                color: "#000",
+                color: "#81613E",
                 formatter: (v) => v + "%",
                 anchor: "end",
                 align: "top",

@@ -297,12 +297,7 @@
       const $scope = rootSelector ? $(rootSelector) : $(document);
 
       const chartColors = [
-        "#9fc0e4",
-        "#709ad4",
-        "#9084ad",
-        "#a365ba",
-        "#b9acd8",
-        "#9fc0e4",
+        "#9F8170", "#A0785A", "#81613E", "#C3B091", "#EDC9AF", "#E3DAC9",
       ];
 
       $scope.find("[id^='chart_']").each(function () {
@@ -397,7 +392,7 @@
                       },
                     },
                     datalabels: {
-                      color: "#000",
+                      color: "#81613E",
                       font: { weight: "bold" },
                       formatter: (v) => `${v.toFixed(1)}%`,
                     },
@@ -418,7 +413,7 @@
                         .toLowerCase()
                         .includes("rejections")
                         ? chartColors
-                        : "#bfbfbf",
+                        : "#9F8170",
                       borderRadius: 10,
                       barThickness: 30,
                     },
@@ -437,12 +432,12 @@
                       },
                     },
                     datalabels: {
-                      color: "#003366",
+                      color: "#81613E",
                       anchor: "end",
                       align: "center",
                       offset: 10,
-                      backgroundColor: "rgba(173, 216, 230, 0.85)",
-                      borderColor: "rgba(100, 149, 237, 0.9)",
+                      backgroundColor: "rgba(227, 218, 201, 0.95)",
+                      borderColor: "#C3B091",
                       borderWidth: 1,
                       borderRadius: 6,
                       font: { weight: "bold", size: 11 },
@@ -478,11 +473,11 @@
                       : {},
                   },
                   scales: {
-                    x: { grid: { display: false }, ticks: { color: "#000" } },
+                    x: { grid: { display: false }, ticks: { color: "#81613E" } },
                     y: {
                       beginAtZero: true,
                       grid: { color: "rgba(0,0,0,0.05)" },
-                      ticks: { color: "#000" },
+                      ticks: { color: "#81613E" },
                     },
                   },
                 },

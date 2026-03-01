@@ -4336,7 +4336,7 @@ class UploadExcelViewRoche(View):
                     {
                         "type": "column",
                         "name": "Hit",
-                        "color": "#74c0fc",
+                        "color": "#9F8170",
                         "related_table": "sub-table-outbound-hit-summary",
                         "dataPoints": hit_data_points,
                     }
@@ -4810,18 +4810,18 @@ class UploadExcelViewRoche(View):
             ordered_months = sorted(by_month.keys(), key=lambda x: month_order_value(x))
             shipment_metrics = {r["Shipment_nbr"]: {"Days": r["Days"], "HIT or MISS": r["HIT or MISS"], "Within 24h": r["Within 24h"]} for r in rows}
 
-            # الشارت: Hit و Miss بالشهر فقط (بدون مناطق)
+            # الشارت: Hit و Miss بالشهر فقط (بدون رقم Facility أو مناطق بجانب الشهر)
             chart_data = [{
                 "type": "column",
                 "name": "Hit",
-                "color": "#74c0fc",
+                "color": "#9F8170",
                 "valueSuffix": "",
                 "related_table": "inbound-aggregated-kpi",
                 "dataPoints": [{"label": m, "y": by_month.get(m, {}).get("hit", 0)} for m in ordered_months],
             }, {
                 "type": "column",
                 "name": "Miss",
-                "color": "#ff6b6b",
+                "color": "#81613E",
                 "valueSuffix": "",
                 "related_table": "inbound-aggregated-kpi",
                 "dataPoints": [{"label": m, "y": by_month.get(m, {}).get("miss", 0)} for m in ordered_months],
@@ -4919,14 +4919,14 @@ class UploadExcelViewRoche(View):
                     chart_data_18h = [{
                         "type": "column",
                         "name": "Hit",
-                        "color": "#74c0fc",
+                        "color": "#9F8170",
                         "valueSuffix": "",
                         "related_table": "inbound-aggregated-kpi-18h",
                         "dataPoints": [{"label": m, "y": by_month_18.get(m, {}).get("hit", 0)} for m in ordered_months_18],
                     }, {
                         "type": "column",
                         "name": "Miss",
-                        "color": "#ff6b6b",
+                        "color": "#81613E",
                         "valueSuffix": "",
                         "related_table": "inbound-aggregated-kpi-18h",
                         "dataPoints": [{"label": m, "y": by_month_18.get(m, {}).get("miss", 0)} for m in ordered_months_18],
@@ -5044,6 +5044,16 @@ class UploadExcelViewRoche(View):
 
             facility_options = sorted(df["Facility"].dropna().unique().astype(str).tolist()) if "Facility" in df.columns else []
             month_options = sorted(raw_df["Month"].dropna().unique().tolist()) if "Month" in raw_df.columns else []
+            # المناطق حسب الشهر (لتاب Inbound فقط)
+            regions_by_month = []
+            if "Facility" in df.columns and "Month" in df.columns:
+                g = df.dropna(subset=["Month", "Facility"]).groupby("Month")["Facility"].apply(
+                    lambda x: sorted(x.astype(str).str.strip().unique().tolist())
+                )
+                for month in ordered_months:
+                    regions = g.get(month, [])
+                    if regions:
+                        regions_by_month.append({"month": month, "regions": regions})
             detail_table = {
                 "id": "sub-table-inbound-detail",
                 "title": "Inbound Shipments Detail",
@@ -5066,14 +5076,14 @@ class UploadExcelViewRoche(View):
                 {
                     "type": "column",
                     "name": "≤24h Hit",
-                    "color": "#74c0fc",
+                    "color": "#9F8170",
                     "valueSuffix": "",
                     "dataPoints": [{"label": m, "y": by_month.get(m, {}).get("hit", 0)} for m in all_months_combined],
                 },
                 {
                     "type": "column",
                     "name": "≤24h Miss",
-                    "color": "#ff6b6b",
+                    "color": "#81613E",
                     "valueSuffix": "",
                     "dataPoints": [{"label": m, "y": by_month.get(m, {}).get("miss", 0)} for m in all_months_combined],
                 },
@@ -5083,14 +5093,14 @@ class UploadExcelViewRoche(View):
                     {
                         "type": "column",
                         "name": "≤18h Hit",
-                        "color": "#51cf66",
+                        "color": "#A0785A",
                         "valueSuffix": "",
                         "dataPoints": [{"label": m, "y": by_month_18.get(m, {}).get("hit", 0)} for m in all_months_combined],
                     },
                     {
                         "type": "column",
                         "name": "≤18h Miss",
-                        "color": "#ff922b",
+                        "color": "#EDC9AF",
                         "valueSuffix": "",
                         "dataPoints": [{"label": m, "y": by_month_18.get(m, {}).get("miss", 0)} for m in all_months_combined],
                     },
@@ -5121,6 +5131,7 @@ class UploadExcelViewRoche(View):
                     "miss": overall_miss,
                     "hit_pct": overall_hit_pct,
                 },
+                "regions_by_month": regions_by_month,
             }
 
         except Exception as e:
@@ -7198,6 +7209,7 @@ class UploadExcelViewRoche(View):
                 "chart_data": chart_data,
                 "canvas_id": "chart-inbound-kpi",
                 "stats": inbound_result.get("stats", {}),
+                "regions_by_month": inbound_result.get("regions_by_month", []),
             }
 
             selected_months_norm = []

@@ -1974,9 +1974,16 @@ class UploadExcelViewRoche(View):
         done_count = meeting_points.filter(is_done=True).count()
         total_count = meeting_points.count()
 
-        all_tab_data = self.filter_all_tabs(
-            request=request, selected_month=selected_month or None
+        # ✅ تحميل سريع: لا نحمّل الـ Overview على السيرفر (يُحمّل لاحقاً عبر AJAX)
+        _overview_placeholder = (
+            "<div id='overview-placeholder' class='text-center py-5'>"
+            "<div class='spinner-border text-primary' role='status' style='width: 3rem; height: 3rem;'>"
+            "<span class='visually-hidden'>Loading...</span></div>"
+            "<p class='mt-3 text-muted'>Loading overview...</p>"
+            "<p class='small text-muted'>First load may take a moment. Next loads will be faster.</p>"
+            "</div>"
         )
+        all_tab_data = {"detail_html": _overview_placeholder}
 
         render_context = {
             "data_is_uploaded": True,
@@ -2648,7 +2655,7 @@ class UploadExcelViewRoche(View):
                     selected_months=selected_months,
                     from_all_in_one=True,
                 )
-                cache.set(_cache_key, overview_data, 120)
+                cache.set(_cache_key, overview_data, 300)
 
             if not overview_data or "tab_cards" not in overview_data:
                 html = render_to_string(

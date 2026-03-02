@@ -429,7 +429,7 @@
           <!-- 🔹 محتوى التابات -->
           <div id="tab-content" class="card p-4 shadow-sm bg-white mt-3">
             {% if active_tab == "all" %}
-            {% include 'components/ui-kits/tab-bootstrap/components/dashboard-overview.html' %}
+            {{ all_tab_data.detail_html|default:""|safe }}
             {% elif active_tab == "overview" %}
             {% include 'general/widget/general-widget/components/top.html' %}
             {% elif active_tab == "dashboard" %}

@@ -1593,7 +1593,7 @@ class UploadExcelViewRoche(View):
     @method_decorator(cache_control(max_age=3600, public=True), name="get")
     def get(self, request):
         print("🟢 [GET] Loading main dashboard with Overview/All-in-One tabs")
-        cache.clear()  # Clear cache on each load
+        # لا نمسح الكاش هنا حتى يبقى التحميل التالي أسرع (يُمسح عند رفع ملف جديد)
 
         # مسح بيانات الجلسة أولاً لو الطلب clear_excel (حتى تظهر رسالة رفع الملف)
         action_param = request.GET.get("action", "").strip().lower()
@@ -1696,6 +1696,16 @@ class UploadExcelViewRoche(View):
                     effective_month,
                     selected_months=quarter_months or None,
                 ),
+                "b2b outbound": lambda: self.filter_total_lead_time_performance(
+                    request,
+                    effective_month,
+                    selected_months=quarter_months or None,
+                ),
+                "b2c outbound": lambda: self._render_b2c_outbound_tab(
+                    request,
+                    effective_month,
+                    selected_months=quarter_months or None,
+                ),
                 "outbound": lambda: self.filter_total_lead_time_performance(
                     request,
                     effective_month,
@@ -1706,9 +1716,8 @@ class UploadExcelViewRoche(View):
                     effective_month,
                     selected_months=quarter_months or None,
                 ),
-                "pods update": lambda: self.filter_pods_update(
-                    request, effective_month
-                ),
+                "safety kpi": lambda: self._placeholder_tab_response("Safety KPI"),
+                "traceability kpi": lambda: self._placeholder_tab_response("Traceability KPI"),
                 "meeting points": lambda: self.meeting_points_tab(request),
                 "capacity + expiry": lambda: self.filter_capacity_expiry(
                     request,
@@ -1825,9 +1834,13 @@ class UploadExcelViewRoche(View):
                     ),
                     safe=False,
                 )
-            elif selected_tab == "pods update":
+            elif (selected_tab or "").strip().lower() == "safety kpi":
                 return JsonResponse(
-                    self.filter_pods_update(request, effective_month), safe=True
+                    self._placeholder_tab_response("Safety KPI"), safe=False
+                )
+            elif (selected_tab or "").strip().lower() == "traceability kpi":
+                return JsonResponse(
+                    self._placeholder_tab_response("Traceability KPI"), safe=False
                 )
             elif "rejection" in selected_tab:
                 return JsonResponse(
@@ -1893,10 +1906,12 @@ class UploadExcelViewRoche(View):
             virtual_tabs = [
                 self.DASHBOARD_TAB_NAME,
                 "Inbound",
-                "Outbound",
+                "B2B Outbound",
+                "B2C Outbound",
                 "Capacity + Expiry",
                 "Return & Refusal",
-                "PODs update",
+                "Safety KPI",
+                "Traceability KPI",
                 "Meeting Points & Action",
             ]
             if include_only:
@@ -1908,10 +1923,12 @@ class UploadExcelViewRoche(View):
             ordered_tabs = [
                 self.DASHBOARD_TAB_NAME,
                 "Inbound",
-                "Outbound",
+                "B2B Outbound",
+                "B2C Outbound",
                 "Capacity + Expiry",
                 "Return & Refusal",
-                "PODs update",
+                "Safety KPI",
+                "Traceability KPI",
                 "Meeting Points & Action",
             ]
 
@@ -2602,7 +2619,6 @@ class UploadExcelViewRoche(View):
         }
 
     def filter_all_tabs(self, request=None, selected_month=None, selected_months=None):
-        cache.clear()
         try:
             month_for_filters = selected_month if not selected_months else None
             # ✅ تحديد الفلتر الحالي
@@ -2611,7 +2627,7 @@ class UploadExcelViewRoche(View):
                 status_filter = request.GET.get("status", "all")
 
             # ✅ الحصول على مسار ملف Excel
-            excel_path = self.get_uploaded_file_path(request)
+            excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
             if not excel_path or not os.path.exists(excel_path):
                 html = render_to_string(
                     "components/ui-kits/tab-bootstrap/components/dashboard-overview.html",
@@ -2619,13 +2635,20 @@ class UploadExcelViewRoche(View):
                 )
                 return {"detail_html": html}
 
-            # ✅ جلب بيانات الـ overview_tab (منها نبدأ النسب)
-            overview_data = self.overview_tab(
-                request=request,
-                selected_month=month_for_filters,
-                selected_months=selected_months,
-                from_all_in_one=True,
-            )
+            # ✅ تخزين مؤقت لنتيجة الـ overview لتسريع التحميل (90 ثانية)
+            import hashlib
+            _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+            _month = (selected_month or "") + "_" + (str(selected_months) if selected_months else "")
+            _cache_key = f"tlp_overview_{_path_hash}_{_month}_{status_filter}"
+            overview_data = cache.get(_cache_key)
+            if overview_data is None:
+                overview_data = self.overview_tab(
+                    request=request,
+                    selected_month=month_for_filters,
+                    selected_months=selected_months,
+                    from_all_in_one=True,
+                )
+                cache.set(_cache_key, overview_data, 120)
 
             if not overview_data or "tab_cards" not in overview_data:
                 html = render_to_string(
@@ -2679,39 +2702,14 @@ class UploadExcelViewRoche(View):
                     }
                 )
 
-            # ✅ PODs Update - إضافة مع الشارتات
-            pods_data = self.filter_pods_update(request, month_for_filters)
-            if pods_data and pods_data.get("hit_pct") is not None:
-                try:
-                    hit_pods = float(pods_data.get("hit_pct", 0))
-                except:
-                    hit_pods = 0
-                hit_pods = int(round(max(0, min(hit_pods, 100))))
-
-                existing_names = [t["name"].strip().lower() for t in clean_tabs]
-                if "pods update" not in existing_names:
-                    # ✅ جلب الشارتات من pods_data
-                    pods_chart_data = pods_data.get("chart_data", [])
-                    pods_chart_type = "column"
-                    if pods_chart_data and len(pods_chart_data) > 0:
-                        pods_chart_type = pods_chart_data[0].get("type", "column")
-
-                    clean_tabs.append(
-                        {
-                            "name": "PODs update",
-                            "hit_pct": hit_pods,
-                            "target_pct": 100,
-                            "count": pods_data.get("count", 0),
-                            "chart_type": pods_chart_type,
-                            "chart_data": pods_chart_data,
-                        }
-                    )
-
-            # ✅ ترتيب التابات حسب الأولوية (بدون التابات المحذوفة)
+            # ✅ ترتيب التابات حسب الأولوية (Safety KPI و Traceability KPI من tabs_order)
             desired_order = [
                 "Inbound",
-                "Outbound",
-                "PODs update",
+                "B2B Outbound",
+                "B2C Outbound",
+                "Return & Refusal",
+                "Safety KPI",
+                "Traceability KPI",
             ]
             clean_tabs.sort(
                 key=lambda x: (
@@ -3624,16 +3622,14 @@ class UploadExcelViewRoche(View):
         self, request, selected_month=None, selected_months=None
     ):
         """
-        🔹 يقرأ من شيت Outbound1: Order Nbr, Customer Name, Create Timestamp, Customer City,
-           Order Type, Status, Ship Date.
-        🔹 يقرأ من شيت Outbound2: Packed Timestamp (الربط على Order Nbr).
-        🔹 Hit/Miss: من Packed Timestamp إلى Ship Date — لو ≤24 ساعة = Hit وإلا Miss.
-        🔹 يعيد نفس هيكل Inbound (stats, sub_tables, chart_data) لعرضه بنفس التمبلت.
+        🔹 B2B Outbound: يقرأ من شيت B2B_Outbound فقط.
+        🔹 جدول B2B: Channel = B2B، ORDER STATUS ≠ Cancelled، Creation → Actual Delivery ≤48h = Hit.
+        🔹 جدول BTQ: Channel = BTQ، ORDER STATUS ≠ Cancelled، نفس 48h.
+        🔹 الشارت: عمودين (B2B و BTQ) مع تسمية "الشهر — اسم الجدول".
         """
         try:
             import os
 
-            # الملف الرئيسي لكل التابات (all_sheet / latest) مع أولوية للملف المرفوع في الجلسة
             excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
             if not excel_path or not os.path.exists(excel_path):
                 return {
@@ -3644,392 +3640,73 @@ class UploadExcelViewRoche(View):
                 }
 
             xls = pd.ExcelFile(excel_path, engine="openpyxl")
-
-            # طباعة أسماء الشيتات في الملف عشان نعرف مين موجود
-            print("\n[Outbound] أسماء الشيتات في ملف الإكسل:", xls.sheet_names)
-
-            # إيجاد شيت Outbound1 و Outbound2 (أي تسمية تحتوي على outbound + 1 أو 2)
-            outbound1_name = None
-            outbound2_name = None
-            for i, name in enumerate(xls.sheet_names):
-                low = name.lower().strip()
-                if "outbound" in low and (
-                    "1" in low or "one" in low or low == "outbound1"
-                ):
-                    outbound1_name = name
-                if "outbound" in low and (
-                    "2" in low or "two" in low or low == "outbound2"
-                ):
-                    outbound2_name = name
-            if not outbound1_name:
-                outbound1_name = next(
-                    (
-                        s
-                        for s in xls.sheet_names
-                        if "outbound" in s.lower() and "2" not in s.lower()
-                    ),
+            sheet_name = "B2B_Outbound"
+            if sheet_name not in xls.sheet_names:
+                b2b_sheet = next(
+                    (s for s in xls.sheet_names if s.strip().replace(" ", "_") == sheet_name or s.strip().lower() == sheet_name.lower()),
                     None,
                 )
-            if not outbound2_name:
-                outbound2_name = next(
-                    (
-                        s
-                        for s in xls.sheet_names
-                        if "outbound" in s.lower() and "1" not in s.lower()
-                    ),
-                    None,
-                )
-
-            # ✅ في حالة وجود شيت بإسم "ARAMCO Outbound Report" نفضّله كـ Outbound1
-            preferred_aramco_ob = next(
-                (s for s in xls.sheet_names if "aramco outbound report" in s.lower()),
-                None,
-            )
-            if preferred_aramco_ob:
-                outbound1_name = preferred_aramco_ob
-            # لو لسه مفيش Outbound2: نجرب أي شيت فيه عمود Packed Timestamp (أو Packed) + Order Nbr
-            if not outbound2_name and outbound1_name:
-                for sheet in xls.sheet_names:
-                    if sheet == outbound1_name:
-                        continue
-                    try:
-                        probe = pd.read_excel(
-                            excel_path, sheet_name=sheet, engine="openpyxl", nrows=2
-                        )
-                        probe.columns = probe.columns.astype(str).str.strip()
-                        has_order = any(
-                            "order" in c.lower() and "nbr" in c.lower()
-                            for c in probe.columns
-                        ) or any("order nbr" in c.lower() for c in probe.columns)
-                        has_packed = any("packed" in c.lower() for c in probe.columns)
-                        if has_order and has_packed:
-                            outbound2_name = sheet
-                            print(
-                                f"[Outbound] تم استخدام الشيت '{sheet}' كـ Outbound2 (فيه Order Nbr + Packed)"
-                            )
-                            break
-                    except Exception:
-                        continue
-            if not outbound2_name and outbound1_name:
-                print(
-                    "[Outbound] ⚠️ لم يتم العثور على شيت Outbound2. تأكدي أن اسم الشيت يحتوي على 'outbound' و '2' أو أن فيه عمود Packed Timestamp و Order Nbr."
-                )
-
-            if not outbound1_name:
-                return {
-                    "detail_html": "<p class='text-warning'>⚠️ Sheet 'Outbound1' (or similar) not found.</p>",
-                    "sub_tables": [],
-                    "chart_data": [],
-                    "stats": {},
-                }
-
-            df1 = pd.read_excel(
-                excel_path, sheet_name=outbound1_name, engine="openpyxl"
-            )
-            df1.columns = df1.columns.astype(str).str.strip()
-
-            # لو أول عمود شكله "Unnamed" أو فيه عنوان التقرير (زي ARAMCO Outbound Report)
-            # يبقى الأغلب إن أول صف هو عنوان والترويسات في صف تاني → نعيد قراءة الشيت ونكتشف صف الترويسات
-            first_col_ob = str(df1.columns[0]).strip() if len(df1.columns) else ""
-            if first_col_ob.startswith("Unnamed:") or "outbound report" in first_col_ob.lower():
-                raw_ob = pd.read_excel(
-                    excel_path, sheet_name=outbound1_name, engine="openpyxl", header=None
-                )
-                if raw_ob.empty or raw_ob.shape[0] < 2:
-                    raw_ob.columns = raw_ob.columns.astype(str).str.strip()
-                    df1 = raw_ob.copy()
+                if b2b_sheet:
+                    sheet_name = b2b_sheet
                 else:
-                    header_row_idx_ob = None
-                    for idx in range(min(10, raw_ob.shape[0])):
-                        row = raw_ob.iloc[idx]
-                        cells = " ".join(
-                            str(c).strip().lower() for c in row.dropna().astype(str)
-                        )
-                        # نعتبر صف ترويسات لو فيه Facility + Order + Status + Shipped
-                        if (
-                            "facility" in cells
-                            and "order" in cells
-                            and "status" in cells
-                            and ("ship" in cells or "shipped" in cells or "shipped date" in cells)
-                        ):
-                            header_row_idx_ob = idx
-                            break
-                    if header_row_idx_ob is not None:
-                        df1 = raw_ob.iloc[header_row_idx_ob + 1 :].copy()
-                        headers_ob = [
-                            str(c).strip() if pd.notna(c) and str(c).strip() else f"Col_{i}"
-                            for i, c in enumerate(raw_ob.iloc[header_row_idx_ob].values)
-                        ]
-                        df1.columns = headers_ob
-                        df1 = df1.reset_index(drop=True)
-                    else:
-                        # fallback: استخدم أول صف كترويسة وتجاهل الصف ده من الداتا
-                        headers_ob = [
-                            str(c).strip() if pd.notna(c) and str(c).strip() else f"Col_{i}"
-                            for i, c in enumerate(raw_ob.iloc[0].values)
-                        ]
-                        df1 = raw_ob.copy()
-                        df1.columns = headers_ob
-                        df1 = df1.iloc[1:].reset_index(drop=True)
+                    return {
+                        "detail_html": f"<p class='text-warning'>⚠️ Sheet '{sheet_name}' not found.</p>",
+                        "sub_tables": [],
+                        "chart_data": [],
+                        "stats": {},
+                    }
 
-            df1.columns = df1.columns.astype(str).str.strip()
+            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            df.columns = df.columns.astype(str).str.strip()
 
-            def find_col(df, candidates):
-                for c in df.columns:
+            def find_col(d, candidates):
+                for c in d.columns:
                     if str(c).strip().lower() in [x.lower() for x in candidates]:
                         return c
                 for cand in candidates:
-                    for c in df.columns:
+                    for c in d.columns:
                         if cand.lower() in str(c).lower():
                             return c
                 return None
 
-            # Outbound1 columns
-            order_nbr_col = find_col(
-                df1, ["Order Nbr", "Order Nbr.", "Order Number", "Order No", "Order #"]
-            )
-            customer_col = find_col(df1, ["Customer Name", "Customer"])
-            create_ts_col = find_col(
-                df1,
-                [
-                    "Create Timestamp",
-                    "Create Date",
-                    "Order Date",
-                    "Created",
-                    "Create Order",
-                ],
-            )
-            city_col = find_col(df1, ["Customer City", "City"])
-            order_type_col = find_col(df1, ["Order Type", "Type"])
-            status_col = find_col(df1, ["Status"])
-            ship_date_col = find_col(
-                df1,
-                [
-                    "Ship Date",
-                    "Shipment Date",
-                    "Shipped Date",
-                    "Order checked",
-                    "Order checked?",
-                ],
-            )
-            facility_code_col = find_col(
-                df1, ["Facility Code", "Facility Code.", "Facility"]
-            )
+            so_col = find_col(df, ["SO", "Order Number", "Order Nbr", "Order No"])
+            channel_col = find_col(df, ["Channel", "channel"])
+            order_status_col = find_col(df, ["ORDER STATUS", "Order Status", "OrderStatus", "Status"])
+            creation_col = find_col(df, ["Creation Date & Time", "Creation Date and Time", "Create Timestamp", "Creation DateTime", "Create Date"])
+            actual_delivery_col = find_col(df, ["Actual Delivery Date", "Actual Delivery", "Delivery Date"])
+            pod_date_col = find_col(df, ["POD Date", "PODDate", "POD date"])
 
-            required_ob1 = [
-                order_nbr_col,
-                customer_col,
-                create_ts_col,
-                status_col,
-                ship_date_col,
-            ]
-            if not all(required_ob1):
-                missing = []
-                if not order_nbr_col:
-                    missing.append("Order Nbr")
-                if not customer_col:
-                    missing.append("Customer Name")
-                if not create_ts_col:
-                    missing.append("Create Timestamp / Create Order")
-                if not status_col:
-                    missing.append("Status")
-                if not ship_date_col:
-                    missing.append("Ship Date / Shipped date")
+            if not so_col or not channel_col or not order_status_col or not creation_col or not actual_delivery_col:
+                missing = [x for x, c in [("SO", so_col), ("Channel", channel_col), ("ORDER STATUS", order_status_col), ("Creation Date & Time", creation_col), ("Actual Delivery Date", actual_delivery_col)] if not c]
+                return {"detail_html": f"<p class='text-danger'>⚠️ B2B_Outbound: missing columns: {', '.join(missing)}.</p>", "sub_tables": [], "chart_data": [], "stats": {}}
 
-                actual_cols = ", ".join(str(c) for c in df1.columns.tolist()[:20])
-                if len(df1.columns) > 20:
-                    actual_cols += ", …"
-
-                return {
-                    "detail_html": (
-                        f"<p class='text-danger'>⚠️ Outbound1: missing required columns: {', '.join(missing)}.</p>"
-                        f"<p class='text-muted small mt-2'>الأعمدة المقروءة من الشيت '{outbound1_name}': {actual_cols}</p>"
-                    ),
-                    "sub_tables": [],
-                    "chart_data": [],
-                    "stats": {},
-                }
-
-            rename_ob1 = {
-                order_nbr_col: "Order Nbr",
-                customer_col: "Customer Name",
-                create_ts_col: "Create Timestamp",
-                status_col: "Status",
-                ship_date_col: "Ship Date",
-            }
-            if city_col and city_col in df1.columns:
-                rename_ob1[city_col] = "Customer City"
-            if order_type_col and order_type_col in df1.columns:
-                rename_ob1[order_type_col] = "Order Type"
-            if facility_code_col and facility_code_col in df1.columns:
-                rename_ob1[facility_code_col] = "Facility Code"
-            df1 = df1.rename(columns=rename_ob1)
-            if "Customer City" not in df1.columns:
-                df1["Customer City"] = ""
-            if "Order Type" not in df1.columns:
-                df1["Order Type"] = ""
-            if "Facility Code" not in df1.columns:
-                df1["Facility Code"] = ""
-
-            for dt_col in ["Create Timestamp", "Ship Date"]:
-                if dt_col in df1.columns:
-                    df1[dt_col] = pd.to_datetime(df1[dt_col], errors="coerce")
-
-            df1["Order Nbr"] = df1["Order Nbr"].astype(str).str.strip()
-            df1["Status"] = df1["Status"].astype(str).str.strip()
-
-            # مفتاح ربط موحّد (يحل اختلاف التنسيق مثل 001 vs 1)
-            def _order_key(ser):
-                def _norm(v):
-                    s = str(v).strip()
-                    try:
-                        return str(int(float(s)))
-                    except (ValueError, TypeError):
-                        return s
-
-                return ser.astype(str).str.strip().apply(_norm)
-
-            # Outbound2: Packed Timestamp + key to join (Order Nbr)
-            packed_series = None
-            if outbound2_name:
-                df2 = pd.read_excel(
-                    excel_path, sheet_name=outbound2_name, engine="openpyxl"
-                )
-                df2.columns = df2.columns.astype(str).str.strip()
-                order_nbr_col2 = find_col(
-                    df2,
-                    ["Order Nbr", "Order Nbr.", "Order Number", "Order No", "Order #"],
-                )
-                packed_col = find_col(
-                    df2, ["Packed Timestamp", "Packed Date", "Packed", "Packed Time"]
-                )
-                if order_nbr_col2 and packed_col:
-                    df2 = df2[[order_nbr_col2, packed_col]].copy()
-                    df2.columns = ["Order Nbr", "Packed Timestamp"]
-                    df2["Order Nbr"] = df2["Order Nbr"].astype(str).str.strip()
-                    df2["Packed Timestamp"] = pd.to_datetime(
-                        df2["Packed Timestamp"], errors="coerce"
-                    )
-                    # إزالة التكرار في Order Nbr عشان الـ map يشتغل (نحتفظ بأول صف لكل Order Nbr)
-                    df2_unique = df2.drop_duplicates(subset=["Order Nbr"], keep="first")
-                    packed_series = df2_unique.set_index("Order Nbr")[
-                        "Packed Timestamp"
-                    ]
-                    df1["Packed Timestamp"] = df1["Order Nbr"].map(packed_series)
-                    # طباعة عينة من Outbound2 للتأكد من الداتا
-                    print("\n[Outbound2] عينة من الشيت — Order Nbr و Packed Timestamp:")
-                    for idx, r in df2.head(8).iterrows():
-                        print(
-                            f"  Order Nbr: {r['Order Nbr']!r}  |  Packed: {r['Packed Timestamp']}"
-                        )
-                    print(f"  عدد صفوف Outbound2: {len(df2)}\n")
-                    # لو معظم القيم فاضية، نجرب المفتاح الموحّد (مثلاً 1 و 001 يتطابقان)
-                    if df1["Packed Timestamp"].notna().sum() < len(df1) // 2:
-                        df2["_ok"] = _order_key(df2["Order Nbr"])
-                        packed_by_ok = df2.drop_duplicates(
-                            subset=["_ok"], keep="first"
-                        ).set_index("_ok")["Packed Timestamp"]
-                        df1["_ok"] = _order_key(df1["Order Nbr"])
-                        df1["Packed Timestamp"] = df1["Packed Timestamp"].fillna(
-                            df1["_ok"].map(packed_by_ok)
-                        )
-                        df1.drop(columns=["_ok"], inplace=True, errors="ignore")
-                else:
-                    df1["Packed Timestamp"] = pd.NaT
+            df = df.rename(columns={so_col: "SO", channel_col: "Channel", order_status_col: "ORDER STATUS", creation_col: "Creation Date & Time", actual_delivery_col: "Actual Delivery Date"})
+            if pod_date_col:
+                df = df.rename(columns={pod_date_col: "POD Date"})
             else:
-                df1["Packed Timestamp"] = pd.NaT
+                df["POD Date"] = pd.NaT
 
-            if "Packed Timestamp" not in df1.columns:
-                df1["Packed Timestamp"] = pd.NaT
+            df["Channel"] = df["Channel"].astype(str).str.strip()
+            df["ORDER STATUS"] = df["ORDER STATUS"].astype(str).str.strip()
+            df = df[~df["ORDER STATUS"].str.upper().str.contains("CANCELLED", na=False)]
+            df["Creation Date & Time"] = pd.to_datetime(df["Creation Date & Time"], errors="coerce")
+            df["Actual Delivery Date"] = pd.to_datetime(df["Actual Delivery Date"], errors="coerce")
+            df["POD Date"] = pd.to_datetime(df["POD Date"], errors="coerce")
+            df["Month"] = df["Actual Delivery Date"].dt.strftime("%b")
 
-            # طباعة في الترمينال: نتيجة الربط مع Outbound2
-            packed_filled = df1["Packed Timestamp"].notna().sum()
-            print("\n" + "=" * 70)
-            print("Outbound — نتيجة الربط (Packed Timestamp من Outbound2)")
-            print("=" * 70)
-            print(f"  إجمالي الصفوف (Outbound1): {len(df1)}")
-            print(f"  صفوف فيها Packed Timestamp غير فاضي: {packed_filled}")
-            print(f"  صفوف فاضية (مفيش ربط): {len(df1) - packed_filled}")
-            if outbound2_name:
-                print(f"  شيت Outbound2 المستخدم: {outbound2_name}")
-            else:
-                print("  ⚠️ مفيش شيت Outbound2 تم استخدامه")
-            print("  عينة من df1 (Order Nbr | Packed Timestamp | Ship Date):")
-            for i, row in df1.head(10).iterrows():
-                pt = row.get("Packed Timestamp")
-                pt_str = str(pt)[:19] if pd.notna(pt) and pt is not pd.NaT else "(فاضي)"
-                sd = row.get("Ship Date")
-                sd_str = str(sd)[:19] if pd.notna(sd) and sd is not pd.NaT else "(فاضي)"
-                print(
-                    f"    Order Nbr: {row.get('Order Nbr')!r}  |  Packed: {pt_str}  |  Ship: {sd_str}"
-                )
-            print("=" * 70 + "\n")
+            month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            month_order_value = {m: i for i, m in enumerate(month_order)}
 
-            # لو لسه فاضي: نجرب نأخذ Packed من Outbound1 لو العمود موجود فيه
-            if df1["Packed Timestamp"].isna().all():
-                packed_in_ob1 = find_col(
-                    df1, ["Packed Timestamp", "Packed Date", "Packed", "Packed Time"]
-                )
-                if packed_in_ob1 and packed_in_ob1 in df1.columns:
-                    df1["Packed Timestamp"] = pd.to_datetime(
-                        df1[packed_in_ob1], errors="coerce"
-                    )
+            def _compute_48h(df_part):
+                hours = (df_part["Actual Delivery Date"] - df_part["Creation Date & Time"]).dt.total_seconds() / 3600.0
+                is_hit = (hours <= 48) & hours.notna()
+                return df_part.assign(Hours_48=hours, is_hit=is_hit)
 
-            # ========== حساب Hit/Miss بناءً على Create Order → Shipped date ==========
-            # الفرق = عدد الأيام من Create Timestamp (Create Order) لحد Ship Date.
-            #   • لو الفرق ≤ 2 أيام (يوم أو يومين) → Hit
-            #   • لو الفرق > 2 أيام → Miss
-            #   • لو أي تاريخ ناقص → Pending
-            # ==========
-            # الفرق بالأيام: Ship Date - Create Timestamp
-            lead_time_days = (
-                (df1["Ship Date"] - df1["Create Timestamp"])
-                .dt.total_seconds()
-                .div(24 * 3600)
-            )
-            df1["Cycle Days"] = lead_time_days.round(2)
-            df1["Cycle Hours"] = df1["Cycle Days"] * 24
+            df_b2b = df[df["Channel"].str.upper() == "B2B"].copy()
+            df_btq = df[df["Channel"].str.upper() == "BTQ"].copy()
+            df_b2b = _compute_48h(df_b2b)
+            df_btq = _compute_48h(df_btq)
 
-            def _ceil_days(val):
-                if pd.isna(val):
-                    return np.nan
-                try:
-                    v = float(val)
-                except (TypeError, ValueError):
-                    return np.nan
-                if v < 0:
-                    return 0
-                return float(np.ceil(v))
-
-            df1["Days_Used"] = df1["Cycle Days"].apply(_ceil_days)
-
-            # Threshold ثابت: يوم أو يومين كحد أقصى
-            df1["is_hit"] = df1["Days_Used"].le(2) & df1["Days_Used"].notna()
-            df1["HIT or MISS"] = np.where(df1["is_hit"], "Hit", "Miss")
-            df1.loc[df1["Days_Used"].isna(), "HIT or MISS"] = "Pending"
-
-            # الشهر من Ship Date أو Create Timestamp
-            month_source = df1["Ship Date"].copy()
-            month_source = month_source.fillna(df1["Create Timestamp"])
-            df1["Month"] = month_source.dt.strftime("%b")
-
-            # تطبيع الفاسيليتي إلى Riyadh / Dammam / Jeddah لاستخدامها في جداول المناطق
-            def _norm_facility(val):
-                v = (str(val) or "").strip().lower()
-                if "riyadh" in v or v == "ruh":
-                    return "Riyadh"
-                if "dammam" in v or "damam" in v:
-                    return "Dammam"
-                if "jeddah" in v or "jdda" in v or "jedd" in v:
-                    return "Jeddah"
-                return None
-
-            if "Facility Code" in df1.columns:
-                df1["_FacilityNorm"] = df1["Facility Code"].apply(_norm_facility)
-            else:
-                df1["_FacilityNorm"] = None
-
-            # فلتر الشهر
             selected_months_norm = []
             if selected_months:
                 if isinstance(selected_months, str):
@@ -4038,353 +3715,21 @@ class UploadExcelViewRoche(View):
                     norm = self.normalize_month_label(m)
                     if norm and norm not in selected_months_norm:
                         selected_months_norm.append(norm)
-            selected_month_norm = (
-                self.normalize_month_label(selected_month)
-                if selected_month and not selected_months_norm
-                else None
-            )
+            selected_month_norm = self.normalize_month_label(selected_month) if selected_month and not selected_months_norm else None
             if selected_months_norm:
-                df1 = df1[
-                    df1["Month"]
-                    .fillna("")
-                    .str.lower()
-                    .isin([m.lower() for m in selected_months_norm])
-                ]
+                df_b2b = df_b2b[df_b2b["Month"].fillna("").str.lower().isin([m.lower() for m in selected_months_norm])]
+                df_btq = df_btq[df_btq["Month"].fillna("").str.lower().isin([m.lower() for m in selected_months_norm])]
             elif selected_month_norm:
-                df1 = df1[
-                    df1["Month"].fillna("").str.lower() == selected_month_norm.lower()
-                ]
+                df_b2b = df_b2b[df_b2b["Month"].fillna("").str.lower() == selected_month_norm.lower()]
+                df_btq = df_btq[df_btq["Month"].fillna("").str.lower() == selected_month_norm.lower()]
 
-            if df1.empty:
-                return {
-                    "detail_html": "<p class='text-warning'>⚠️ No outbound records for the selected period.</p>",
-                    "sub_tables": [],
-                    "chart_data": [],
-                    "stats": {},
-                }
-
-            df_summary = df1.dropna(subset=["Month"]).copy()
-            if df_summary.empty:
-                return {
-                    "detail_html": "<p class='text-warning'>⚠️ No valid month values in outbound data.</p>",
-                    "sub_tables": [],
-                    "chart_data": [],
-                    "stats": {},
-                }
-
-            def month_order_value(label):
-                if not label:
-                    return 999
-                label = str(label).strip()[:3].title()
-                for idx in range(1, 13):
-                    if month_abbr[idx] == label:
-                        return idx
-                return 999
-
-            total_per_month = (
-                df_summary.groupby("Month")["Order Nbr"]
-                .nunique()
-                .reset_index(name="Total_Shipments")
-            )
-            hits_df = (
-                df_summary[df_summary["is_hit"]]
-                .groupby("Month")["Order Nbr"]
-                .nunique()
-                .reset_index(name="Hits")
-            )
-            summary_df = total_per_month.merge(hits_df, on="Month", how="left")
-            summary_df["Hits"] = summary_df["Hits"].fillna(0).astype(int)
-            summary_df["Misses"] = summary_df["Total_Shipments"] - summary_df["Hits"]
-            summary_df["Hit %"] = (
-                summary_df["Hits"]
-                / summary_df["Total_Shipments"].replace(0, np.nan)
-                * 100
-            )
-            summary_df["Hit %"] = summary_df["Hit %"].fillna(0).round(2)
-            
-            # حساب عدد الـ Facilities الفريدة لكل شهر
-            facility_per_month = (
-                df_summary.groupby("Month")["Facility Code"]
-                .nunique()
-                .reset_index(name="Facility_Count")
-            )
-            summary_df = summary_df.merge(facility_per_month, on="Month", how="left")
-            summary_df["Facility_Count"] = summary_df["Facility_Count"].fillna(0).astype(int)
-            
-            summary_df = summary_df.sort_values(
-                by="Month", key=lambda col: col.map(month_order_value)
-            )
-
-            months_with_miss = summary_df[summary_df["Misses"] > 0]["Month"].tolist()
-            months_with_hit_only_ob = summary_df[summary_df["Misses"] == 0][
-                "Month"
-            ].tolist()
-            # ترتيب الشهور في الجداول والشارت يكون زمنيًا فقط (Jan → Dec)،
-            # وقائمة الأشهر التي بها Miss تُستخدم في العنوان فقط.
-            ordered_months = summary_df["Month"].tolist()
-
-            kpi_rows = []
-            for _, row in summary_df.iterrows():
-                m = row["Month"]
-                kpi_rows.append(
-                    {
-                        "Month": m,
-                        "Total Shipments": int(row["Total_Shipments"]),
-                        "Hit (≤24h)": int(row["Hits"]),
-                        "Miss (>24h)": int(row["Misses"]),
-                        "Hit %": float(row["Hit %"]),
-                        "Facility Count": int(row["Facility_Count"]),
-                    }
-                )
-
-            pivot_cols = ["KPI"] + ordered_months
-            if len(ordered_months) >= 2:
-                pivot_cols.append("2025")
-
-            hit_pct_row = {"KPI": "Hit %"}
-            total_row = {"KPI": "Total Shipments"}
-            hit_row = {"KPI": "Hit (≤24h)"}
-            miss_row = {"KPI": "Miss (>24h)"}
-            for m in ordered_months:
-                r = next((x for x in kpi_rows if x["Month"] == m), None)
-                if r:
-                    total_val = int(r["Total Shipments"])
-                    hit_val = int(r["Hit (≤24h)"])
-                    miss_val = int(r["Miss (>24h)"])
-                    total_row[m] = total_val
-                    hit_row[m] = hit_val
-                    miss_row[m] = miss_val
-                    hit_pct_row[m] = (
-                        int(round(hit_val / total_val * 100)) if total_val > 0 else 0
-                    )
-            if "2025" in pivot_cols:
-                total_2025 = sum(r["Total Shipments"] for r in kpi_rows)
-                hit_2025 = sum(r["Hit (≤24h)"] for r in kpi_rows)
-                hit_pct_row["2025"] = (
-                    int(round(hit_2025 / total_2025 * 100)) if total_2025 > 0 else 0
-                )
-                total_row["2025"] = int(sum(r["Total Shipments"] for r in kpi_rows))
-                hit_row["2025"] = int(sum(r["Hit (≤24h)"] for r in kpi_rows))
-                miss_row["2025"] = int(sum(r["Miss (>24h)"] for r in kpi_rows))
-
-            # Total Shipments آخر صف في الجدول
-            summary_data_pivot = [hit_pct_row, hit_row, miss_row, total_row]
-            summary_columns = pivot_cols
-            summary_data = summary_data_pivot
-
-            # إحصائيات على مستوى الشحنة (Order Nbr) وليس الصف
-            orders_df = df1.drop_duplicates(subset=["Order Nbr"], keep="first")
-            overall_total = int(orders_df.shape[0])
-            overall_hits = int(orders_df["is_hit"].sum())
-            overall_miss = overall_total - overall_hits
-            overall_hit_pct = (
-                round((overall_hits / overall_total) * 100, 2) if overall_total else 0
-            )
-
-            # سيتم بناء بيانات الشارت لاحقًا من جداول المناطق (Riyadh / Dammam / Jeddah)
-            chart_data = []
-
-            months_with_miss_label = (
-                " — Months with Miss: " + ", ".join(months_with_miss)
-                if months_with_miss
-                else " — All months Hit"
-            )
-            summary_table = {
-                "id": "sub-table-outbound-hit-summary",
-                "title": "Outbound KPI ≤ 2d" + months_with_miss_label,
-                "columns": summary_columns,
-                "data": summary_data,
-                "chart_data": chart_data,
-                "months_with_miss": months_with_miss,
-                "months_with_hit_only": months_with_hit_only_ob,
-            }
-
-            # ====== جداول KPI لكل مدينة (Riyadh / Dammam / Jeddah) — شبيهة بجداول Inbound ======
-            FACILITIES_OB = ["Riyadh", "Dammam", "Jeddah"]
-            facility_tables = []
-            hit_data_points = []
-            for f in FACILITIES_OB:
-                fdf = df1[df1["_FacilityNorm"] == f].copy()
-                if fdf.empty:
-                    continue
-
-                f_total_per_month = (
-                    fdf.groupby("Month")["Order Nbr"]
-                    .nunique()
-                    .reset_index(name="Total_Shipments")
-                )
-                f_hits_df = (
-                    fdf[fdf["is_hit"]]
-                    .groupby("Month")["Order Nbr"]
-                    .nunique()
-                    .reset_index(name="Hits")
-                )
-                f_summary_df = f_total_per_month.merge(
-                    f_hits_df, on="Month", how="left"
-                )
-                f_summary_df["Hits"] = f_summary_df["Hits"].fillna(0).astype(int)
-                f_summary_df["Misses"] = (
-                    f_summary_df["Total_Shipments"] - f_summary_df["Hits"]
-                )
-                f_summary_df["Hit %"] = (
-                    f_summary_df["Hits"]
-                    / f_summary_df["Total_Shipments"].replace(0, np.nan)
-                    * 100
-                )
-                f_summary_df["Hit %"] = f_summary_df["Hit %"].fillna(0).round(2)
-
-                f_summary_df = f_summary_df.sort_values(
-                    by="Month", key=lambda col: col.map(month_order_value)
-                )
-
-                f_months_with_miss = f_summary_df[
-                    f_summary_df["Misses"] > 0
-                ]["Month"].tolist()
-                f_months_with_hit_only = f_summary_df[
-                    f_summary_df["Misses"] == 0
-                ]["Month"].tolist()
-                # ترتيب الأعمدة زمنيًا فقط (Jan → Dec) مثل Inbound،
-                # وقائمة الأشهر التي بها Miss للاستخدام في العنوان فقط.
-                f_ordered_months = f_summary_df["Month"].tolist()
-
-                f_kpi_rows = []
-                for _, row in f_summary_df.iterrows():
-                    m = row["Month"]
-                    total_val = int(row["Total_Shipments"])
-                    hits_val = int(row["Hits"])
-                    misses_val = int(row["Misses"])
-                    f_kpi_rows.append(
-                        {
-                            "Month": m,
-                            "Total Shipments": total_val,
-                            "Hit (≤2d)": hits_val,
-                            "Miss (>2d)": misses_val,
-                        }
-                    )
-                    if total_val > 0:
-                        hit_data_points.append(
-                            {"label": f"{m} — {f}", "y": float(hits_val)}
-                        )
-
-                f_pivot_cols = ["KPI"] + f_ordered_months
-                if len(f_ordered_months) >= 2:
-                    f_pivot_cols.append("2025")
-
-                f_hit_pct_row = {"KPI": "Hit %"}
-                f_total_row = {"KPI": "Total Shipments"}
-                f_hit_row = {"KPI": "Hit (≤2d)"}
-                f_miss_row = {"KPI": "Miss (>2d)"}
-                for m in f_ordered_months:
-                    r = next((x for x in f_kpi_rows if x["Month"] == m), None)
-                    if r:
-                        total_val = int(r["Total Shipments"])
-                        hit_val = int(r["Hit (≤2d)"])
-                        miss_val = int(r["Miss (>2d)"])
-                        f_total_row[m] = total_val
-                        f_hit_row[m] = hit_val
-                        f_miss_row[m] = miss_val
-                        f_hit_pct_row[m] = (
-                            int(round(hit_val / total_val * 100))
-                            if total_val > 0
-                            else 0
-                        )
-                if "2025" in f_pivot_cols:
-                    total_2025 = sum(r["Total Shipments"] for r in f_kpi_rows)
-                    hit_2025 = sum(r["Hit (≤2d)"] for r in f_kpi_rows)
-                    f_hit_pct_row["2025"] = (
-                        int(round(hit_2025 / total_2025 * 100))
-                        if total_2025 > 0
-                        else 0
-                    )
-                    f_total_row["2025"] = total_2025
-                    f_hit_row["2025"] = hit_2025
-                    f_miss_row["2025"] = sum(
-                        r["Miss (>2d)"] for r in f_kpi_rows
-                    )
-
-                f_summary_data_pivot = [
-                    f_hit_pct_row,
-                    f_hit_row,
-                    f_miss_row,
-                    f_total_row,
-                ]
-
-                f_months_label = (
-                    " — Months with Miss: " + ", ".join(f_months_with_miss)
-                    if f_months_with_miss
-                    else " — All Hit"
-                )
-
-                facility_tables.append(
-                    {
-                        "id": f"sub-table-outbound-{f.lower()}",
-                        "title": "Outbound KPI ≤ 2d"
-                        + f_months_label
-                        + " — "
-                        + f,
-                        "columns": f_pivot_cols,
-                        "data": f_summary_data_pivot,
-                        "chart_data": [],
-                        "full_width": False,
-                        "facility_name": f,
-                    }
-                )
-
-            # الشارت الرئيسي: Hit لكل شهر/منطقة، مع تسمية "Month — Region"
-            if hit_data_points:
-                chart_data = [
-                    {
-                        "type": "column",
-                        "name": "Hit",
-                        "color": "#9F8170",
-                        "related_table": "sub-table-outbound-hit-summary",
-                        "dataPoints": hit_data_points,
-                    }
-                ]
-                summary_table["chart_data"] = chart_data
-
-            detail_df = df1.copy()
-            detail_df["_sort_ts"] = detail_df["Ship Date"]
-
-            def _fmt_date(x):
+            def _fmt_dt(x):
                 if pd.isna(x) or x is pd.NaT:
                     return ""
                 try:
                     return pd.Timestamp(x).strftime("%Y-%m-%d %H:%M")
                 except Exception:
                     return ""
-
-            for col in ["Create Timestamp", "Ship Date", "Packed Timestamp"]:
-                if col in detail_df.columns:
-                    detail_df[col] = detail_df[col].apply(_fmt_date)
-                else:
-                    detail_df[col] = ""
-
-            detail_df["Days"] = detail_df["Cycle Days"].apply(
-                lambda x: "" if pd.isna(x) else str(int(np.ceil(float(x))))
-            )
-
-            drop_cols = [
-                c
-                for c in [
-                    "_sort_ts",
-                    "Cycle Hours",
-                    "Cycle Days",
-                    "is_hit",
-                    "_FacilityNorm",
-                    "Days_Used",
-                ]
-                if c in detail_df.columns
-            ]
-
-            # ✅ جدول التفاصيل يعرض شيت ARAMCO Outbound Report "كما هو" + الأعمدة المحسوبة (Month, Days, HIT or MISS)
-            # بدون أعمدة المساعدة (_FacilityNorm, Cycle Hours, Cycle Days, Days_Used, is_hit, _sort_ts)
-            sorted_df = (
-                detail_df.sort_values("_sort_ts", ascending=False)
-                .drop(columns=drop_cols)
-            )
-            detail_columns = list(sorted_df.columns)
-            detail_rows_raw = sorted_df.head(500).to_dict(orient="records")
 
             def _to_blank(val):
                 if val is None:
@@ -4396,109 +3741,171 @@ class UploadExcelViewRoche(View):
                     return ""
                 return s
 
-            detail_rows = [
-                {k: _to_blank(v) for k, v in row.items()} for row in detail_rows_raw
-            ]
+            sub_tables = []
+            chart_data = []
 
-            # طباعة بيانات جدول Outbound Shipments Detail في الترمينال (مع Packed Timestamp)
-            print("\n" + "=" * 90)
-            print(
-                "Outbound Shipments Detail — بيانات الجدول المرسلة للقالب (أول 15 صف)"
-            )
-            print("=" * 90)
-            print("  الأعمدة:", detail_columns)
-            print("-" * 90)
-            for i, row in enumerate(detail_rows[:15], 1):
-                packed_val = row.get("Packed Timestamp", "")
-                ship_val = row.get("Ship Date", "")
-                cust = row.get("Customer Name", "")[:25]
-                print(
-                    f"  {i:2d} | Customer: {cust:25s} | Packed Timestamp: {str(packed_val):20s} | Ship Date: {str(ship_val):20s} | HIT or MISS: {row.get('HIT or MISS', '')}"
-                )
-            print("-" * 90)
-            print(f"  إجمالي الصفوف في الجدول: {len(detail_rows)}")
-            print("=" * 90 + "\n")
+            # ——— جدول B2B KPI (48h) ———
+            if not df_b2b.empty:
+                b2b_summary = df_b2b.groupby("Month").agg(Total_Shipments=("SO", "nunique"), Hits=("is_hit", "sum")).reset_index()
+                b2b_summary["Misses"] = b2b_summary["Total_Shipments"] - b2b_summary["Hits"]
+                b2b_summary["Hit %"] = (b2b_summary["Hits"] / b2b_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
+                b2b_summary = b2b_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
+                ordered_b2b = b2b_summary["Month"].tolist()
+                pivot_b2b = ["KPI"] + ordered_b2b + (["2025"] if len(ordered_b2b) >= 2 else [])
+                hit_pct_b2b = {"KPI": "Hit %"}
+                total_b2b = {"KPI": "Total Shipments"}
+                hit_b2b = {"KPI": "Hit (≤48h)"}
+                miss_b2b = {"KPI": "Miss (>48h)"}
+                for m in ordered_b2b:
+                    r = b2b_summary[b2b_summary["Month"] == m].iloc[0]
+                    t, h = int(r["Total_Shipments"]), int(r["Hits"])
+                    total_b2b[m], hit_b2b[m], miss_b2b[m] = t, h, int(r["Misses"])
+                    hit_pct_b2b[m] = int(round(h * 100 / t)) if t > 0 else 0
+                if "2025" in pivot_b2b:
+                    t2025 = int(b2b_summary["Total_Shipments"].sum())
+                    h2025 = int(b2b_summary["Hits"].sum())
+                    total_b2b["2025"], hit_b2b["2025"], miss_b2b["2025"] = t2025, h2025, t2025 - h2025
+                    hit_pct_b2b["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                sub_tables.append({"id": "sub-table-b2b-hit-summary", "title": "B2B KPI (Creation → Delivery ≤ 48h)", "columns": pivot_b2b, "data": [hit_pct_b2b, hit_b2b, miss_b2b, total_b2b], "chart_data": [], "full_width": False, "side_by_side": True})
+                chart_data.append({
+                    "type": "column",
+                    "name": "B2B Hit % (≤48h)",
+                    "color": "#9F8170",
+                    "related_table": "sub-table-b2b-hit-summary",
+                    "dataPoints": [{"label": f"{m} — B2B", "y": hit_pct_b2b.get(m, 0)} for m in ordered_b2b],
+                })
 
-            detail_df_for_options = detail_df.sort_values(
-                "_sort_ts", ascending=False
-            ).drop(columns=[c for c in drop_cols if c in detail_df.columns])
-            facility_options = sorted(
-                detail_df_for_options["Customer Name"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .replace("", None)
-                .dropna()
-                .unique()
-                .tolist()
-            )
-            status_options = sorted(
-                detail_df_for_options["Status"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .replace("", None)
-                .dropna()
-                .unique()
-                .tolist()
-            )
-            month_options = sorted(
-                detail_df_for_options["Month"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .replace("", None)
-                .dropna()
-                .unique()
-                .tolist()
-            )
-            city_options = sorted(
-                detail_df_for_options["Customer City"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .replace("", None)
-                .dropna()
-                .unique()
-                .tolist()
-            )
-            hit_miss_options = ["Hit", "Miss", "Pending"]
-            facility_code_options = sorted(
-                detail_df_for_options["Facility Code"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .replace("", None)
-                .dropna()
-                .unique()
-                .tolist()
-            )
+            # ——— جدول BTQ KPI (48h) ———
+            if not df_btq.empty:
+                btq_summary = df_btq.groupby("Month").agg(Total_Shipments=("SO", "nunique"), Hits=("is_hit", "sum")).reset_index()
+                btq_summary["Misses"] = btq_summary["Total_Shipments"] - btq_summary["Hits"]
+                btq_summary["Hit %"] = (btq_summary["Hits"] / btq_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
+                btq_summary = btq_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
+                ordered_btq = btq_summary["Month"].tolist()
+                pivot_btq = ["KPI"] + ordered_btq + (["2025"] if len(ordered_btq) >= 2 else [])
+                hit_pct_btq = {"KPI": "Hit %"}
+                total_btq = {"KPI": "Total Shipments"}
+                hit_btq = {"KPI": "Hit (≤48h)"}
+                miss_btq = {"KPI": "Miss (>48h)"}
+                for m in ordered_btq:
+                    r = btq_summary[btq_summary["Month"] == m].iloc[0]
+                    t, h = int(r["Total_Shipments"]), int(r["Hits"])
+                    total_btq[m], hit_btq[m], miss_btq[m] = t, h, int(r["Misses"])
+                    hit_pct_btq[m] = int(round(h * 100 / t)) if t > 0 else 0
+                if "2025" in pivot_btq:
+                    t2025 = int(btq_summary["Total_Shipments"].sum())
+                    h2025 = int(btq_summary["Hits"].sum())
+                    total_btq["2025"], hit_btq["2025"], miss_btq["2025"] = t2025, h2025, t2025 - h2025
+                    hit_pct_btq["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                sub_tables.append({"id": "sub-table-btq-hit-summary", "title": "BTQ KPI (Creation → Delivery ≤ 48h)", "columns": pivot_btq, "data": [hit_pct_btq, hit_btq, miss_btq, total_btq], "chart_data": [], "full_width": False, "side_by_side": True})
+                chart_data.append({
+                    "type": "column",
+                    "name": "BTQ Hit % (≤48h)",
+                    "color": "#81613E",
+                    "related_table": "sub-table-btq-hit-summary",
+                    "dataPoints": [{"label": f"{m} — BTQ", "y": hit_pct_btq.get(m, 0)} for m in ordered_btq],
+                })
 
-            # فلتر جدول التفاصيل: Facility، Month، Order Nbr فقط
-            detail_table = {
-                "id": "sub-table-outbound-detail",
-                "title": "Outbound Shipments Detail",
-                "columns": detail_columns,
-                "data": detail_rows,
-                "chart_data": [],
-                "full_width": True,
-                "filter_options": {
-                    "facility_codes": facility_code_options,
-                    "months": month_options,
-                },
-            }
+            # ——— PODs B2B و PODs BTQ: Actual Delivery → POD Date ≤18 يوم = Hit ———
+            chart_data_pods = []
+            df_pods_b2b = df[df["Channel"].str.upper() == "B2B"].copy()
+            df_pods_b2b = df_pods_b2b[df_pods_b2b["POD Date"].notna()]
+            df_pods_btq = df[df["Channel"].str.upper() == "BTQ"].copy()
+            df_pods_btq = df_pods_btq[df_pods_btq["POD Date"].notna()]
+
+            if not df_pods_b2b.empty:
+                days_pod_b2b = (df_pods_b2b["POD Date"] - df_pods_b2b["Actual Delivery Date"]).dt.total_seconds() / (24 * 3600.0)
+                df_pods_b2b["PODs_is_hit"] = (days_pod_b2b <= 18) & days_pod_b2b.notna()
+                df_pods_b2b["Month"] = df_pods_b2b["Actual Delivery Date"].dt.strftime("%b")
+            if not df_pods_btq.empty:
+                days_pod_btq = (df_pods_btq["POD Date"] - df_pods_btq["Actual Delivery Date"]).dt.total_seconds() / (24 * 3600.0)
+                df_pods_btq["PODs_is_hit"] = (days_pod_btq <= 18) & days_pod_btq.notna()
+                df_pods_btq["Month"] = df_pods_btq["Actual Delivery Date"].dt.strftime("%b")
+
+            if selected_months_norm:
+                if not df_pods_b2b.empty:
+                    df_pods_b2b = df_pods_b2b[df_pods_b2b["Month"].fillna("").str.lower().isin([m.lower() for m in selected_months_norm])]
+                if not df_pods_btq.empty:
+                    df_pods_btq = df_pods_btq[df_pods_btq["Month"].fillna("").str.lower().isin([m.lower() for m in selected_months_norm])]
+            elif selected_month_norm:
+                if not df_pods_b2b.empty:
+                    df_pods_b2b = df_pods_b2b[df_pods_b2b["Month"].fillna("").str.lower() == selected_month_norm.lower()]
+                if not df_pods_btq.empty:
+                    df_pods_btq = df_pods_btq[df_pods_btq["Month"].fillna("").str.lower() == selected_month_norm.lower()]
+
+            if not df_pods_b2b.empty:
+                pods_b2b_summary = df_pods_b2b.groupby("Month").agg(Total_Shipments=("SO", "nunique"), Hits=("PODs_is_hit", "sum")).reset_index()
+                pods_b2b_summary["Misses"] = pods_b2b_summary["Total_Shipments"] - pods_b2b_summary["Hits"]
+                pods_b2b_summary["Hit %"] = (pods_b2b_summary["Hits"] / pods_b2b_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
+                pods_b2b_summary = pods_b2b_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
+                ordered_pb2b = pods_b2b_summary["Month"].tolist()
+                pivot_pb2b = ["KPI"] + ordered_pb2b + (["2025"] if len(ordered_pb2b) >= 2 else [])
+                hit_pct_pb2b = {"KPI": "Hit %"}
+                total_pb2b = {"KPI": "Total Shipments"}
+                hit_pb2b = {"KPI": "Hit (≤18d)"}
+                miss_pb2b = {"KPI": "Miss (>18d)"}
+                for m in ordered_pb2b:
+                    r = pods_b2b_summary[pods_b2b_summary["Month"] == m].iloc[0]
+                    t, h = int(r["Total_Shipments"]), int(r["Hits"])
+                    total_pb2b[m], hit_pb2b[m], miss_pb2b[m] = t, h, int(r["Misses"])
+                    hit_pct_pb2b[m] = int(round(h * 100 / t)) if t > 0 else 0
+                if "2025" in pivot_pb2b:
+                    t2025 = int(pods_b2b_summary["Total_Shipments"].sum())
+                    h2025 = int(pods_b2b_summary["Hits"].sum())
+                    total_pb2b["2025"], hit_pb2b["2025"], miss_pb2b["2025"] = t2025, h2025, t2025 - h2025
+                    hit_pct_pb2b["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                sub_tables.append({"id": "sub-table-pods-b2b-hit-summary", "title": "PODs B2B KPI (Delivery → POD ≤ 18 days)", "columns": pivot_pb2b, "data": [hit_pct_pb2b, hit_pb2b, miss_pb2b, total_pb2b], "chart_data": [], "full_width": False, "side_by_side": True})
+                chart_data_pods.append({"type": "column", "name": "PODs B2B Hit % (≤18d)", "color": "#9F8170", "related_table": "sub-table-pods-b2b-hit-summary", "dataPoints": [{"label": f"{m} — PODs B2B", "y": hit_pct_pb2b.get(m, 0)} for m in ordered_pb2b]})
+
+            if not df_pods_btq.empty:
+                pods_btq_summary = df_pods_btq.groupby("Month").agg(Total_Shipments=("SO", "nunique"), Hits=("PODs_is_hit", "sum")).reset_index()
+                pods_btq_summary["Misses"] = pods_btq_summary["Total_Shipments"] - pods_btq_summary["Hits"]
+                pods_btq_summary["Hit %"] = (pods_btq_summary["Hits"] / pods_btq_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
+                pods_btq_summary = pods_btq_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
+                ordered_pbtq = pods_btq_summary["Month"].tolist()
+                pivot_pbtq = ["KPI"] + ordered_pbtq + (["2025"] if len(ordered_pbtq) >= 2 else [])
+                hit_pct_pbtq = {"KPI": "Hit %"}
+                total_pbtq = {"KPI": "Total Shipments"}
+                hit_pbtq = {"KPI": "Hit (≤18d)"}
+                miss_pbtq = {"KPI": "Miss (>18d)"}
+                for m in ordered_pbtq:
+                    r = pods_btq_summary[pods_btq_summary["Month"] == m].iloc[0]
+                    t, h = int(r["Total_Shipments"]), int(r["Hits"])
+                    total_pbtq[m], hit_pbtq[m], miss_pbtq[m] = t, h, int(r["Misses"])
+                    hit_pct_pbtq[m] = int(round(h * 100 / t)) if t > 0 else 0
+                if "2025" in pivot_pbtq:
+                    t2025 = int(pods_btq_summary["Total_Shipments"].sum())
+                    h2025 = int(pods_btq_summary["Hits"].sum())
+                    total_pbtq["2025"], hit_pbtq["2025"], miss_pbtq["2025"] = t2025, h2025, t2025 - h2025
+                    hit_pct_pbtq["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                sub_tables.append({"id": "sub-table-pods-btq-hit-summary", "title": "PODs BTQ KPI (Delivery → POD ≤ 18 days)", "columns": pivot_pbtq, "data": [hit_pct_pbtq, hit_pbtq, miss_pbtq, total_pbtq], "chart_data": [], "full_width": False, "side_by_side": True})
+                chart_data_pods.append({"type": "column", "name": "PODs BTQ Hit % (≤18d)", "color": "#81613E", "related_table": "sub-table-pods-btq-hit-summary", "dataPoints": [{"label": f"{m} — PODs BTQ", "y": hit_pct_pbtq.get(m, 0)} for m in ordered_pbtq]})
+
+            if not sub_tables:
+                return {"detail_html": "<p class='text-warning'>⚠️ No B2B or BTQ records for the selected period.</p>", "sub_tables": [], "chart_data": [], "chart_data_pods": [], "stats": {}}
+
+            df_all = pd.concat([df_b2b, df_btq], ignore_index=True) if not df_b2b.empty and not df_btq.empty else (df_b2b if not df_b2b.empty else df_btq)
+            overall_total = int(df_all["SO"].nunique())
+            overall_hits = int(df_all["is_hit"].sum()) if "is_hit" in df_all.columns else (int(df_b2b["is_hit"].sum()) if not df_b2b.empty else int(df_btq["is_hit"].sum()))
+            overall_hit_pct = round((overall_hits / overall_total) * 100, 2) if overall_total else 0
+
+            raw_sheet_cols = ["SO", "Channel", "ORDER STATUS", "Creation Date & Time", "Actual Delivery Date", "POD Date", "Month"]
+            raw_sheet_cols = [c for c in raw_sheet_cols if c in df_all.columns]
+            raw_df = df_all[raw_sheet_cols].copy().sort_values("Actual Delivery Date", ascending=False).head(500)
+            raw_df["Creation Date & Time"] = raw_df["Creation Date & Time"].apply(_fmt_dt)
+            raw_df["Actual Delivery Date"] = raw_df["Actual Delivery Date"].apply(_fmt_dt)
+            if "POD Date" in raw_df.columns:
+                raw_df["POD Date"] = raw_df["POD Date"].apply(_fmt_dt)
+            raw_excel_rows = [{k: _to_blank(v) for k, v in row.items()} for row in raw_df.to_dict(orient="records")]
+            raw_excel_table = {"id": "sub-table-b2b-raw-sheet", "title": "B2B_Outbound (Sheet Data)", "columns": [{"name": c, "key": c, "group": "sheet"} for c in raw_sheet_cols], "data": raw_excel_rows, "full_width": True}
 
             return {
                 "detail_html": "",
-                "sub_tables": facility_tables + [detail_table],
+                "sub_tables": sub_tables,
                 "chart_data": chart_data,
-                "stats": {
-                    "total": overall_total,
-                    "hit": overall_hits,
-                    "miss": overall_miss,
-                    "hit_pct": overall_hit_pct,
-                    "target": 99,
-                },
+                "chart_data_pods": chart_data_pods,
+                "raw_excel_table": raw_excel_table,
+                "stats": {"total": overall_total, "hit": overall_hits, "miss": overall_total - overall_hits, "hit_pct": overall_hit_pct, "target": 99},
             }
 
         except Exception as e:
@@ -4509,8 +3916,716 @@ class UploadExcelViewRoche(View):
                 "detail_html": f"<p class='text-danger'>⚠️ Error processing outbound shipments: {e}</p>",
                 "sub_tables": [],
                 "chart_data": [],
+                "chart_data_pods": [],
                 "stats": {},
             }
+
+    def filter_b2c_outbound(
+        self, request, selected_month=None, selected_months=None
+    ):
+        """
+        B2C Outbound: يقرأ من شيت B2C_Outbound.
+        - جدول Pick & Peak (Creation / Picked): مقارنة CREATION DATE مع PICKED DATE.
+        - إذا Creation من 9am إلى 3pm → يجب Picked قبل 4pm وإلا Miss.
+        - إذا Creation من 3pm إلى 12am أو من 12am إلى 9am → يجب Picked قبل 10am وإلا Miss.
+        - تسجيل مدة كل شحنة بالساعات (Duration).
+        """
+        try:
+            import os
+            from datetime import time, datetime, timedelta
+
+            excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
+            if not excel_path or not os.path.exists(excel_path):
+                return {
+                    "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
+                    "sub_tables": [],
+                    "raw_excel_table": None,
+                    "stats": {},
+                }
+
+            import hashlib
+            _b2c_key = "b2c_outbound_" + hashlib.md5((excel_path or "").encode()).hexdigest()[:16]
+            _b2c_cached = cache.get(_b2c_key)
+            if _b2c_cached is not None:
+                return _b2c_cached
+
+            xls = pd.ExcelFile(excel_path, engine="openpyxl")
+            sheet_name = "B2C_Outbound"
+            if sheet_name not in xls.sheet_names:
+                b2c_sheet = next(
+                    (
+                        s
+                        for s in xls.sheet_names
+                        if s.strip().replace(" ", "_") == sheet_name
+                        or s.strip().lower() == sheet_name.lower()
+                    ),
+                    None,
+                )
+                if b2c_sheet:
+                    sheet_name = b2c_sheet
+                else:
+                    return {
+                        "detail_html": f"<p class='text-warning'>⚠️ Sheet '{sheet_name}' not found.</p>",
+                        "sub_tables": [],
+                        "raw_excel_table": None,
+                        "stats": {},
+                    }
+
+            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            df.columns = df.columns.astype(str).str.strip()
+            df_full = df.copy()
+
+            def find_col(d, candidates):
+                for c in d.columns:
+                    if str(c).strip().lower() in [x.lower() for x in candidates]:
+                        return c
+                for cand in candidates:
+                    for c in d.columns:
+                        if cand.lower() in str(c).lower():
+                            return c
+                return None
+
+            order_col = find_col(
+                df,
+                [
+                    "ORDER / SO",
+                    "ORDER/SO",
+                    "Order / SO",
+                    "SO",
+                    "Order Number",
+                    "Order Nbr",
+                    "Order No",
+                ],
+            )
+            creation_col = find_col(
+                df,
+                [
+                    "CREATTION DATE",
+                    "CREATION DATE",
+                    "Creation Date & Time",
+                    "Creation Date and Time",
+                    "Create Timestamp",
+                    "Creation DateTime",
+                    "Create Date",
+                ],
+            )
+            picked_col = find_col(
+                df,
+                [
+                    "PICKED DATE",
+                    "Picked Date",
+                    "Picked Date & Time",
+                    "Picked DateTime",
+                ],
+            )
+            status_col = find_col(
+                df,
+                ["Status", "STATUS", "Order Status", "OrderStatus"],
+            )
+            dispatch_col = find_col(
+                df,
+                [
+                    "Dispatch date & time",
+                    "Dispatch Date & Time",
+                    "Dispatch Date and Time",
+                    "Dispatch DateTime",
+                    "Dispatch Date",
+                ],
+            )
+            delivered_col = find_col(
+                df,
+                [
+                    "DELIVERED DATE",
+                    "Delivered Date",
+                    "Delivered Date & Time",
+                    "Delivered DateTime",
+                ],
+            )
+
+            if not order_col or not creation_col or not picked_col:
+                missing = [
+                    x
+                    for x, c in [
+                        ("ORDER / SO", order_col),
+                        ("Creation", creation_col),
+                        ("Picked", picked_col),
+                    ]
+                    if not c
+                ]
+                return {
+                    "detail_html": f"<p class='text-danger'>⚠️ B2C_Outbound: missing columns: {', '.join(missing)}.</p>",
+                    "sub_tables": [],
+                    "raw_excel_table": None,
+                    "stats": {},
+                }
+
+            df = df.rename(
+                columns={
+                    order_col: "Order_SO",
+                    creation_col: "Creation_Date",
+                    picked_col: "Picked_Date",
+                }
+            )
+            df["Creation_Date"] = pd.to_datetime(df["Creation_Date"], errors="coerce")
+            df["Picked_Date"] = pd.to_datetime(df["Picked_Date"], errors="coerce")
+            df = df.dropna(subset=["Order_SO", "Creation_Date", "Picked_Date"])
+            if df.empty:
+                return {
+                    "detail_html": "<p class='text-warning'>⚠️ No rows with valid Order, Creation and Picked dates.</p>",
+                    "sub_tables": [],
+                    "raw_excel_table": None,
+                    "stats": {},
+                }
+
+            # تجميع بالطلب: نأخذ أول صف لكل Order (أو يمكن آخر Picked)
+            df = df.sort_values(["Order_SO", "Creation_Date"]).drop_duplicates(
+                subset=["Order_SO"], keep="first"
+            )
+
+            def get_deadline(creation_dt):
+                if pd.isna(creation_dt):
+                    return pd.NaT
+                try:
+                    ts = pd.Timestamp(creation_dt)
+                    d = ts.date()
+                    t = ts.time()
+                    t9 = time(9, 0)
+                    t15 = time(15, 0)
+                    t16 = time(16, 0)
+                    t10 = time(10, 0)
+                    if t9 <= t < t15:
+                        return pd.Timestamp(datetime.combine(d, t16))
+                    elif t >= t15:
+                        next_d = d + timedelta(days=1)
+                        return pd.Timestamp(datetime.combine(next_d, t10))
+                    else:
+                        return pd.Timestamp(datetime.combine(d, t10))
+                except Exception:
+                    return pd.NaT
+
+            df["Deadline"] = df["Creation_Date"].apply(get_deadline)
+            df["is_hit"] = (df["Picked_Date"] <= df["Deadline"]) & df["Deadline"].notna()
+            df["Duration_Hours"] = (
+                (df["Picked_Date"] - df["Creation_Date"]).dt.total_seconds() / 3600.0
+            )
+            df["Duration_Hours"] = df["Duration_Hours"].apply(
+                lambda x: int(round(x)) if pd.notna(x) else pd.NA
+            )
+
+            def _fmt_dt(x):
+                if pd.isna(x) or x is pd.NaT:
+                    return ""
+                try:
+                    return pd.Timestamp(x).strftime("%Y-%m-%d %I:%M %p")
+                except Exception:
+                    return ""
+
+            def _to_blank(val):
+                if val is None:
+                    return ""
+                if isinstance(val, float) and (pd.isna(val) or (val != val)):
+                    return ""
+                s = str(val).strip()
+                if s.lower() in ("nan", "nat", "none", "<nat>"):
+                    return ""
+                return s
+
+            pick_peak_rows = []
+            for _, row in df.iterrows():
+                dur = row["Duration_Hours"]
+                if pd.notna(dur) and not (isinstance(dur, float) and (dur != dur)):
+                    dur = int(round(dur)) if isinstance(dur, (int, float)) else dur
+                else:
+                    dur = ""
+                pick_peak_rows.append(
+                    {
+                        "Order / SO": _to_blank(row["Order_SO"]),
+                        "Creation Date": _fmt_dt(row["Creation_Date"]),
+                        "Picked Date": _fmt_dt(row["Picked_Date"]),
+                        "Deadline": _fmt_dt(row["Deadline"]),
+                        "Duration (Hours)": dur,
+                        "Hit / Miss": "Hit" if row["is_hit"] else "Miss",
+                    }
+                )
+
+            sub_tables = [
+                {
+                    "id": "sub-table-b2c-pick-peak",
+                    "title": "Pick & Peak — Creation / Picked",
+                    "columns": [
+                        "Order / SO",
+                        "Creation Date",
+                        "Picked Date",
+                        "Deadline",
+                        "Duration (Hours)",
+                        "Hit / Miss",
+                    ],
+                    "data": pick_peak_rows,
+                    "full_width": True,
+                    "col_12": True,
+                }
+            ]
+
+            # ——— جدول Dispatch: Status = Delivered، Creation 9am–3pm → قبل 5:30pm، 3pm–9am → قبل 11:30am ———
+            if status_col and dispatch_col:
+                df_d = df_full[
+                    df_full[status_col].astype(str).str.strip().str.upper()
+                    == "DELIVERED"
+                ][[order_col, creation_col, dispatch_col]].copy()
+                df_d = df_d.rename(
+                    columns={
+                        order_col: "Order_SO",
+                        creation_col: "Creation_Date",
+                        dispatch_col: "Dispatch_Date",
+                    }
+                )
+                df_d["Creation_Date"] = pd.to_datetime(
+                    df_d["Creation_Date"], errors="coerce"
+                )
+                df_d["Dispatch_Date"] = pd.to_datetime(
+                    df_d["Dispatch_Date"], errors="coerce"
+                )
+                df_d = df_d.dropna(
+                    subset=["Order_SO", "Creation_Date", "Dispatch_Date"]
+                )
+                if not df_d.empty:
+                    df_d = (
+                        df_d.sort_values(["Order_SO", "Creation_Date"])
+                        .drop_duplicates(subset=["Order_SO"], keep="first")
+                    )
+
+                    def get_dispatch_deadline(creation_dt):
+                        if pd.isna(creation_dt):
+                            return pd.NaT
+                        try:
+                            ts = pd.Timestamp(creation_dt)
+                            d = ts.date()
+                            t = ts.time()
+                            t9 = time(9, 0)
+                            t15 = time(15, 0)
+                            t530 = time(17, 30)
+                            t1130 = time(11, 30)
+                            if t9 <= t < t15:
+                                return pd.Timestamp(
+                                    datetime.combine(d, t530)
+                                )
+                            elif t >= t15:
+                                next_d = d + timedelta(days=1)
+                                return pd.Timestamp(
+                                    datetime.combine(next_d, t1130)
+                                )
+                            else:
+                                return pd.Timestamp(
+                                    datetime.combine(d, t1130)
+                                )
+                        except Exception:
+                            return pd.NaT
+
+                    df_d["Deadline"] = df_d["Creation_Date"].apply(
+                        get_dispatch_deadline
+                    )
+                    df_d["is_hit"] = (
+                        (df_d["Dispatch_Date"] <= df_d["Deadline"])
+                        & df_d["Deadline"].notna()
+                    )
+                    df_d["Duration_Hours"] = (
+                        (
+                            df_d["Dispatch_Date"]
+                            - df_d["Creation_Date"]
+                        ).dt.total_seconds()
+                        / 3600.0
+                    )
+                    df_d["Duration_Hours"] = df_d["Duration_Hours"].apply(
+                        lambda x: int(round(x))
+                        if pd.notna(x) and not (isinstance(x, float) and (x != x))
+                        else pd.NA
+                    )
+
+                    dispatch_rows = []
+                    for _, row in df_d.iterrows():
+                        dur = row["Duration_Hours"]
+                        if pd.notna(dur) and not (
+                            isinstance(dur, float) and (dur != dur)
+                        ):
+                            dur = (
+                                int(round(dur))
+                                if isinstance(dur, (int, float))
+                                else dur
+                            )
+                        else:
+                            dur = ""
+                        dispatch_rows.append(
+                            {
+                                "Order / SO": _to_blank(row["Order_SO"]),
+                                "Creation Date": _fmt_dt(row["Creation_Date"]),
+                                "Dispatch Date & Time": _fmt_dt(
+                                    row["Dispatch_Date"]
+                                ),
+                                "Deadline": _fmt_dt(row["Deadline"]),
+                                "Duration (Hours)": dur,
+                                "Hit / Miss": "Hit"
+                                if row["is_hit"]
+                                else "Miss",
+                            }
+                        )
+
+                    dispatch_hits = int(df_d["is_hit"].sum())
+                    dispatch_total = len(df_d)
+                    dispatch_hit_pct = (
+                        round((dispatch_hits / dispatch_total) * 100, 2)
+                        if dispatch_total
+                        else 0
+                    )
+                    dispatch_chart_data = [
+                        {
+                            "type": "column",
+                            "name": "Dispatch Hit %",
+                            "color": "#81613E",
+                            "related_table": "sub-table-b2c-dispatch",
+                            "dataPoints": [
+                                {
+                                    "label": "Hit %",
+                                    "y": dispatch_hit_pct,
+                                }
+                            ],
+                        }
+                    ]
+
+                    sub_tables.append(
+                        {
+                            "id": "sub-table-b2c-dispatch",
+                            "title": "Dispatch — Creation to Dispatch",
+                            "columns": [
+                                "Order / SO",
+                                "Creation Date",
+                                "Dispatch Date & Time",
+                                "Deadline",
+                                "Duration (Hours)",
+                                "Hit / Miss",
+                            ],
+                            "data": dispatch_rows,
+                            "full_width": False,
+                            "side_by_side_chart": True,
+                            "chart_data": dispatch_chart_data,
+                        }
+                    )
+
+            # ——— جدول Last Mile KPI: Dispatch → Delivered خلال 48 hours = Hit ———
+            if (
+                status_col
+                and dispatch_col
+                and delivered_col
+            ):
+                df_lm = df_full[
+                    df_full[status_col].astype(str).str.strip().str.upper()
+                    == "DELIVERED"
+                ][[order_col, dispatch_col, delivered_col]].copy()
+                df_lm = df_lm.rename(
+                    columns={
+                        order_col: "Order_SO",
+                        dispatch_col: "Dispatch_Date",
+                        delivered_col: "Delivered_Date",
+                    }
+                )
+                df_lm["Dispatch_Date"] = pd.to_datetime(
+                    df_lm["Dispatch_Date"], errors="coerce"
+                )
+                df_lm["Delivered_Date"] = pd.to_datetime(
+                    df_lm["Delivered_Date"], errors="coerce"
+                )
+                df_lm = df_lm.dropna(
+                    subset=["Order_SO", "Dispatch_Date", "Delivered_Date"]
+                )
+                if not df_lm.empty:
+                    df_lm = (
+                        df_lm.sort_values(["Order_SO", "Dispatch_Date"])
+                        .drop_duplicates(subset=["Order_SO"], keep="first")
+                    )
+                    hours_48 = (
+                        df_lm["Delivered_Date"] - df_lm["Dispatch_Date"]
+                    ).dt.total_seconds() / 3600.0
+                    df_lm["is_hit"] = (hours_48 <= 48) & hours_48.notna()
+                    df_lm["Duration_Hours"] = hours_48
+                    df_lm["Duration_Hours"] = df_lm["Duration_Hours"].apply(
+                        lambda x: int(round(x))
+                        if pd.notna(x) and not (isinstance(x, float) and (x != x))
+                        else pd.NA
+                    )
+
+                    lastmile_rows = []
+                    for _, row in df_lm.iterrows():
+                        dur = row["Duration_Hours"]
+                        if pd.notna(dur) and not (
+                            isinstance(dur, float) and (dur != dur)
+                        ):
+                            dur = (
+                                int(round(dur))
+                                if isinstance(dur, (int, float))
+                                else dur
+                            )
+                        else:
+                            dur = ""
+                        lastmile_rows.append(
+                            {
+                                "Order / SO": _to_blank(row["Order_SO"]),
+                                "Dispatch Date & Time": _fmt_dt(
+                                    row["Dispatch_Date"]
+                                ),
+                                "Delivered Date": _fmt_dt(row["Delivered_Date"]),
+                                "Duration (Hours)": dur,
+                                "Hit / Miss": "Hit"
+                                if row["is_hit"]
+                                else "Miss",
+                            }
+                        )
+
+                    lm_hits = int(df_lm["is_hit"].sum())
+                    lm_total = len(df_lm)
+                    lm_hit_pct = (
+                        round((lm_hits / lm_total) * 100, 2) if lm_total else 0
+                    )
+                    lastmile_chart_data = [
+                        {
+                            "type": "column",
+                            "name": "Last Mile Hit %",
+                            "color": "#9F8170",
+                            "related_table": "sub-table-b2c-lastmile",
+                            "dataPoints": [
+                                {"label": "Hit %", "y": lm_hit_pct}
+                            ],
+                        }
+                    ]
+
+                    sub_tables.append(
+                        {
+                            "id": "sub-table-b2c-lastmile",
+                            "title": "Last Mile KPI — Dispatch / Delivered (≤48 hours)",
+                            "columns": [
+                                "Order / SO",
+                                "Dispatch Date & Time",
+                                "Delivered Date",
+                                "Duration (Hours)",
+                                "Hit / Miss",
+                            ],
+                            "data": lastmile_rows,
+                            "full_width": False,
+                            "side_by_side_chart": True,
+                            "chart_data": lastmile_chart_data,
+                        }
+                    )
+
+            # ——— جدول End to End (Creation / Delivered): خلال 48 hours = Hit ———
+            if status_col and creation_col and delivered_col:
+                df_ee = df_full[
+                    df_full[status_col].astype(str).str.strip().str.upper()
+                    == "DELIVERED"
+                ][[order_col, creation_col, delivered_col]].copy()
+                df_ee = df_ee.rename(
+                    columns={
+                        order_col: "Order_SO",
+                        creation_col: "Creation_Date",
+                        delivered_col: "Delivered_Date",
+                    }
+                )
+                df_ee["Creation_Date"] = pd.to_datetime(
+                    df_ee["Creation_Date"], errors="coerce"
+                )
+                df_ee["Delivered_Date"] = pd.to_datetime(
+                    df_ee["Delivered_Date"], errors="coerce"
+                )
+                df_ee = df_ee.dropna(
+                    subset=["Order_SO", "Creation_Date", "Delivered_Date"]
+                )
+                if not df_ee.empty:
+                    df_ee = (
+                        df_ee.sort_values(["Order_SO", "Creation_Date"])
+                        .drop_duplicates(subset=["Order_SO"], keep="first")
+                    )
+                    hours_48_ee = (
+                        df_ee["Delivered_Date"] - df_ee["Creation_Date"]
+                    ).dt.total_seconds() / 3600.0
+                    df_ee["is_hit"] = (hours_48_ee <= 48) & hours_48_ee.notna()
+                    df_ee["Duration_Hours"] = hours_48_ee
+                    df_ee["Duration_Hours"] = df_ee["Duration_Hours"].apply(
+                        lambda x: int(round(x))
+                        if pd.notna(x) and not (isinstance(x, float) and (x != x))
+                        else pd.NA
+                    )
+
+                    endtoend_rows = []
+                    for _, row in df_ee.iterrows():
+                        dur = row["Duration_Hours"]
+                        if pd.notna(dur) and not (
+                            isinstance(dur, float) and (dur != dur)
+                        ):
+                            dur = (
+                                int(round(dur))
+                                if isinstance(dur, (int, float))
+                                else dur
+                            )
+                        else:
+                            dur = ""
+                        endtoend_rows.append(
+                            {
+                                "Order / SO": _to_blank(row["Order_SO"]),
+                                "Creation Date": _fmt_dt(row["Creation_Date"]),
+                                "Delivered Date": _fmt_dt(row["Delivered_Date"]),
+                                "Duration (Hours)": dur,
+                                "Hit / Miss": "Hit"
+                                if row["is_hit"]
+                                else "Miss",
+                            }
+                        )
+
+                    ee_hits = int(df_ee["is_hit"].sum())
+                    ee_total = len(df_ee)
+                    ee_hit_pct = (
+                        round((ee_hits / ee_total) * 100, 2) if ee_total else 0
+                    )
+                    endtoend_chart_data = [
+                        {
+                            "type": "column",
+                            "name": "End to End Hit %",
+                            "color": "#81613E",
+                            "related_table": "sub-table-b2c-endtoend",
+                            "dataPoints": [{"label": "Hit %", "y": ee_hit_pct}],
+                        }
+                    ]
+
+                    sub_tables.append(
+                        {
+                            "id": "sub-table-b2c-endtoend",
+                            "title": "End to End — Creation / Delivered (≤48 hours)",
+                            "columns": [
+                                "Order / SO",
+                                "Creation Date",
+                                "Delivered Date",
+                                "Duration (Hours)",
+                                "Hit / Miss",
+                            ],
+                            "data": endtoend_rows,
+                            "full_width": False,
+                            "side_by_side_chart": True,
+                            "chart_data": endtoend_chart_data,
+                        }
+                    )
+
+            total_shipments = len(df)
+            hits = int(df["is_hit"].sum())
+            miss = total_shipments - hits
+            hit_pct = round((hits / total_shipments) * 100, 2) if total_shipments else 0
+
+            # جدول الإكسل الخام: كما هو في الملف من غير أي تعديل
+            raw_df_original = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0
+            )
+            raw_df_original.columns = raw_df_original.columns.astype(str).str.strip()
+            raw_df_original = raw_df_original.head(500)
+            raw_sheet_cols = list(raw_df_original.columns)
+
+            def _raw_cell_val(val):
+                if val is None:
+                    return ""
+                if pd.isna(val) or (isinstance(val, float) and (val != val)):
+                    return ""
+                if hasattr(val, "strftime"):
+                    try:
+                        return pd.Timestamp(val).strftime("%Y-%m-%d %I:%M %p")
+                    except Exception:
+                        return str(val)
+                s = str(val).strip()
+                if s.lower() in ("nan", "nat", "none", "<nat>"):
+                    return ""
+                return s
+
+            raw_excel_rows = [
+                {c: _raw_cell_val(row.get(c)) for c in raw_sheet_cols}
+                for row in raw_df_original.to_dict(orient="records")
+            ]
+            raw_excel_table = {
+                "id": "sub-table-b2c-raw-sheet",
+                "title": "B2C_Outbound (Sheet Data)",
+                "columns": [{"name": c, "key": c, "group": "sheet"} for c in raw_sheet_cols],
+                "data": raw_excel_rows,
+                "full_width": True,
+            }
+
+            result = {
+                "detail_html": "",
+                "sub_tables": sub_tables,
+                "raw_excel_table": raw_excel_table,
+                "stats": {
+                    "total": total_shipments,
+                    "hit": hits,
+                    "miss": miss,
+                    "hit_pct": hit_pct,
+                    "target": 99,
+                },
+            }
+            cache.set(_b2c_key, result, 120)
+            return result
+
+        except Exception as e:
+            import traceback
+
+            print(traceback.format_exc())
+            return {
+                "detail_html": f"<p class='text-danger'>⚠️ Error processing B2C Outbound: {e}</p>",
+                "sub_tables": [],
+                "raw_excel_table": None,
+                "stats": {},
+            }
+
+    def _placeholder_tab_response(self, tab_name):
+        """يرجع استجابة تاب placeholder (Safety KPI / Traceability KPI) مع رسالة Loading data."""
+        html = (
+            "<div class='card p-4 shadow-sm'>"
+            "<p class='text-muted text-center mb-0'>Loading data</p>"
+            "</div>"
+        )
+        return {
+            "detail_html": html,
+            "chart_data": [],
+            "count": 0,
+            "hit_pct": 0,
+        }
+
+    def _render_b2c_outbound_tab(
+        self, request, selected_month=None, selected_months=None
+    ):
+        """يرجع HTML تاب B2C Outbound للاستجابة AJAX (نفس أسلوب B2B Outbound)."""
+        res = self.filter_b2c_outbound(
+            request,
+            selected_month=selected_month,
+            selected_months=selected_months,
+        )
+        stats = res.get("stats") or {}
+        hit_pct = stats.get("hit_pct", 0)
+        try:
+            hit_pct = round(float(hit_pct), 2)
+        except (TypeError, ValueError):
+            hit_pct = 0
+        count = stats.get("total", 0) or 0
+        b2c_tab = {
+            "name": "B2C Outbound",
+            "stats": stats,
+            "sub_tables": res.get("sub_tables", []),
+            "raw_excel_table": res.get("raw_excel_table"),
+        }
+        html = render_to_string(
+            "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
+            {
+                "tab": b2c_tab,
+                "selected_month": selected_month,
+                "selected_months": selected_months,
+            },
+        )
+        return {
+            "detail_html": html,
+            "chart_data": [],
+            "count": count,
+            "hit_pct": hit_pct,
+        }
 
     def filter_inbound(self, request, selected_month=None, selected_months=None):
         """
@@ -6616,7 +6731,6 @@ class UploadExcelViewRoche(View):
     def filter_total_lead_time_performance(
         self, request, selected_month=None, selected_months=None
     ):
-        cache.clear()
         """
         🔹 عرض جدول Miss Breakdown (3PL و Roche كل واحد منفصل)
         🔹 عرض الشارت الخاص بـ 3PL On-Time Delivery
@@ -7077,10 +7191,12 @@ class UploadExcelViewRoche(View):
 
             if outbound_result.get("sub_tables"):
                 outbound_tab = {
-                    "name": "Outbound Shipments",
+                    "name": "B2B Outbound",
                     "stats": outbound_result.get("stats", {}),
                     "sub_tables": outbound_result["sub_tables"],
                     "chart_data": outbound_result.get("chart_data", []),
+                    "chart_data_pods": outbound_result.get("chart_data_pods", []),
+                    "raw_excel_table": outbound_result.get("raw_excel_table"),
                 }
                 outbound_html = render_to_string(
                     "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
@@ -7108,7 +7224,7 @@ class UploadExcelViewRoche(View):
             #         dataset.setdefault("related_table", "Total Lead Time Performance")
 
             tab_data = {
-                "name": "Outbound",
+                "name": "B2B Outbound",
                 "sub_tables": sub_tables,
                 "outbound_html": outbound_html,
                 "chart_data": chart_data,
@@ -7703,15 +7819,17 @@ class UploadExcelViewRoche(View):
     ):
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        cache.clear()
         tab_cards = []
 
         target_manual = {
             "inbound": 99,
             "outbound": 98,
+            "b2b outbound": 98,
+            "b2c outbound": 99,
             "total lead time performance": 98,
-            "pods update": 98,
             "return & refusal": 100,
+            "safety kpi": 100,
+            "traceability kpi": 100,
         }
 
         def process_tab(tab_name):
@@ -7739,17 +7857,25 @@ class UploadExcelViewRoche(View):
                         month_for_filters,
                         selected_months=selected_months,
                     )
-                elif "pods update" in tab_lower:
-                    res = self.filter_pods_update(request, month_for_filters)
-                elif tab_lower == "outbound" or "total lead time performance" in tab_lower:
+                elif tab_lower == "safety kpi":
+                    res = {"detail_html": "<p class='text-muted text-center p-4'>Loading data</p>", "count": 0, "hit_pct": 0}
+                elif tab_lower == "traceability kpi":
+                    res = {"detail_html": "<p class='text-muted text-center p-4'>Loading data</p>", "count": 0, "hit_pct": 0}
+                elif tab_lower == "b2c outbound":
+                    res = self.filter_b2c_outbound(
+                        request,
+                        month_for_filters,
+                        selected_months=selected_months,
+                    )
+                elif tab_lower in ("outbound", "b2b outbound") or "total lead time performance" in tab_lower:
                     res = self.filter_total_lead_time_performance(
                         request,
                         month_for_filters,
                         selected_months=selected_months,
                     )
 
-                # النسبة الحقيقية زي ما راجعة من الدالة
-                hit_pct = res.get("hit_pct", 0)
+                # النسبة الحقيقية زي ما راجعة من الدالة (أو من stats للتابات مثل B2C Outbound)
+                hit_pct = res.get("hit_pct") or (res.get("stats") or {}).get("hit_pct", 0)
                 if isinstance(hit_pct, dict):
                     if selected_month and selected_month.capitalize() in hit_pct:
                         hit_pct_val = hit_pct[selected_month.capitalize()]
@@ -7801,10 +7927,12 @@ class UploadExcelViewRoche(View):
 
         tabs_order = [
             "Inbound",
-            "Outbound",
+            "B2B Outbound",
+            "B2C Outbound",
             "Capacity + Expiry",
             "Return & Refusal",
-            "PODs update",
+            "Safety KPI",
+            "Traceability KPI",
         ]
 
         with ThreadPoolExecutor(max_workers=5) as executor:

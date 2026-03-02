@@ -304,99 +304,106 @@ def render_chart(context, sub_id_or_title):
                                 f"  [{idx}] id: '{sub_id}', title: '{sub_title}', chart_data: {chart_data_count} datasets"
                             )
 
-        # ✅ Fallback: إذا لم نجد datasets في sub_table، جرب tab.chart_data
+        # ✅ Fallback: إذا لم نجد datasets في sub_table، جرب tab.chart_data أو tab.chart_data_pods
         if not datasets or len(datasets) == 0:
             if "tab" in render_context and isinstance(render_context["tab"], dict):
-                tab_chart_data = render_context["tab"].get("chart_data", [])
-                print(
-                    f"🔍 [render_chart FALLBACK] tab.chart_data exists: {tab_chart_data is not None}, length: {len(tab_chart_data) if tab_chart_data else 0}"
-                )
-                print(
-                    f"🔍 [render_chart FALLBACK] sub_id_or_title: '{sub_id_or_title}'"
-                )
-                print(
-                    f"🔍 [render_chart FALLBACK] tab.name: '{render_context['tab'].get('name', 'N/A')}'"
-                )
-                if tab_chart_data and isinstance(tab_chart_data, list):
-                    # ✅ إذا كان sub_id_or_title يطابق tab.name، استخدم كل tab.chart_data مباشرة
-                    tab_name = (
-                        str(render_context["tab"].get("name", "")).strip().lower()
+                tab_dict = render_context["tab"]
+                # شارت PODs (عمودين): عند طلب "B2B Outbound PODs" نستخدم chart_data_pods
+                if "pods" in str(sub_id_or_title).strip().lower() and tab_dict.get("chart_data_pods"):
+                    datasets = tab_dict.get("chart_data_pods", [])
+                    if datasets:
+                        print(f"✅ [render_chart] Using tab.chart_data_pods: {len(datasets)} datasets")
+                if not datasets:
+                    tab_chart_data = tab_dict.get("chart_data", [])
+                    print(
+                        f"🔍 [render_chart FALLBACK] tab.chart_data exists: {tab_chart_data is not None}, length: {len(tab_chart_data) if tab_chart_data else 0}"
                     )
-                    sub_id_or_title_lower = str(sub_id_or_title).strip().lower()
-
-                    # ✅ تطبيع الأسماء للمقارنة (إزالة رموز خاصة ومسافات زائدة)
-                    def normalize_for_comparison(name):
-                        return (
-                            name.replace("—", "-")
-                            .replace("–", "-")
-                            .replace("  ", " ")
-                            .strip()
-                            .lower()
+                    print(
+                        f"🔍 [render_chart FALLBACK] sub_id_or_title: '{sub_id_or_title}'"
+                    )
+                    print(
+                        f"🔍 [render_chart FALLBACK] tab.name: '{render_context['tab'].get('name', 'N/A')}'"
+                    )
+                    if tab_chart_data and isinstance(tab_chart_data, list):
+                        # ✅ إذا كان sub_id_or_title يطابق tab.name، استخدم كل tab.chart_data مباشرة
+                        tab_name = (
+                            str(render_context["tab"].get("name", "")).strip().lower()
                         )
+                        sub_id_or_title_lower = str(sub_id_or_title).strip().lower()
 
-                    tab_name_normalized = (
-                        normalize_for_comparison(tab_name) if tab_name else ""
-                    )
-                    sub_id_or_title_normalized = normalize_for_comparison(
-                        sub_id_or_title_lower
-                    )
-
-                    # ✅ إذا كان sub_id_or_title يطابق tab.name، استخدم كل tab.chart_data
-                    # ✅ أيضاً: إذا كان tab.name يحتوي على "seaport" أو "airport" و sub_id_or_title يطابق، استخدم كل tab.chart_data
-                    is_seaport_or_airport = (
-                        "seaport" in tab_name_normalized
-                        or "airport" in tab_name_normalized
-                    )
-                    is_name_match = (
-                        tab_name_normalized
-                        and sub_id_or_title_normalized == tab_name_normalized
-                    )
-
-                    if is_name_match or (
-                        is_seaport_or_airport
-                        and sub_id_or_title_normalized in tab_name_normalized
-                    ):
-                        datasets = tab_chart_data
-                        print(
-                            f"✅ [render_chart] Using all tab.chart_data (tab.name match): {len(datasets)} datasets"
-                        )
-                        print(
-                            f"🔍 [render_chart] tab_name_normalized: '{tab_name_normalized}', sub_id_or_title_normalized: '{sub_id_or_title_normalized}'"
-                        )
-                        print(
-                            f"🔍 [render_chart] Chart data names: {[ds.get('name', 'N/A') for ds in datasets]}"
-                        )
-                    else:
-                        # ✅ فلترة البيانات حسب related_table إذا كان موجوداً
-                        filtered_tab_data = []
-                        for dataset in tab_chart_data:
-                            related_table = (
-                                str(dataset.get("related_table", "")).strip().lower()
+                        # ✅ تطبيع الأسماء للمقارنة (إزالة رموز خاصة ومسافات زائدة)
+                        def normalize_for_comparison(name):
+                            return (
+                                name.replace("—", "-")
+                                .replace("–", "-")
+                                .replace("  ", " ")
+                                .strip()
+                                .lower()
                             )
-                            if related_table and (
-                                related_table == sub_id_or_title_lower
-                                or sub_id_or_title_lower in related_table
-                                or related_table in sub_id_or_title_lower
-                            ):
-                                filtered_tab_data.append(dataset)
 
-                        if filtered_tab_data:
-                            datasets = filtered_tab_data
+                        tab_name_normalized = (
+                            normalize_for_comparison(tab_name) if tab_name else ""
+                        )
+                        sub_id_or_title_normalized = normalize_for_comparison(
+                            sub_id_or_title_lower
+                        )
+
+                        # ✅ إذا كان sub_id_or_title يطابق tab.name، استخدم كل tab.chart_data
+                        # ✅ أيضاً: إذا كان tab.name يحتوي على "seaport" أو "airport" و sub_id_or_title يطابق، استخدم كل tab.chart_data
+                        is_seaport_or_airport = (
+                            "seaport" in tab_name_normalized
+                            or "airport" in tab_name_normalized
+                        )
+                        is_name_match = (
+                            tab_name_normalized
+                            and sub_id_or_title_normalized == tab_name_normalized
+                        )
+
+                        if is_name_match or (
+                            is_seaport_or_airport
+                            and sub_id_or_title_normalized in tab_name_normalized
+                        ):
+                            datasets = tab_chart_data
                             print(
-                                f"✅ [render_chart] Using filtered tab.chart_data: {len(datasets)} datasets"
+                                f"✅ [render_chart] Using all tab.chart_data (tab.name match): {len(datasets)} datasets"
+                            )
+                            print(
+                                f"🔍 [render_chart] tab_name_normalized: '{tab_name_normalized}', sub_id_or_title_normalized: '{sub_id_or_title_normalized}'"
+                            )
+                            print(
+                                f"🔍 [render_chart] Chart data names: {[ds.get('name', 'N/A') for ds in datasets]}"
                             )
                         else:
-                            # ✅ إذا كان tab.chart_data يحتوي على datasets متعددة (مثل Seaport/Airport)، استخدمه كله
-                            if len(tab_chart_data) > 2:
-                                datasets = tab_chart_data
+                            # ✅ فلترة البيانات حسب related_table إذا كان موجوداً
+                            filtered_tab_data = []
+                            for dataset in tab_chart_data:
+                                related_table = (
+                                    str(dataset.get("related_table", "")).strip().lower()
+                                )
+                                if related_table and (
+                                    related_table == sub_id_or_title_lower
+                                    or sub_id_or_title_lower in related_table
+                                    or related_table in sub_id_or_title_lower
+                                ):
+                                    filtered_tab_data.append(dataset)
+
+                            if filtered_tab_data:
+                                datasets = filtered_tab_data
                                 print(
-                                    f"✅ [render_chart] Using all tab.chart_data (multiple datasets detected): {len(datasets)} datasets"
+                                    f"✅ [render_chart] Using filtered tab.chart_data: {len(datasets)} datasets"
                                 )
                             else:
-                                datasets = tab_chart_data
-                                print(
-                                    f"✅ [render_chart] Using all tab.chart_data: {len(datasets)} datasets"
-                                )
+                                # ✅ إذا كان tab.chart_data يحتوي على datasets متعددة (مثل Seaport/Airport)، استخدمه كله
+                                if len(tab_chart_data) > 2:
+                                    datasets = tab_chart_data
+                                    print(
+                                        f"✅ [render_chart] Using all tab.chart_data (multiple datasets detected): {len(datasets)} datasets"
+                                    )
+                                else:
+                                    datasets = tab_chart_data
+                                    print(
+                                        f"✅ [render_chart] Using all tab.chart_data: {len(datasets)} datasets"
+                                    )
 
         # ✅ استخدام datasets مباشرة من sub_table - لا حاجة للفلترة
         render_context["chart_data"] = datasets

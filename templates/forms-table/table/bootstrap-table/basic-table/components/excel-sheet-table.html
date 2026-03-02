@@ -124,7 +124,7 @@
 </style>
 
 
-{% if not tab.outbound_html and not tab.inbound_html and tab.name|lower != 'return & refusal' and tab.name|lower != 'expiry' and tab.name|lower != 'pods update' and tab.name|lower != 'outbound shipments' and tab.name|lower != 'capacity + expiry' %}
+{% if not tab.outbound_html and not tab.inbound_html and tab.name|lower != 'return & refusal' and tab.name|lower != 'expiry' and tab.name|lower != 'outbound shipments' and tab.name|lower != 'b2b outbound' and tab.name|lower != 'b2c outbound' and tab.name|lower != 'capacity + expiry' and tab.name|lower != 'safety kpi' and tab.name|lower != 'traceability kpi' %}
 {% if tab.name|lower == 'inbound' %}
 {# كروت Inbound من tab.stats (الـ view بيمرّرها مع tab_data) #}
 <div class="container-fluid px-0 inbound-kpi-cards">
@@ -963,7 +963,7 @@
     {% endfor %}
   </div>
   {# ================= OUTBOUND SHIPMENTS: الشارت أولاً ثم 3 جداول (المدن) ثم جدول الإكسل بالتفاصيل ================= #}
-  {% elif tab_name_lower == 'outbound shipments' %}
+  {% elif tab_name_lower == 'outbound shipments' or tab_name_lower == 'b2b outbound' %}
   <div class="col-12">
     {# ===== 0) كروت KPI: Total / Successful / Failed Shipments + Target (تظهر فقط لو في داتا) ===== #}
     {% if tab.stats.total %}
@@ -980,7 +980,7 @@
           <div class="kpi-icon text-success"><i class="bi bi-check-circle-fill"></i></div>
           <div class="kpi-title">Successful Shipments</div>
           <div class="kpi-value">{{ tab.stats.hit_pct|default:0|floatformat:0 }}%</div>
-          <small class="text-success">Hit (≤2 days)</small>
+          <small class="text-success">Hit (≤48 hours B2B)</small>
         </div>
       </div>
       <div class="col-12 col-md-6 col-lg-3">
@@ -1000,18 +1000,193 @@
     </div>
     {% endif %}
 
-    {# ===== 1) الشارت في أول ديف ===== #}
+    {# ===== 1) شارت B2B & BTQ (48 hours) ===== #}
     {% if tab.chart_data %}
     <div class="row mb-4">
       <div class="col-12">
         <div class="table-card">
+          <h5 class="text-center mt-3 mb-2 fw-bold" style="color: #81613E">B2B & BTQ — 48 hours (Creation → Actual Delivery)</h5>
           {% render_chart tab.name %}
         </div>
       </div>
     </div>
     {% endif %}
 
-    {# ===== 2) جداول المناطق (الدمام / الرياض / جدة): كل جدول في صف كامل مع scroll أفقي ===== #}
+    {# ===== 2) جدولا B2B و BTQ KPI جنباً بجنب ===== #}
+    <div class="row mb-4">
+      {% for sub in tab.sub_tables %}
+        {% if sub.side_by_side and sub.id == 'sub-table-b2b-hit-summary' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+        {% if sub.side_by_side and sub.id == 'sub-table-btq-hit-summary' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {# ===== 3) شارت PODs B2B & PODs BTQ (≤18 days) ===== #}
+    {% if tab.chart_data_pods %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-2 fw-bold" style="color: #81613E">PODs B2B & PODs BTQ — 18 days (Actual Delivery → POD Date)</h5>
+          {% render_chart "B2B Outbound PODs" %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ===== 4) جدولا PODs B2B و PODs BTQ جنباً بجنب ===== #}
+    <div class="row mb-4">
+      {% for sub in tab.sub_tables %}
+        {% if sub.side_by_side and sub.id == 'sub-table-pods-b2b-hit-summary' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+        {% if sub.side_by_side and sub.id == 'sub-table-pods-btq-hit-summary' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {# ===== 5) جدول الإكسل الخام من شيت B2B_Outbound ===== #}
+    {% if tab.raw_excel_table %}
+    <style>
+      .b2b-raw-excel .b2b-raw-th { background-color: #C3B091 !important; color: #000 !important; border: 1px solid #81613E !important; font-weight: 700; }
+      .b2b-raw-excel .b2b-raw-td { background-color: #f8f6f3 !important; color: #000 !important; border: 1px solid #C3B091 !important; }
+      .b2b-raw-excel tbody tr:nth-child(even) .b2b-raw-td { background-color: #ebe5db !important; color: #000 !important; }
+    </style>
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header pb-0 card-no-border text-center">
+            <h4 class="mb-2 text-dark">{{ tab.raw_excel_table.title }}</h4>
+          </div>
+          <div class="card-body text-center">
+            <div class="table-responsive custom-scrollbar b2b-raw-sheet-table">
+              <table class="table table-bordered table-sm mb-0 b2b-raw-excel">
+                <thead>
+                  <tr role="row">
+                    {% for col_info in tab.raw_excel_table.columns %}
+                    <th class="text-nowrap fw-semibold text-dark b2b-raw-th">{{ col_info.name }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in tab.raw_excel_table.data %}
+                  <tr>
+                    {% for col_info in tab.raw_excel_table.columns %}
+                    <td class="text-nowrap text-dark b2b-raw-td">{{ row|get_item:col_info.key|default:"" }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr><td colspan="{{ tab.raw_excel_table.columns|length }}" class="text-muted">No data</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ===== 3) جداول المناطق (إن وجدت) ===== #}
     {% for sub in tab.sub_tables %}
       {% if sub.facility_name %}
     <div class="row mb-4">
@@ -1044,7 +1219,7 @@
       {% endif %}
     {% endfor %}
 
-    {# ===== 3) جدول الإكسل بالتفاصيل (ARAMCO Outbound Report) مع الفلاتر والبادجات ===== #}
+    {# ===== 4) جدول الإكسل بالتفاصيل مع الفلاتر ===== #}
     {% for sub in tab.sub_tables %}
       {% if sub.full_width %}
     <div class="row mt-4">
@@ -1079,6 +1254,22 @@
                 <div class="col-12 col-sm-6 col-md-4 col-lg-3">
                   <label class="form-label small fw-semibold mb-1">Order Nbr</label>
                   <input type="text" class="form-control inbound-detail-filter" data-filter="order-nbr" placeholder="Search Order Nbr" />
+                </div>
+              </div>
+            </div>
+          </div>
+          {% elif sub.filter_options and sub.filter_options.months and sub.id != 'sub-table-outbound-detail' %}
+          <div class="card border-0 shadow-sm mb-2">
+            <div class="card-body py-2 px-3">
+              <div class="row g-3 align-items-end filter-row">
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Month</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="month">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.months %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
                 </div>
               </div>
             </div>
@@ -1194,6 +1385,251 @@
       {% endif %}
     {% endfor %}
   </div>
+
+  {# ================= B2C Outbound: كروت KPI + جدول Pick & Peak (col-12) + جدول الإكسل الخام ================= #}
+  {% elif tab_name_lower == 'b2c outbound' %}
+  <div class="col-12">
+    {% if tab.stats %}
+    <div class="row g-4 mx-0 mb-4">
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-primary"><i class="bi bi-truck"></i></div>
+          <div class="kpi-title">Total Shipments</div>
+          <div class="kpi-value">{{ tab.stats.total|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center success">
+          <div class="kpi-icon text-success"><i class="bi bi-check-circle-fill"></i></div>
+          <div class="kpi-title">Successful Shipments</div>
+          <div class="kpi-value">{{ tab.stats.hit_pct|default:0|floatformat:0 }}%</div>
+          <small class="text-success">Hit (Pick & Peak)</small>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center danger">
+          <div class="kpi-icon text-danger"><i class="bi bi-x-circle-fill"></i></div>
+          <div class="kpi-title">Failed Shipments</div>
+          <div class="kpi-value">{{ tab.stats.miss|default:0 }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <div class="kpi-card text-center">
+          <div class="kpi-icon text-secondary"><i class="bi bi-bullseye"></i></div>
+          <div class="kpi-title">Target</div>
+          <div class="kpi-value">≥ {{ tab.stats.target|default:99 }}%</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ===== جدول Pick & Peak — Creation / Picked (col-12) ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-pick-peak' %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card card" style="background-color: #FFF; border-color: #C3B091;">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== Dispatch: جدول في كارد + شارت في كارد — نفس الارتفاع ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-dispatch' %}
+    <div class="row mb-4 align-items-stretch b2c-table-chart-row">
+      <div class="col-12 col-lg-7 mb-3 mb-lg-0">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto; max-height: 420px;">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-5">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-2 fw-bold" style="color: #81613E">Dispatch — Hit %</h5>
+            {% render_chart "sub-table-b2c-dispatch" %}
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== Last Mile KPI: جدول في كارد + شارت في كارد — نفس الارتفاع ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-lastmile' %}
+    <div class="row mb-4 align-items-stretch b2c-table-chart-row">
+      <div class="col-12 col-lg-7 mb-3 mb-lg-0">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto; max-height: 420px;">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-5">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-2 fw-bold" style="color: #81613E">Last Mile KPI — Hit %</h5>
+            {% render_chart "sub-table-b2c-lastmile" %}
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== End to End (Creation / Delivered): جدول في كارد + شارت في كارد — نفس الارتفاع ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-endtoend' %}
+    <div class="row mb-4 align-items-stretch b2c-table-chart-row">
+      <div class="col-12 col-lg-7 mb-3 mb-lg-0">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto; max-height: 420px;">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-5">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-2 fw-bold" style="color: #81613E">End to End — Hit %</h5>
+            {% render_chart "sub-table-b2c-endtoend" %}
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== جدول الإكسل الخام B2C_Outbound ===== #}
+    {% if tab.raw_excel_table %}
+    <style>
+      .b2c-raw-excel .b2c-raw-th { background-color: #C3B091 !important; color: #000 !important; border: 1px solid #81613E !important; font-weight: 700; }
+      .b2c-raw-excel .b2c-raw-td { background-color: #f8f6f3 !important; color: #000 !important; border: 1px solid #C3B091 !important; }
+      .b2c-raw-excel tbody tr:nth-child(even) .b2c-raw-td { background-color: #ebe5db !important; color: #000 !important; }
+      .b2c-outbound-card.card { background-color: #FFF !important; border-color: #C3B091 !important; }
+      .b2c-outbound-card .card-header.card-no-border.pb-0 { display: flex !important; align-items: center !important; gap: 12px !important; background-color: #fff !important; border-color: #C3B091 !important; }
+    </style>
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card b2c-outbound-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-header pb-0 card-no-border text-center" style="display: flex; align-items: center; justify-content: center; gap: 12px; background-color: #fff !important; border-color: #C3B091;">
+            <h4 class="mb-2 text-dark w-100 text-center">{{ tab.raw_excel_table.title }}</h4>
+          </div>
+          <div class="card-body text-center">
+            <div class="table-responsive custom-scrollbar b2c-raw-sheet-table">
+              <table class="table table-bordered table-sm mb-0 b2c-raw-excel">
+                <thead>
+                  <tr role="row">
+                    {% for col_info in tab.raw_excel_table.columns %}
+                    <th class="text-nowrap fw-semibold text-dark b2c-raw-th">{{ col_info.name }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in tab.raw_excel_table.data %}
+                  <tr>
+                    {% for col_info in tab.raw_excel_table.columns %}
+                    <td class="text-nowrap text-dark b2c-raw-td">{{ row|get_item:col_info.key|default:"" }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr><td colspan="{{ tab.raw_excel_table.columns|length }}" class="text-muted">No data</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
   {# ================= TABS (>=4) ================= #}
   {% elif tab.sub_tables|length >= 4 %}
   <div class="col-12">
@@ -1263,196 +1699,6 @@
       {% endfor %}
     </div>
   </div>
-  {# ================= PODs: كروت KPI + جدول واحد وشارت واحد ================= #}
-  {% elif tab_name_lower == 'pods update' %}
-  <div class="col-12">
-    {% if tab.stats %}
-    <div class="row g-4 mb-3">
-      <div class="col-12 col-md-6 col-lg-3">
-        <div class="kpi-card text-center">
-          <div class="kpi-icon text-primary">
-            <i class="bi bi-truck"></i>
-          </div>
-          <div class="kpi-title">Total Shipments</div>
-          <div class="kpi-value">{{ tab.stats.total_shipments|default:0 }}</div>
-        </div>
-      </div>
-      <div class="col-12 col-md-6 col-lg-3">
-        <div class="kpi-card text-center success">
-          <div class="kpi-icon text-success">
-            <i class="bi bi-check-circle-fill"></i>
-          </div>
-          <div class="kpi-title">Hit %</div>
-          <div class="kpi-value">{{ tab.stats.hit_pct|default:0|floatformat:0 }}%</div>
-        </div>
-      </div>
-      <div class="col-12 col-md-6 col-lg-3">
-        <div class="kpi-card text-center danger">
-          <div class="kpi-icon text-danger">
-            <i class="bi bi-x-circle-fill"></i>
-          </div>
-          <div class="kpi-title">Miss %</div>
-          <div class="kpi-value">{{ tab.stats.miss_pct|default:0|floatformat:0 }}%</div>
-        </div>
-      </div>
-      <div class="col-12 col-md-6 col-lg-3">
-        <div class="kpi-card text-center">
-          <div class="kpi-icon text-secondary">
-            <i class="bi bi-bullseye"></i>
-          </div>
-          <div class="kpi-title">Target</div>
-          <div class="kpi-value">≥ 100%</div>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    {# جدول واحد وشارت واحد #}
-    {% if tab.sub_tables %}
-    {% with sub=tab.sub_tables.0 %}
-    <div class="row mb-4">
-      <div class="col-md-7">
-        <div class="table-card">
-          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
-          <div class="table-responsive custom-scrollbar table-top">
-            <table class="table table-striped table-bordered text-center align-middle">
-              <thead class="table-light">
-                <tr>
-                  {% for col in sub.columns %}
-                  <th>{{ col }}</th>
-                  {% endfor %}
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in sub.data %}
-                <tr>
-                  {% for col in sub.columns %}
-                  <td>{{ row|get_item:col }}</td>
-                  {% endfor %}
-                </tr>
-                {% empty %}
-                <tr>
-                  <td colspan="{{ sub.columns|length }}" class="text-muted">No data available.</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-5">
-        <div class="table-card">
-          {% if sub.id %}{% render_chart sub.id %}{% else %}{% render_chart sub.title %}{% endif %}
-        </div>
-      </div>
-    </div>
-    {% endwith %}
-    {% endif %}
-
-    {# جدول التفاصيل الكامل مع الفلاتر والبادجات #}
-    {% for sub in tab.sub_tables %}
-    {% if sub.full_width %}
-    <div class="card mb-4">
-      <div class="card-header pb-0 card-no-border">
-        <h4 class="mb-2">{{ sub.title }}</h4>
-      </div>
-      {% if sub.filter_options %}
-      <div class="card-body py-2 px-3 border-0">
-        <div class="row g-3 align-items-end filter-row">
-          {% if sub.filter_options.whnames %}
-          <div class="col-12 col-sm-6 col-md-3">
-            <label class="form-label small fw-semibold mb-1">W.HNAME</label>
-            <select class="form-select pods-detail-filter w-100" data-filter="whname">
-              <option value="">All</option>
-              {% for opt in sub.filter_options.whnames %}
-              <option value="{{ opt }}">{{ opt }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-          {% if sub.filter_options.statuses %}
-          <div class="col-12 col-sm-6 col-md-3">
-            <label class="form-label small fw-semibold mb-1">Hit or Miss</label>
-            <select class="form-select pods-detail-filter w-100" data-filter="status">
-              <option value="">All</option>
-              {% for opt in sub.filter_options.statuses %}
-              <option value="{{ opt }}">{{ opt }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-          {% if sub.filter_options.months %}
-          <div class="col-12 col-sm-6 col-md-3">
-            <label class="form-label small fw-semibold mb-1">Month</label>
-            <select class="form-select pods-detail-filter w-100" data-filter="month">
-              <option value="">All</option>
-              {% for opt in sub.filter_options.months %}
-              <option value="{{ opt }}">{{ opt }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-      <div class="card-body">
-        <div class="table-responsive custom-scrollbar">
-          <table class="table table-striped table-bordered text-center align-middle" id="pods-detail-table">
-            <thead class="table-light">
-              <tr>
-                {% for col in sub.columns %}
-                <th class="text-nowrap">{{ col }}</th>
-                {% endfor %}
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in sub.data %}
-              <tr data-whname="{{ row|get_item:'W.HNAME'|default:'' }}"
-                  data-status="{{ row|get_item:'Hit or Miss'|default:'' }}"
-                  data-month="{{ row|get_item:'Month'|default:'' }}">
-                {% for col in sub.columns %}
-                {% with value=row|get_item:col %}
-                {% if col|lower == "hit or miss" %}
-                <td class="text-center">
-                  {% if value|default_if_none:""|trim|lower == "hit" %}
-                  <span class="badge bg-success rounded-pill">Hit</span>
-                  {% elif value|default_if_none:""|trim|lower == "miss" %}
-                  <span class="badge bg-danger rounded-pill">Miss</span>
-                  {% elif value|default_if_none:""|trim|lower == "pending" %}
-                  <span class="badge bg-warning text-dark rounded-pill">Pending</span>
-                  {% else %}
-                  <span class="badge bg-secondary rounded-pill">{{ value|default:"N/A" }}</span>
-                  {% endif %}
-                </td>
-                {% elif col|lower == "w.hname" or col|lower == "whname" %}
-                <td>
-                  <span class="badge bg-info text-dark rounded-pill">{{ value|default:"—" }}</span>
-                </td>
-                {% elif col|lower in "created on" or col|lower == "pgi date" %}
-                <td class="text-nowrap text-muted small">
-                  <i class="bi bi-clock"></i>
-                  {% if value %} {{ value }} {% else %} — {% endif %}
-                </td>
-                {% else %}
-                <td>{{ value }}</td>
-                {% endif %}
-                {% endwith %}
-                {% endfor %}
-              </tr>
-              {% empty %}
-              <tr>
-                <td colspan="{{ sub.columns|length }}" class="text-muted text-center">No data available.</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-    {% endfor %}
-  </div>
-
   {# ================= LESS THAN 4 (OTHER TABS) ================= #}
   {% else %}
   <div class="col-12">

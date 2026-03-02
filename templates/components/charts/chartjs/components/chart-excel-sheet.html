@@ -532,12 +532,12 @@
         // =====================================================
         const mainType = datasets[0]?.type || "bar";
 
-        // لو فيه شارت قديم مرسوم على نفس الـ canvas، امسحيه قبل إنشاء الجديد
-        if (window.dynamicChartInstance) {
-          window.dynamicChartInstance.destroy();
+        // ✅ تدمير شارت قديم على نفس الـ canvas فقط (لا نلمس شارتات أخرى على الصفحة)
+        if (window.chartInstances[canvasId]) {
+          window.chartInstances[canvasId].destroy();
         }
 
-        window.dynamicChartInstance = new Chart(ctx, {
+        const chartInstance = new Chart(ctx, {
           type: mainType,
           data: { labels, datasets },
           options: {
@@ -687,11 +687,11 @@
           plugins: [ChartDataLabels],
         });
 
-        window.chartInstances[canvasId] = window.dynamicChartInstance;
+        window.chartInstances[canvasId] = chartInstance;
 
           // ✅ الانتظار حتى يتم رسم الشارت بالكامل قبل الوصول إلى chartArea
           console.log(`🔍 [Chart] Updating chart for ${canvasId}`);
-          window.dynamicChartInstance.update();
+          chartInstance.update();
 
           // ✅ استخدام setTimeout بدلاً من .then() لأن update() قد لا يرجع promise
           setTimeout(function() {
@@ -753,22 +753,22 @@
         targetLine.style.zIndex = 10;
 
         // احسبي موضع الخط حسب قيمة الهدف (99%)
-          if (!window.dynamicChartInstance) {
+          if (!chartInstance) {
             console.error("❌ [renderChartFromData] Chart instance not found");
             return;
           }
 
-        const chartArea = window.dynamicChartInstance.chartArea;
+        const chartArea = chartInstance.chartArea;
           if (!chartArea) {
             console.error("❌ [renderChartFromData] Chart area not found");
             return;
           }
 
           // ✅ البحث عن y scale - قد يكون "y" أو "y1" أو غير ذلك
-          let yScale = window.dynamicChartInstance.scales["y"];
+          let yScale = chartInstance.scales["y"];
           if (!yScale) {
             // ✅ محاولة العثور على أي y scale
-            const scales = window.dynamicChartInstance.scales;
+            const scales = chartInstance.scales;
             for (const key in scales) {
               if (key.startsWith("y")) {
                 yScale = scales[key];
@@ -874,9 +874,10 @@
           });
 
           // ✅ إعادة رسم خط التارجت عند ظهور tab pane (للتأكد من أن الخط يظهر في التابات)
+          const currentChartInstance = chartInstance;
           function redrawTargetLine() {
             try {
-              if (!window.dynamicChartInstance || !chartCanvas || !chartContainer) {
+              if (!currentChartInstance || !chartCanvas || !chartContainer) {
                 return;
               }
 
@@ -888,7 +889,7 @@
                 return;
               }
 
-              const chartArea = window.dynamicChartInstance.chartArea;
+              const chartArea = currentChartInstance.chartArea;
               if (!chartArea) {
                 console.warn(`⚠️ [Target Line] Chart area not ready yet`);
                 setTimeout(redrawTargetLine, 100);
@@ -896,9 +897,9 @@
               }
 
               // ✅ إعادة حساب موضع الخط
-              let yScale = window.dynamicChartInstance.scales["y"];
+              let yScale = currentChartInstance.scales["y"];
               if (!yScale) {
-                const scales = window.dynamicChartInstance.scales;
+                const scales = currentChartInstance.scales;
                 for (const key in scales) {
                   if (key.startsWith("y")) {
                     yScale = scales[key];

@@ -1,5 +1,6 @@
 # views.py
 import datetime
+import hashlib
 import shutil
 import os
 import re
@@ -1667,6 +1668,10 @@ class UploadExcelViewRoche(View):
                 selected_months=quarter_months or None,
             )
 
+        # ====================== بحث Traceability (AJAX) ======================
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest" and action == "traceability_search":
+            return self.traceability_search(request)
+
         # ====================== طلبات AJAX ======================
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             print("⚡ [AJAX Request] Received request")
@@ -1717,7 +1722,7 @@ class UploadExcelViewRoche(View):
                     selected_months=quarter_months or None,
                 ),
                 "safety kpi": lambda: self._placeholder_tab_response("Safety KPI"),
-                "traceability kpi": lambda: self._placeholder_tab_response("Traceability KPI"),
+                "traceability kpi": lambda: self._traceability_kpi_tab_response(request),
                 "meeting points": lambda: self.meeting_points_tab(request),
                 "capacity + expiry": lambda: self.filter_capacity_expiry(
                     request,
@@ -1840,7 +1845,7 @@ class UploadExcelViewRoche(View):
                 )
             elif (selected_tab or "").strip().lower() == "traceability kpi":
                 return JsonResponse(
-                    self._placeholder_tab_response("Traceability KPI"), safe=False
+                    self._traceability_kpi_tab_response(request), safe=False
                 )
             elif "rejection" in selected_tab:
                 return JsonResponse(
@@ -4589,6 +4594,298 @@ class UploadExcelViewRoche(View):
             "<div class='card p-4 shadow-sm'>"
             "<p class='text-muted text-center mb-0'>Loading data</p>"
             "</div>"
+        )
+        return {
+            "detail_html": html,
+            "chart_data": [],
+            "count": 0,
+            "hit_pct": 0,
+        }
+
+    def _norm_col(self, name):
+        """تطبيع اسم عمود للمقارنة."""
+        if not name or not isinstance(name, str):
+            return ""
+        return str(name).strip().lower().replace(" ", "").replace("_", "")
+
+    def _find_col(self, cols_map, *candidates):
+        """يبحث عن عمود من مرشحين (أسماء ممكنة) مع تطبيع ومرونة في المطابقة."""
+        for c in candidates:
+            k = self._norm_col(c)
+            if not k:
+                continue
+            for col_key in cols_map:
+                col_norm = self._norm_col(col_key)
+                # مطابقة تامة بعد التطبيع
+                if col_norm == k:
+                    return cols_map[col_key]
+                # أو أن أحدهما يحتوي الآخر (للأعمدة اللي فيها زيادات مثل Create Timestamp (Local))
+                if k in col_norm or col_norm in k:
+                    return cols_map[col_key]
+        return None
+
+    def _traceability_read_sheets(self, excel_path):
+        """قراءة شيتي Traceability_KPI_Inbound و Traceability_KPI_Outbound."""
+        try:
+            xls = pd.ExcelFile(excel_path, engine="openpyxl")
+        except Exception:
+            return None, None
+        sheet_names = [str(s).strip() for s in xls.sheet_names]
+        norm = lambda s: (s or "").lower().replace(" ", "").replace("_", "")
+
+        inbound_name = next(
+            (s for s in sheet_names if "traceability" in norm(s) and "inbound" in norm(s)),
+            None,
+        )
+        outbound_name = next(
+            (s for s in sheet_names if "traceability" in norm(s) and "outbound" in norm(s)),
+            None,
+        )
+        if not inbound_name:
+            return None, None
+
+        try:
+            df_in = pd.read_excel(excel_path, sheet_name=inbound_name, engine="openpyxl", header=0)
+        except Exception:
+            return None, None
+        df_in.columns = [str(c).strip() for c in df_in.columns]
+        cols_in = {c: c for c in df_in.columns}
+
+        df_out = None
+        if outbound_name:
+            try:
+                df_out = pd.read_excel(excel_path, sheet_name=outbound_name, engine="openpyxl", header=0)
+                df_out.columns = [str(c).strip() for c in df_out.columns]
+            except Exception:
+                pass
+
+        return df_in, df_out
+
+    def _traceability_search_data(self, request):
+        """
+        بحث Traceability: فلترة حسب Item Code أو batch_nbr من شيت Inbound ثم Outbound.
+        يرجع قائمة عناصر كل عنصر: بيانات الوارد + حركات الصادر + الكمية الحالية.
+        """
+        excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
+        if not excel_path or not os.path.exists(excel_path):
+            return {"error": "Excel file not found.", "results": []}
+
+        item_code = (request.GET.get("item_code") or request.POST.get("item_code") or "").strip()
+        batch_nbr = (request.GET.get("batch_nbr") or request.POST.get("batch_nbr") or "").strip()
+        if not item_code and not batch_nbr:
+            return {"error": "Please enter an Item Code, a Batch Number, or both.", "results": []}
+
+        df_in, df_out = self._traceability_read_sheets(excel_path)
+        if df_in is None or df_in.empty:
+            return {"error": "Traceability KPI Inbound sheet not found or is empty.", "results": []}
+
+        cols_in = {c: c for c in df_in.columns}
+        lpn_col = self._find_col(cols_in, "LPN Nbr", "LPN Nbr", "LPN")
+        item_col = self._find_col(cols_in, "Item Code", "Item Code", "ItemCode")
+        batch_col = self._find_col(cols_in, "batch_nbr", "Batch Nbr", "BatchNbr")
+        create_ts_col = self._find_col(
+            cols_in, "Create Timestamp", "Create Timestamp", "CreateTimestamp"
+        )
+        orig_qty_col = self._find_col(cols_in, "Orig Qty", "Orig Qty", "OrigQty")
+        expiry_col = self._find_col(cols_in, "Expiry Date", "Expiry Date", "ExpiryDate")
+        item_desc_col = self._find_col(
+            cols_in, "Item Description", "Item Description", "ItemDescription"
+        )
+
+        # لو ملقيناش Orig Qty نحاول نستخدم Current Qty كبديل
+        if not orig_qty_col:
+            orig_qty_col = self._find_col(
+                cols_in, "Current Qty", "CurrentQty", "Current Quantity"
+            )
+
+        if not item_col and not batch_col:
+            return {"error": "Item Code and Batch Nbr columns were not found in the Inbound sheet.", "results": []}
+
+        def safe_str(v):
+            if pd.isna(v):
+                return ""
+            if isinstance(v, pd.Timestamp):
+                return (
+                    v.strftime("%Y-%m-%d %H:%M") if hasattr(v, "strftime") else str(v)
+                )
+            return str(v).strip()
+
+        def normalize_code_value(v):
+            """
+            يحوّل قيمة كود (Item / Batch) لصيغة نص موحّدة للمقارنة،
+            ويتعامل مع الأرقام اللي بتظهر في الإكسل كـ 12345.0 أو scientific notation.
+            """
+            import numpy as np
+
+            if pd.isna(v):
+                return ""
+            # أعداد صحيحة
+            if isinstance(v, (int, np.integer)):
+                return str(v).strip().lower()
+            # أعداد عشرية من نوع float (مثلاً 5290378616.0)
+            if isinstance(v, (float, np.floating)):
+                if np.isfinite(v):
+                    if float(v).is_integer():
+                        return str(int(v)).strip().lower()
+                    # fallback لأعداد عشرية حقيقية
+                    return ("%.15g" % float(v)).strip().lower()
+                return ""
+            s = str(v).strip()
+            # قيم مثل "5290378616.0"
+            if s.endswith(".0") and s[:-2].isdigit():
+                s = s[:-2]
+            return s.lower()
+
+        def safe_float(v):
+            if pd.isna(v):
+                return 0.0
+            # لو القيمة رقم أصلاً (int / float / numpy)
+            import numpy as np
+
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return 0.0
+            # لو القيمة نصية وفيها فواصل آلاف مثلاً "1,234"
+            s = str(v).strip().replace(",", "")
+            try:
+                return float(s)
+            except (TypeError, ValueError):
+                return 0.0
+
+        mask = pd.Series(False, index=df_in.index)
+        if item_col and item_code:
+            q_item = normalize_code_value(item_code)
+            series_items = df_in[item_col].apply(normalize_code_value)
+            mask = mask | (series_items == q_item)
+        if batch_col and batch_nbr:
+            q_batch = normalize_code_value(batch_nbr)
+            series_batch = df_in[batch_col].apply(normalize_code_value)
+            mask = mask | (series_batch == q_batch)
+        df_in = df_in[mask].copy()
+
+        if df_in.empty:
+            return {"error": "", "results": []}
+
+        cols_out = {}
+        df_out_filtered = None
+        if df_out is not None and not df_out.empty:
+            cols_out = {c: c for c in df_out.columns}
+            lpn_out = self._find_col(cols_out, "LPN Nbr", "LPN Nbr", "LPN")
+            item_out = self._find_col(cols_out, "Item Code", "Item Code", "ItemCode")
+            batch_out = self._find_col(cols_out, "batch_nbr", "Batch Nbr", "BatchNbr")
+            packed_qty_col = self._find_col(
+                cols_out, "Packed Qty", "Packed Qty", "PackedQty"
+            )
+            customer_col = self._find_col(
+                cols_out, "Customer Name", "Customer Name", "CustomerName"
+            )
+            picked_time_col = self._find_col(
+                cols_out,
+                "Detail Picked Time",
+                "Detail Picked Time",
+                "DetailPickedTime",
+            )
+            packed_ts_col = self._find_col(
+                cols_out, "Packed Timestamp", "Packed Timestamp", "PackedTimestamp"
+            )
+            current_qty_col = self._find_col(
+                cols_out, "Current Qty", "Current Qty", "CurrentQty"
+            )
+
+            mask_out = pd.Series(False, index=df_out.index)
+            if item_out and item_code:
+                q_item = normalize_code_value(item_code)
+                series_items_out = df_out[item_out].apply(normalize_code_value)
+                mask_out = mask_out | (series_items_out == q_item)
+            if batch_out and batch_nbr:
+                q_batch = normalize_code_value(batch_nbr)
+                series_batch_out = df_out[batch_out].apply(normalize_code_value)
+                mask_out = mask_out | (series_batch_out == q_batch)
+            df_out_filtered = df_out[mask_out].copy() if mask_out.any() else None
+        else:
+            packed_qty_col = customer_col = picked_time_col = packed_ts_col = current_qty_col = lpn_out = None
+
+        lpn_set = set()
+        for _, row in df_in.iterrows():
+            if lpn_col and not pd.isna(row.get(lpn_col)):
+                lpn_set.add(safe_str(row[lpn_col]))
+
+        results = []
+        for _, row in df_in.iterrows():
+            lpn = safe_str(row.get(lpn_col)) if lpn_col else ""
+            orig_qty = safe_float(row.get(orig_qty_col)) if orig_qty_col else 0.0
+            create_ts = safe_str(row.get(create_ts_col)) if create_ts_col else ""
+            expiry = safe_str(row.get(expiry_col)) if expiry_col else ""
+            item_desc = safe_str(row.get(item_desc_col)) if item_desc_col else ""
+
+            outbound_list = []
+            packed_total = 0.0
+            if df_out_filtered is not None and not df_out_filtered.empty and lpn:
+                for _, out_row in df_out_filtered.iterrows():
+                    out_lpn = safe_str(out_row.get(lpn_out)) if lpn_out else ""
+                    if out_lpn != lpn:
+                        continue
+                    pq = safe_float(out_row.get(packed_qty_col)) if packed_qty_col else 0.0
+                    packed_total += pq
+                    cust = safe_str(out_row.get(customer_col)) if customer_col else ""
+                    picked = safe_str(out_row.get(picked_time_col)) if picked_time_col else ""
+                    packed_ts = safe_str(out_row.get(packed_ts_col)) if packed_ts_col else ""
+                    outbound_list.append({
+                        "packed_qty": pq,
+                        "customer_name": cust,
+                        "detail_picked_time": picked,
+                        "packed_timestamp": packed_ts,
+                    })
+
+            # لا نسمح بأن تكون الكمية الحالية سالبة حتى لو كانت بيانات Outbound أكبر من Orig Qty
+            current_qty_raw = orig_qty - packed_total
+            current_qty = current_qty_raw if current_qty_raw >= 0 else 0
+
+            results.append(
+                {
+                    "lpn_nbr": lpn,
+                    "create_timestamp": create_ts,
+                    "orig_qty": orig_qty,
+                    "expiry_date": expiry,
+                    "item_description": item_desc,
+                    "outbounds": outbound_list,
+                    "current_qty": current_qty,
+                }
+            )
+
+        return {"error": "", "results": results}
+
+    def traceability_search(self, request):
+        """استجابة AJAX لبحث Traceability (Item Code أو Batch Nbr)."""
+        print("🔍 [Traceability] بحث — item_code=%s, batch_nbr=%s" % (
+            request.GET.get("item_code", ""),
+            request.GET.get("batch_nbr", ""),
+        ))
+        data = self._traceability_search_data(request)
+        return JsonResponse(data, safe=False)
+
+    def _traceability_kpi_tab_response(self, request):
+        """يرجع HTML تاب Traceability KPI: حقلان بحث + تحميل + نتائج. البحث يعمل عبر event delegation في الصفحة الرئيسية (بدون سكربت هنا لتجنب خطأ appendChild/replaceChild)."""
+        html = (
+            '<div class="card p-4 shadow-sm" style="border-color: #C3B091;">'
+            '<div class="card-header mb-3" style="background-color: #E3DAC9; color: #81613E; border-color: #C3B091;">'
+            "<h5 class='mb-0'>Traceability KPI — Shipment Traceability</h5>"
+            "</div>"
+            "<div class='mb-3'>"
+            "<label class='form-label fw-semibold' style='color: #81613E;'>Search by Item Code and/or Batch Number</label>"
+            "<div class='d-flex flex-wrap align-items-center gap-2'>"
+            "<input type='text' id='traceability-item-code' class='form-control' placeholder='Item Code' style='border-color: #C3B091; max-width: 200px;' />"
+            "<input type='text' id='traceability-batch-nbr' class='form-control' placeholder='Batch Nbr' style='border-color: #C3B091; max-width: 200px;' />"
+            "<button type='button' id='traceability-search-btn' class='btn text-white' style='background-color: #9F8170; border-color: #9F8170;'>Search</button>"
+            "</div>"
+            "<small class='text-muted'>Enter Item Code and/or Batch Number then click Search or press Enter.</small>"
+            "</div>"
+            "<div id='traceability-loading' class='mb-3' style='display:none;'>"
+            "<p class='text-muted mb-0'><span class='spinner-border spinner-border-sm me-2' role='status'></span>Searching...</p>"
+            "</div>"
+            "<div id='traceability-results-container'></div>"
         )
         return {
             "detail_html": html,
@@ -7382,8 +7679,6 @@ class UploadExcelViewRoche(View):
                 "detail_html": f"<p class='text-danger'>⚠️ Error: {e}</p>",
                 "count": 0,
             }
-        cache.clear()
-        print("🚀 دخلنا الدالة filter_dock_to_stock_combined")
 
         """
         ✅ فصل Dock to stock إلى جدولين (3PL + Roche)

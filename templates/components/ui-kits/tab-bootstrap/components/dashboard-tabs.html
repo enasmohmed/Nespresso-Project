@@ -901,6 +901,58 @@
     window.loadTabData = loadTabData;
     window.reinitializeScripts = reinitializeScripts;
 
+    // 🔹 Traceability KPI: بحث من الصفحة الرئيسية (event delegation) لأن السكربت داخل التاب قد لا يُنفَّذ بعد AJAX
+    var traceabilitySearchUrl = "{% url 'dashboard:upload_excel' %}";
+    $(document).on("click", "#traceability-search-btn", function () {
+      var itemCode = ($("#traceability-item-code").val() || "").trim();
+      var batchNbr = ($("#traceability-batch-nbr").val() || "").trim();
+      if (!itemCode && !batchNbr) {
+        $("#traceability-results-container").html("<p class='text-muted'>Please enter Item Code or Batch Number.</p>");
+        return;
+      }
+      $("#traceability-loading").show();
+      $("#traceability-results-container").empty();
+      var params = { action: "traceability_search", item_code: itemCode, batch_nbr: batchNbr };
+      $.ajax({
+        url: traceabilitySearchUrl,
+        method: "GET",
+        data: params,
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        success: function (data) {
+          $("#traceability-loading").hide();
+          if (data.error && !data.results) {
+            $("#traceability-results-container").html("<p class='text-danger'>" + data.error + "</p>");
+            return;
+          }
+          if (!data.results || data.results.length === 0) {
+            $("#traceability-results-container").html("<p class='text-muted'>No results found.</p>");
+            return;
+          }
+          var html = "<div class='table-responsive'><table class='table table-bordered table-hover' style='border-color: #C3B091;'><thead style='background-color: #E3DAC9; color: #81613E;'><tr><th>LPN</th><th>Created At</th><th>Inbound Qty</th><th>Expiry Date</th><th>Item Description</th><th>Current Qty</th></tr></thead><tbody>";
+          data.results.forEach(function (r) {
+            var orig = (r.orig_qty && r.orig_qty !== 0) ? r.orig_qty : "";
+            html += "<tr><td>" + (r.lpn_nbr || "-") + "</td><td>" + (r.create_timestamp || "-") + "</td><td>" + orig + "</td><td>" + (r.expiry_date || "-") + "</td><td>" + (r.item_description || "-") + "</td><td><strong>" + r.current_qty + "</strong></td></tr>";
+            if (r.outbounds && r.outbounds.length) {
+              html += "<tr><td colspan='6' class='p-2' style='background:#f8f9fa;'><span class='fw-semibold'>Outbound Movements:</span><table class='table table-sm table-borderless mb-0 mt-1'><thead><tr><th>Quantity</th><th>Customer</th><th>Picked Time</th><th>Packed Time</th></tr></thead><tbody>";
+              r.outbounds.forEach(function (o) {
+                html += "<tr><td>" + o.packed_qty + "</td><td>" + (o.customer_name || "-") + "</td><td>" + (o.detail_picked_time || "-") + "</td><td>" + (o.packed_timestamp || "-") + "</td></tr>";
+              });
+              html += "</tbody></table></td></tr>";
+            }
+          });
+          html += "</tbody></table></div>";
+          $("#traceability-results-container").html(html);
+        },
+        error: function () {
+          $("#traceability-loading").hide();
+          $("#traceability-results-container").html("<p class='text-danger'>An error occurred while searching.</p>");
+        }
+      });
+    });
+    $(document).on("keypress", "#traceability-item-code, #traceability-batch-nbr", function (e) {
+      if (e.which === 13) { e.preventDefault(); $("#traceability-search-btn").click(); }
+    });
+
     // 🔹 التعامل مع ضغط التاب
     $("#dashboard-tabs").on("click", "button", function () {
       selectedTab = $(this).data("tab");

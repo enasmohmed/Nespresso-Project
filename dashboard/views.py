@@ -134,30 +134,14 @@ def _normalize_upload_to_latest_xlsx_and_update_cache(file_path, folder_path):
 
 def _get_sheet_dataframe(excel_path, sheet_name, use_cache=True):
     """
-    يرجع DataFrame للشيت من الكاش إن وُجد (أسرع) وإلا من ملف الإكسل.
-    عند القراءة من الملف لأول مرة يُخزّن في الكاش لمرات لاحقة.
+    يرجع DataFrame للشيت مباشرة من ملف الإكسل.
+    (تم إلغاء تخزين البيانات في الداتا بيز لتقليل الحمل على قاعدة البيانات)
     """
-    if use_cache:
-        try:
-            cache = ExcelSheetCache.objects.filter(sheet_name=sheet_name).first()
-            if cache and cache.data:
-                print("✅ تم فتح الموقع والتابات بسرعه — جاري استخدام الداتا من الداتابيز (Cache)")
-                return pd.DataFrame(cache.data)
-        except Exception as e:
-            print(f"⚠️ [Cache] قراءة شيت '{sheet_name}': {e}")
     if not excel_path or not os.path.exists(excel_path):
         return None
     try:
         df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
         df.columns = [str(c).strip() for c in df.columns]
-        if use_cache:
-            try:
-                records = [_sanitize_for_json(r) for r in df.to_dict(orient="records")]
-                ExcelSheetCache.objects.update_or_create(
-                    sheet_name=sheet_name, defaults={"data": records}
-                )
-            except Exception as e:
-                print(f"⚠️ [Cache] حفظ شيت '{sheet_name}': {e}")
         return df
     except Exception:
         return None
@@ -1721,7 +1705,8 @@ class UploadExcelViewRoche(View):
         # --------------------------
         # Read request parameters
         # --------------------------
-        selected_tab = request.GET.get("tab", "").lower() or "all"
+        # نخلي التاب الافتراضي خفيف (dashboard) عشان أول تحميل يبقى أسرع
+        selected_tab = request.GET.get("tab", "").lower() or "dashboard"
         selected_month = request.GET.get("month", "").strip()
         selected_quarter = request.GET.get("quarter", "").strip()
         action = request.GET.get("action", "").lower()

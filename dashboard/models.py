@@ -25,6 +25,20 @@ class UploadMonth(models.Model):
 
 
 
+class ExcelSheetCache(models.Model):
+    """كاش بيانات شيت إكسل: يُملأ عند الرفع ويُستخدم لتسريع فتح التابات."""
+    sheet_name = models.CharField(max_length=255, unique=True, db_index=True)
+    data = models.JSONField(default=list)  # list of dicts (rows)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Excel Sheet Cache"
+        verbose_name_plural = "Excel Sheet Caches"
+
+    def __str__(self):
+        return f"{self.sheet_name} ({len(self.data)} rows)"
+
+
 class MeetingPoint(models.Model):
     description = models.TextField()  # لازم يكون TextField أو CharField
     is_done = models.BooleanField(default=False)

@@ -29,7 +29,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.utils.text import slugify
 
-from .models import MeetingPoint
+from .models import MeetingPoint, ExcelSheetCache
 
 
 def make_json_serializable(df):
@@ -81,6 +81,86 @@ def _sanitize_for_json(obj):
     if isinstance(obj, (list, tuple)):
         return [_sanitize_for_json(v) for v in obj]
     return obj
+
+
+def _normalize_upload_to_latest_xlsx_and_update_cache(file_path, folder_path):
+    """
+    إذا كان الملف أصلاً .xlsx يُترك كما هو (رفع سريع).
+    إذا كان .xlsm يُحوّل إلى latest.xlsx عبر ملف مؤقت.
+    لا يتم تعبئة الكاش هنا؛ يتم مسح الكاش بعد الرفع وتعبئته عند أول قراءة لتاب.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return file_path
+    out_path = os.path.join(folder_path, "latest.xlsx")
+    ext = (os.path.splitext(file_path)[1] or "").lower()
+    # ملف .xlsx محفوظ فعلياً كـ latest.xlsx — لا نعيد قراءة/كتابة (توفير وقت كبير)
+    if ext == ".xlsx" and os.path.abspath(file_path) == os.path.abspath(out_path):
+        print("✅ [DEBUG] الملف .xlsx — تم الاحتفاظ به كما هو (رفع سريع)")
+        return file_path
+
+    if ext != ".xlsm":
+        return file_path
+
+    temp_path = os.path.join(folder_path, "latest_temp_xlsx_upload.xlsx")
+    try:
+        xls = pd.ExcelFile(file_path, engine="openpyxl")
+        sheet_names = list(xls.sheet_names)
+        if not sheet_names:
+            return file_path
+        with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
+            for sheet in sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet)
+                df.to_excel(writer, sheet_name=sheet, index=False)
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(temp_path)
+            if wb.sheetnames and hasattr(wb[wb.sheetnames[0]], "sheet_state"):
+                wb[wb.sheetnames[0]].sheet_state = "visible"
+            wb.save(temp_path)
+        except Exception:
+            pass
+        os.replace(temp_path, out_path)
+        print("✅ [DEBUG] تم تحويل .xlsm إلى latest.xlsx")
+        return out_path
+    except Exception as e:
+        print(f"⚠️ [DEBUG] normalize: {e}")
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        return file_path
+
+
+def _get_sheet_dataframe(excel_path, sheet_name, use_cache=True):
+    """
+    يرجع DataFrame للشيت من الكاش إن وُجد (أسرع) وإلا من ملف الإكسل.
+    عند القراءة من الملف لأول مرة يُخزّن في الكاش لمرات لاحقة.
+    """
+    if use_cache:
+        try:
+            cache = ExcelSheetCache.objects.filter(sheet_name=sheet_name).first()
+            if cache and cache.data:
+                print("✅ تم فتح الموقع والتابات بسرعه — جاري استخدام الداتا من الداتابيز (Cache)")
+                return pd.DataFrame(cache.data)
+        except Exception as e:
+            print(f"⚠️ [Cache] قراءة شيت '{sheet_name}': {e}")
+    if not excel_path or not os.path.exists(excel_path):
+        return None
+    try:
+        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        df.columns = [str(c).strip() for c in df.columns]
+        if use_cache:
+            try:
+                records = [_sanitize_for_json(r) for r in df.to_dict(orient="records")]
+                ExcelSheetCache.objects.update_or_create(
+                    sheet_name=sheet_name, defaults={"data": records}
+                )
+            except Exception as e:
+                print(f"⚠️ [Cache] حفظ شيت '{sheet_name}': {e}")
+        return df
+    except Exception:
+        return None
 
 
 def _get_excel_path_for_request(request):
@@ -1620,6 +1700,25 @@ class UploadExcelViewRoche(View):
             )
 
         # --------------------------
+        # مسح كاش الداتا (لو غيّرت الملف يدوياً أو حابب تعيد القراءة من الإكسل)
+        # استخدم: ?clear_excel_cache=1 في الرابط
+        # --------------------------
+        if request.GET.get("clear_excel_cache"):
+            try:
+                deleted, _ = ExcelSheetCache.objects.all().delete()
+                print(f"🗑️ [Cache] تم مسح كاش الداتا ({deleted} سجلات). الداتا هتُقرأ من الملف في الطلب الجاي.")
+                messages.success(
+                    request,
+                    "تم مسح كاش الداتا. التابات هتقرأ من ملف الإكسل في المرة الجاية.",
+                )
+            except Exception as e:
+                print(f"⚠️ [Cache] {e}")
+            from django.http import HttpResponseRedirect
+            from urllib.parse import urlencode
+            q = {k: v for k, v in request.GET.items() if k != "clear_excel_cache"}
+            return HttpResponseRedirect(request.path + ("?" + urlencode(q) if q else ""))
+
+        # --------------------------
         # Read request parameters
         # --------------------------
         selected_tab = request.GET.get("tab", "").lower() or "all"
@@ -2098,7 +2197,7 @@ class UploadExcelViewRoche(View):
                 except Exception as delete_error:
                     print(f"⚠️ [DEBUG] تحذير: خطأ في حذف الملف القديم: {delete_error}")
 
-            # ✅ حفظ الملف الجديد
+            # ✅ حفظ الملف الجديد (كل الشيتات وكل الصفوف)
             with open(file_path, "wb+") as destination:
                 for chunk in excel_file.chunks():
                     destination.write(chunk)
@@ -2110,6 +2209,12 @@ class UploadExcelViewRoche(View):
 
             print(f"✅ [DEBUG] تم حفظ الملف بنجاح في: {file_path}")
 
+            # ✅ الملف الرئيسي فقط: تحويل إلى latest.xlsx بكل الشيتات وتحديث كاش الداتا في DB
+            if not is_dashboard_file:
+                file_path = _normalize_upload_to_latest_xlsx_and_update_cache(
+                    file_path, folder_path
+                )
+
             # ✅ حفظ المسار في الجلسة حسب نوع الملف (داشبورد أو رئيسي)
             if is_dashboard_file:
                 request.session["dashboard_excel_path"] = file_path
@@ -2119,12 +2224,18 @@ class UploadExcelViewRoche(View):
                 print(f"💾 [DEBUG] تم حفظ مسار الملف الرئيسي في الجلسة: {file_path}")
             request.session.save()
 
-            # ✅ مسح الكاش بعد رفع ملف جديد
+            # ✅ مسح الكاش بعد رفع ملف جديد (Django cache + كاش الشيتات في DB)
             try:
                 cache.clear()
                 print(f"🗑️ [DEBUG] تم مسح الكاش")
             except Exception as cache_error:
                 print(f"⚠️ [DEBUG] تحذير: لا يمكن مسح الكاش: {cache_error}")
+            if not is_dashboard_file:
+                try:
+                    n, _ = ExcelSheetCache.objects.all().delete()
+                    print(f"🗑️ [DEBUG] تم مسح كاش الشيتات ({n} سجلات) — التابات ستقرأ من الملف الجديد عند الفتح")
+                except Exception as e:
+                    print(f"⚠️ [DEBUG] مسح كاش الشيتات: {e}")
 
             # ✅ إرجاع response
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
@@ -4625,7 +4736,7 @@ class UploadExcelViewRoche(View):
         return None
 
     def _traceability_read_sheets(self, excel_path):
-        """قراءة شيتي Traceability_KPI_Inbound و Traceability_KPI_Outbound."""
+        """قراءة شيتي Traceability_KPI_Inbound و Traceability_KPI_Outbound (من الكاش إن وُجد)."""
         try:
             xls = pd.ExcelFile(excel_path, engine="openpyxl")
         except Exception:
@@ -4644,21 +4755,8 @@ class UploadExcelViewRoche(View):
         if not inbound_name:
             return None, None
 
-        try:
-            df_in = pd.read_excel(excel_path, sheet_name=inbound_name, engine="openpyxl", header=0)
-        except Exception:
-            return None, None
-        df_in.columns = [str(c).strip() for c in df_in.columns]
-        cols_in = {c: c for c in df_in.columns}
-
-        df_out = None
-        if outbound_name:
-            try:
-                df_out = pd.read_excel(excel_path, sheet_name=outbound_name, engine="openpyxl", header=0)
-                df_out.columns = [str(c).strip() for c in df_out.columns]
-            except Exception:
-                pass
-
+        df_in = _get_sheet_dataframe(excel_path, inbound_name)
+        df_out = _get_sheet_dataframe(excel_path, outbound_name) if outbound_name else None
         return df_in, df_out
 
     def _traceability_search_data(self, request):
@@ -4676,6 +4774,20 @@ class UploadExcelViewRoche(View):
             return {"error": "Please enter an Item Code, a Batch Number, or both.", "results": []}
 
         df_in, df_out = self._traceability_read_sheets(excel_path)
+
+        # 🔎 DEBUG: طباعة مسار الملف وأسماء الأعمدة في الشيتين في الترمينال
+        try:
+            print("🔎 [Traceability DEBUG] Excel path:", excel_path)
+            print(
+                "🔎 [Traceability DEBUG] Inbound columns:",
+                list(df_in.columns) if df_in is not None else "None",
+            )
+            print(
+                "🔎 [Traceability DEBUG] Outbound columns:",
+                list(df_out.columns) if df_out is not None else "None",
+            )
+        except Exception:
+            pass
         if df_in is None or df_in.empty:
             return {"error": "Traceability KPI Inbound sheet not found or is empty.", "results": []}
 
@@ -4683,20 +4795,27 @@ class UploadExcelViewRoche(View):
         lpn_col = self._find_col(cols_in, "LPN Nbr", "LPN Nbr", "LPN")
         item_col = self._find_col(cols_in, "Item Code", "Item Code", "ItemCode")
         batch_col = self._find_col(cols_in, "batch_nbr", "Batch Nbr", "BatchNbr")
+        # في شيت Traceability_KPI_Inbound لا يوجد Create Timestamp، لكن يوجد Allocation Mod Timestamp
         create_ts_col = self._find_col(
-            cols_in, "Create Timestamp", "Create Timestamp", "CreateTimestamp"
+            cols_in,
+            "Create Timestamp",
+            "Allocation Mod Timestamp",
+            "AllocationModTimestamp",
+            "Allocation Timestamp",
         )
         orig_qty_col = self._find_col(cols_in, "Orig Qty", "Orig Qty", "OrigQty")
         expiry_col = self._find_col(cols_in, "Expiry Date", "Expiry Date", "ExpiryDate")
         item_desc_col = self._find_col(
             cols_in, "Item Description", "Item Description", "ItemDescription"
         )
-
-        # لو ملقيناش Orig Qty نحاول نستخدم Current Qty كبديل
-        if not orig_qty_col:
-            orig_qty_col = self._find_col(
-                cols_in, "Current Qty", "CurrentQty", "Current Quantity"
-            )
+        # عمود الكمية الحالية في الشيت (القيمة المتبقية الآن في المستودع)
+        current_qty_in_col = self._find_col(
+            cols_in, "Current Qty", "CurrentQty", "Current Quantity"
+        )
+        # تاريخ استلام الشحنة (من Inbound)
+        received_ts_col = self._find_col(
+            cols_in, "Received Timestamp", "Received Timestamp", "ReceivedTimestamp"
+        )
 
         if not item_col and not batch_col:
             return {"error": "Item Code and Batch Nbr columns were not found in the Inbound sheet.", "results": []}
@@ -4754,16 +4873,13 @@ class UploadExcelViewRoche(View):
             except (TypeError, ValueError):
                 return 0.0
 
-        mask = pd.Series(False, index=df_in.index)
+        # فلترة: أولاً حسب Item Code ثم حسب batch_nbr (الاثنان معاً إذا وُجد المدخلان)
         if item_col and item_code:
             q_item = normalize_code_value(item_code)
-            series_items = df_in[item_col].apply(normalize_code_value)
-            mask = mask | (series_items == q_item)
-        if batch_col and batch_nbr:
+            df_in = df_in[df_in[item_col].apply(normalize_code_value) == q_item]
+        if not df_in.empty and batch_col and batch_nbr:
             q_batch = normalize_code_value(batch_nbr)
-            series_batch = df_in[batch_col].apply(normalize_code_value)
-            mask = mask | (series_batch == q_batch)
-        df_in = df_in[mask].copy()
+            df_in = df_in[df_in[batch_col].apply(normalize_code_value) == q_batch]
 
         if df_in.empty:
             return {"error": "", "results": []}
@@ -4776,7 +4892,12 @@ class UploadExcelViewRoche(View):
             item_out = self._find_col(cols_out, "Item Code", "Item Code", "ItemCode")
             batch_out = self._find_col(cols_out, "batch_nbr", "Batch Nbr", "BatchNbr")
             packed_qty_col = self._find_col(
-                cols_out, "Packed Qty", "Packed Qty", "PackedQty"
+                cols_out,
+                "Packed Qty",
+                "PackedQty",
+                "Packed Quantity",
+                "Quantity",
+                "Qty",
             )
             customer_col = self._find_col(
                 cols_out, "Customer Name", "Customer Name", "CustomerName"
@@ -4805,55 +4926,122 @@ class UploadExcelViewRoche(View):
                 mask_out = mask_out | (series_batch_out == q_batch)
             df_out_filtered = df_out[mask_out].copy() if mask_out.any() else None
         else:
-            packed_qty_col = customer_col = picked_time_col = packed_ts_col = current_qty_col = lpn_out = None
+            packed_qty_col = customer_col = picked_time_col = packed_ts_col = current_qty_col = lpn_out = item_out = None
 
-        lpn_set = set()
-        for _, row in df_in.iterrows():
-            if lpn_col and not pd.isna(row.get(lpn_col)):
-                lpn_set.add(safe_str(row[lpn_col]))
-
-        results = []
-        for _, row in df_in.iterrows():
-            lpn = safe_str(row.get(lpn_col)) if lpn_col else ""
-            orig_qty = safe_float(row.get(orig_qty_col)) if orig_qty_col else 0.0
-            create_ts = safe_str(row.get(create_ts_col)) if create_ts_col else ""
-            expiry = safe_str(row.get(expiry_col)) if expiry_col else ""
-            item_desc = safe_str(row.get(item_desc_col)) if item_desc_col else ""
-
-            outbound_list = []
-            packed_total = 0.0
-            if df_out_filtered is not None and not df_out_filtered.empty and lpn:
-                for _, out_row in df_out_filtered.iterrows():
-                    out_lpn = safe_str(out_row.get(lpn_out)) if lpn_out else ""
-                    if out_lpn != lpn:
-                        continue
-                    pq = safe_float(out_row.get(packed_qty_col)) if packed_qty_col else 0.0
-                    packed_total += pq
-                    cust = safe_str(out_row.get(customer_col)) if customer_col else ""
-                    picked = safe_str(out_row.get(picked_time_col)) if picked_time_col else ""
-                    packed_ts = safe_str(out_row.get(packed_ts_col)) if packed_ts_col else ""
-                    outbound_list.append({
+        # بناء قائمة Outbound مرة واحدة (مع Item Code بدل LPN)
+        outbound_list = []
+        if df_out_filtered is not None and not df_out_filtered.empty:
+            for _, out_row in df_out_filtered.iterrows():
+                pq = (
+                    safe_float(out_row.get(packed_qty_col)) if packed_qty_col else 0.0
+                )
+                out_item_code = safe_str(out_row.get(item_out)) if item_out else ""
+                cust = safe_str(out_row.get(customer_col)) if customer_col else ""
+                picked = (
+                    safe_str(out_row.get(picked_time_col))
+                    if picked_time_col
+                    else ""
+                )
+                packed_ts = (
+                    safe_str(out_row.get(packed_ts_col)) if packed_ts_col else ""
+                )
+                outbound_list.append(
+                    {
+                        "item_code": out_item_code,
                         "packed_qty": pq,
                         "customer_name": cust,
                         "detail_picked_time": picked,
                         "packed_timestamp": packed_ts,
-                    })
+                    }
+                )
+            def _parse_dt(s):
+                if s is None or (isinstance(s, str) and not s.strip()):
+                    return pd.Timestamp.min
+                if hasattr(s, "to_pydatetime"):
+                    return s
+                try:
+                    return pd.to_datetime(s, errors="coerce")
+                except Exception:
+                    return pd.Timestamp.min
 
-            # لا نسمح بأن تكون الكمية الحالية سالبة حتى لو كانت بيانات Outbound أكبر من Orig Qty
-            current_qty_raw = orig_qty - packed_total
-            current_qty = current_qty_raw if current_qty_raw >= 0 else 0
+            outbound_list.sort(
+                key=lambda o: _parse_dt(o.get("detail_picked_time") or o.get("packed_timestamp")),
+                reverse=True,
+            )
 
+        # تجميع حسب التاريخ فقط (نفس اليوم): صفين نفس التاريخ → صف واحد + جمع Orig Qty
+        def _norm_ts(v):
+            if pd.isna(v):
+                return ""
+            if hasattr(v, "strftime"):
+                return v.strftime("%Y-%m-%d")
+            s = str(v).strip()
+            try:
+                dt = pd.to_datetime(s, errors="coerce")
+                return dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else s
+            except Exception:
+                return s
+
+        _create_ts_col_orig = create_ts_col
+        if not create_ts_col:
+            create_ts_col = "__dummy__"
+            df_in = df_in.copy()
+            df_in["__dummy__"] = ""
+
+        df_in = df_in.copy()
+        df_in["_group_ts"] = df_in[create_ts_col].apply(_norm_ts)
+
+        results = []
+        for _group_ts, grp in df_in.groupby("_group_ts", sort=False):
+            if not _create_ts_col_orig and _group_ts == "":
+                pass
+            elif not _group_ts:
+                continue
+            create_ts_display = grp[create_ts_col].iloc[0]
+            create_ts_str = safe_str(create_ts_display)
+            if orig_qty_col and orig_qty_col in grp.columns:
+                orig_qty = grp[orig_qty_col].apply(safe_float).sum()
+            else:
+                inbound_current_sum = (
+                    grp[current_qty_in_col].apply(safe_float).sum()
+                    if current_qty_in_col and current_qty_in_col in grp.columns
+                    else 0.0
+                )
+                packed_total = sum(safe_float(o.get("packed_qty")) for o in outbound_list) if outbound_list else 0.0
+                orig_qty = inbound_current_sum + packed_total
+            expiry = safe_str(grp[expiry_col].iloc[0]) if expiry_col and expiry_col in grp.columns else ""
+            item_desc = safe_str(grp[item_desc_col].iloc[0]) if item_desc_col and item_desc_col in grp.columns else ""
+            received_ts_str = safe_str(grp[received_ts_col].iloc[0]) if received_ts_col and received_ts_col in grp.columns else ""
+            item_code_display = safe_str(grp[item_col].iloc[0]) if item_col and item_col in grp.columns else (item_code or "")
+            current_qty = (
+                grp[current_qty_in_col].apply(safe_float).sum()
+                if current_qty_in_col and current_qty_in_col in grp.columns
+                else 0.0
+            )
             results.append(
                 {
-                    "lpn_nbr": lpn,
-                    "create_timestamp": create_ts,
+                    "item_code": item_code_display,
+                    "create_timestamp": create_ts_str,
                     "orig_qty": orig_qty,
                     "expiry_date": expiry,
                     "item_description": item_desc,
+                    "received_timestamp": received_ts_str,
                     "outbounds": outbound_list,
                     "current_qty": current_qty,
                 }
             )
+
+        # ترتيب صفوف الـ Inbound من الأقدم للأحدث
+        def _parse_create_ts(r):
+            ts = r.get("create_timestamp") or ""
+            if not ts:
+                return pd.Timestamp.min
+            try:
+                return pd.to_datetime(ts, errors="coerce")
+            except Exception:
+                return pd.Timestamp.min
+
+        results.sort(key=lambda r: _parse_create_ts(r), reverse=False)
 
         return {"error": "", "results": results}
 
@@ -4869,13 +5057,13 @@ class UploadExcelViewRoche(View):
     def _traceability_kpi_tab_response(self, request):
         """يرجع HTML تاب Traceability KPI: حقلان بحث + تحميل + نتائج. البحث يعمل عبر event delegation في الصفحة الرئيسية (بدون سكربت هنا لتجنب خطأ appendChild/replaceChild)."""
         html = (
-            '<div class="card p-4 shadow-sm" style="border-color: #C3B091;">'
+            '<div class="card p-4 shadow-sm mx-auto" style="border-color: #C3B091; max-width: 100%;">'
             '<div class="card-header mb-3" style="background-color: #E3DAC9; color: #81613E; border-color: #C3B091;">'
             "<h5 class='mb-0'>Traceability KPI — Shipment Traceability</h5>"
             "</div>"
             "<div class='mb-3'>"
             "<label class='form-label fw-semibold' style='color: #81613E;'>Search by Item Code and/or Batch Number</label>"
-            "<div class='d-flex flex-wrap align-items-center gap-2'>"
+            "<div class='d-flex flex-wrap align-items-center justify-content-center gap-2'>"
             "<input type='text' id='traceability-item-code' class='form-control' placeholder='Item Code' style='border-color: #C3B091; max-width: 200px;' />"
             "<input type='text' id='traceability-batch-nbr' class='form-control' placeholder='Batch Nbr' style='border-color: #C3B091; max-width: 200px;' />"
             "<button type='button' id='traceability-search-btn' class='btn text-white' style='background-color: #9F8170; border-color: #9F8170;'>Search</button>"
@@ -4885,6 +5073,7 @@ class UploadExcelViewRoche(View):
             "<div id='traceability-loading' class='mb-3' style='display:none;'>"
             "<p class='text-muted mb-0'><span class='spinner-border spinner-border-sm me-2' role='status'></span>Searching...</p>"
             "</div>"
+            
             "<div id='traceability-results-container'></div>"
         )
         return {
@@ -7039,6 +7228,7 @@ class UploadExcelViewRoche(View):
         🔹 عرض جدول Miss Breakdown (3PL و Roche كل واحد منفصل)
         🔹 عرض الشارت الخاص بـ 3PL On-Time Delivery
         🔹 عرض خطوات Outbound في الأسفل
+        🔹 تم إضافة كاش على مستوى الدالة لتسريع التحميل لأول مرة
         """
         try:
             excel_path = self.get_uploaded_file_path(request)
@@ -7048,6 +7238,23 @@ class UploadExcelViewRoche(View):
                     "chart_data": [],
                     "count": 0,
                 }
+
+            # ✅ كاش على مستوى Total Lead Time Performance (يعتمد على مسار الملف والشهور المختارة)
+            import hashlib
+
+            _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+            _month_part = (
+                str(selected_month).strip() if selected_month is not None else ""
+            )
+            _months_list = (
+                ",".join(map(str, selected_months))
+                if selected_months is not None
+                else ""
+            )
+            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_month_part}_{_months_list}"
+            cached_result = cache.get(_cache_key)
+            if cached_result is not None:
+                return cached_result
 
             xls = pd.ExcelFile(excel_path, engine="openpyxl")
             sub_tables = []
@@ -7141,12 +7348,14 @@ class UploadExcelViewRoche(View):
                     if selected_month_norm:
                         df = df[df["month"] == selected_month_norm]
                         if df.empty:
-                            return {
+                            result = {
                                 "detail_html": f"<p class='text-warning text-center p-4'>⚠️ No data available for month {selected_month_norm} in Total Lead Time Performance.</p>",
                                 "chart_data": [],
                                 "count": 0,
                                 "hit_pct": 0,
                             }
+                            cache.set(_cache_key, result, 300)
+                            return result
                         existing_months = [selected_month_norm]
                     elif selected_months_norm:
                         df = df[df["month"].isin(selected_months_norm)]
@@ -7159,12 +7368,14 @@ class UploadExcelViewRoche(View):
                             m for m in selected_months_norm if m not in available_months
                         ]
                         if df.empty:
-                            return {
+                            result = {
                                 "detail_html": "<p class='text-warning text-center p-4'>⚠️ No data available for the selected quarter months in Total Lead Time Performance.</p>",
                                 "chart_data": [],
                                 "count": 0,
                                 "hit_pct": 0,
                             }
+                            cache.set(_cache_key, result, 300)
+                            return result
                         existing_months = selected_months_norm
                     else:
                         existing_months = [
@@ -7601,11 +7812,27 @@ class UploadExcelViewRoche(View):
         """
         🔹 يعرض تاب Dock to stock بالاعتماد على تحليل Inbound (KPI ≤24h).
         """
-        cache.clear()
         print("🚀 معالجة Dock to stock — Inbound KPI")
 
         try:
             from django.template.loader import render_to_string
+            import hashlib
+
+            # ✅ كاش مخصص لـ Dock to stock يعتمد على مسار ملف الإكسل + الفلاتر
+            excel_path = _get_excel_path_for_request(request)
+            _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+            _month_part = (
+                str(selected_month).strip() if selected_month is not None else ""
+            )
+            _months_list = (
+                ",".join(map(str, selected_months))
+                if selected_months is not None
+                else ""
+            )
+            _cache_key = f"tlp_dock_to_stock_{_path_hash}_{_month_part}_{_months_list}"
+            cached = cache.get(_cache_key)
+            if cached is not None:
+                return cached
 
             inbound_result = self.filter_inbound(
                 request, selected_month, selected_months
@@ -7669,7 +7896,10 @@ class UploadExcelViewRoche(View):
                 "target_pct": 100,
                 "tab_data": tab_data,
             }
-            return _sanitize_for_json(result)
+            # نخزّن النتيجة في الكاش لمدة 5 دقائق
+            result_sanitized = _sanitize_for_json(result)
+            cache.set(_cache_key, result_sanitized, 300)
+            return result_sanitized
         except Exception as e:
             import traceback
 
@@ -8193,19 +8423,21 @@ class UploadExcelViewRoche(View):
                 hit_pct_val = max(0, min(hit_pct_val, 100))
 
                 target_pct = target_manual.get(tab_lower, 100)
-                color_class = "bg-success" if hit_pct >= target_pct else "bg-danger"
+                color_class = "bg-success" if hit_pct_val >= target_pct else "bg-danger"
+                chart_data = res.get("chart_data", []) or []
+                chart_type = res.get("chart_type", "bar") or "bar"
 
                 progress_html = f"""
                     <div class='mb-3'>
                         <div class='d-flex justify-content-between align-items-center mb-1'>
                             <strong class='text-capitalize'>{tab_name}</strong>
-                            <small>{hit_pct}% / Target: {target_pct}%</small>
+                            <small>{hit_pct_val}% / Target: {target_pct}%</small>
                         </div>
                         <div class='progress' style='height: 20px;'>
                             <div class='progress-bar {color_class}' role='progressbar'
-                                 style='width: {hit_pct}%;' aria-valuenow='{hit_pct}'
+                                 style='width: {hit_pct_val}%;' aria-valuenow='{hit_pct_val}'
                                  aria-valuemin='0' aria-valuemax='100'>
-                                 {hit_pct}%
+                                 {hit_pct_val}%
                             </div>
                         </div>
                     </div>
@@ -8216,8 +8448,10 @@ class UploadExcelViewRoche(View):
 
             except Exception:
                 detail_html = "<p class='text-muted'>No data available.</p>"
-                hit_pct = 0
+                hit_pct_val = 0
                 target_pct = target_manual.get(tab_name.lower(), 100)
+                chart_data = []
+                chart_type = "bar"
 
             return {
                 "name": tab_name,
@@ -8225,6 +8459,8 @@ class UploadExcelViewRoche(View):
                 "target_pct": target_pct,
                 "detail_html": detail_html,
                 "count": count,
+                "chart_data": chart_data,
+                "chart_type": chart_type,
             }
 
         tabs_order = [

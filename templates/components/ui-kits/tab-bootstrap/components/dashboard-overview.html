@@ -265,6 +265,11 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 
+<!-- ✅ بيانات التابات مع الشارتس (من الـ overview) لاستخدامها مباشرة في All-in-One -->
+<script>
+  window.overviewTabsData = {{ tabs_json|safe }};
+</script>
+
 <!-- ✅ سكربت التهيئة لتسجيل البلجنات -->
 <script>
   (function () {
@@ -323,25 +328,19 @@
         $(canvas).css("height", "350px");
 
         const ctx = canvas.getContext("2d");
-        if (loader) $(loader).fadeIn(200);
 
-        $.ajax({
-          url: "{% url 'dashboard:upload_excel' %}",
-          method: "GET",
-          data: { tab: tabName, quarter: currentQuarter, month: currentMonth },
-          headers: { "X-Requested-With": "XMLHttpRequest" },
-          success: function (res) {
-            if (loader) $(loader).fadeOut(200);
-            if (!res.chart_data || !res.chart_data.length) {
-              $(canvas)
-                .parent()
-                .append(
-                  "<div class='text-center text-muted mt-3'>⚠️ No data available.</div>"
-                );
-              return;
-            }
+        function drawChartFromRes(res) {
+          if (loader) $(loader).fadeOut(200);
+          if (!res.chart_data || !res.chart_data.length) {
+            $(canvas)
+              .parent()
+              .append(
+                "<div class='text-center text-muted mt-3'>⚠️ No data available.</div>"
+              );
+            return;
+          }
 
-            const chart_info = res.chart_data[0];
+          const chart_info = res.chart_data[0];
             const chartType = (chart_info.type || "bar").toLowerCase();
             const labels = chart_info.dataPoints.map((dp) => dp.label);
             const values = chart_info.dataPoints.map((dp) => Number(dp.y));
@@ -489,10 +488,32 @@
               window.chartInstances[canvasId].destroy();
             const chartInstance = new Chart(ctx, chartConfig);
             window.chartInstances[canvasId] = chartInstance;
+        }
+
+        if (loader) $(loader).fadeIn(200);
+        var preloaded = (window.overviewTabsData || []).find(function (t) {
+          return (t.name || "").trim() === (tabName || "").trim();
+        });
+        if (preloaded && preloaded.chart_data && preloaded.chart_data.length) {
+          drawChartFromRes(preloaded);
+          return;
+        }
+        $.ajax({
+          url: "{% url 'dashboard:upload_excel' %}",
+          method: "GET",
+          data: { tab: tabName, quarter: currentQuarter, month: currentMonth },
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          success: function (res) {
+            drawChartFromRes(res);
           },
           error: function (err) {
             if (loader) $(loader).fadeOut(200);
             console.error("❌ Error while loading data:", err);
+            $(canvas)
+              .parent()
+              .append(
+                "<div class='text-center text-muted mt-3'>⚠️ No data available.</div>"
+              );
           },
         });
       });

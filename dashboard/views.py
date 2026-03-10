@@ -134,14 +134,38 @@ def _normalize_upload_to_latest_xlsx_and_update_cache(file_path, folder_path):
 
 def _get_sheet_dataframe(excel_path, sheet_name, use_cache=True):
     """
-    يرجع DataFrame للشيت مباشرة من ملف الإكسل.
-    (تم إلغاء تخزين البيانات في الداتا بيز لتقليل الحمل على قاعدة البيانات)
+    يرجع DataFrame للشيت مع كاش في الذاكرة (Django cache) لتقليل قراءات الديسك.
+    لا يتم تخزين أي بيانات في قاعدة البيانات.
     """
     if not excel_path or not os.path.exists(excel_path):
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        if use_cache:
+            try:
+                # ✅ كاش في الذاكرة: يعتمد على مسار الملف + اسم الشيت
+                from django.core.cache import cache
+                import hashlib
+
+                _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+                cache_key = f"excel_df::{_path_hash}::{sheet_name}"
+                cached_df = cache.get(cache_key)
+                if cached_df is not None:
+                    return cached_df.copy()
+            except Exception as e:
+                print(f"⚠️ [Cache-MEM] قراءة الشيت من الكاش فشلت '{sheet_name}': {e}")
+
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0
+        )
         df.columns = [str(c).strip() for c in df.columns]
+
+        if use_cache:
+            try:
+                # نخزّن نسخة في الكاش لمدة 5 دقائق
+                cache.set(cache_key, df, 300)
+            except Exception as e:
+                print(f"⚠️ [Cache-MEM] حفظ الشيت في الكاش فشل '{sheet_name}': {e}")
+
         return df
     except Exception:
         return None

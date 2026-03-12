@@ -132,31 +132,35 @@ def _normalize_upload_to_latest_xlsx_and_update_cache(file_path, folder_path):
         return file_path
 
 
-def _get_sheet_dataframe(excel_path, sheet_name, use_cache=True):
+def _get_sheet_dataframe(excel_path, sheet_name, use_cache=True, max_rows=None):
     """
     يرجع DataFrame للشيت مع كاش في الذاكرة (Django cache) لتقليل قراءات الديسك.
     لا يتم تخزين أي بيانات في قاعدة البيانات.
+    max_rows: حد أقصى لعدد الصفوف (None = الكل، أو استخدم settings.EXCEL_LOAD_MAX_ROWS لتسريع التحميل).
     """
     if not excel_path or not os.path.exists(excel_path):
         return None
+    if max_rows is None:
+        max_rows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
     try:
         if use_cache:
             try:
-                # ✅ كاش في الذاكرة: يعتمد على مسار الملف + اسم الشيت
+                # ✅ كاش في الذاكرة: يعتمد على مسار الملف + اسم الشيت + max_rows
                 from django.core.cache import cache
                 import hashlib
 
                 _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
-                cache_key = f"excel_df::{_path_hash}::{sheet_name}"
+                cache_key = f"excel_df::{_path_hash}::{sheet_name}::n{max_rows}"
                 cached_df = cache.get(cache_key)
                 if cached_df is not None:
                     return cached_df.copy()
             except Exception as e:
                 print(f"⚠️ [Cache-MEM] قراءة الشيت من الكاش فشلت '{sheet_name}': {e}")
 
-        df = pd.read_excel(
-            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0
-        )
+        read_kw = {"engine": "openpyxl", "header": 0}
+        if max_rows:
+            read_kw["nrows"] = max_rows
+        df = pd.read_excel(excel_path, sheet_name=sheet_name, **read_kw)
         df.columns = [str(c).strip() for c in df.columns]
 
         if use_cache:
@@ -252,7 +256,10 @@ def _read_dashboard_charts_from_excel(excel_path):
         if not sheet_name:
             continue
         try:
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+            )
             if df.empty or len(df) < 2:
                 break
             df.columns = [str(c).strip() for c in df.columns]
@@ -282,7 +289,10 @@ def _read_dashboard_charts_from_excel(excel_path):
         if not sheet_name:
             continue
         try:
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+            )
             if df.empty or len(df) < 2:
                 break
             df.columns = [str(c).strip() for c in df.columns]
@@ -313,7 +323,10 @@ def _read_dashboard_charts_from_excel(excel_path):
         if not sheet_name:
             continue
         try:
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+            )
             if df.empty:
                 break
             df.columns = [str(c).strip() for c in df.columns]
@@ -387,7 +400,10 @@ def _read_inbound_data_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -2053,32 +2069,39 @@ class UploadExcelViewRoche(View):
             excel_tabs = []
 
         # ======================================================
-        # 🗓️ استخراج كل الشهور من جميع الشيتات الممكنة
+        # 🗓️ استخراج الشهور من شيت واحد أو اثنين فقط (لتسريع فتح الصفحة — بدل قراءة كل الشيتات)
         # ======================================================
-        all_months = set()
+        all_months = []
+        _max_rows = min(300, getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500))
+        _max_sheets_for_months = 2
+        _sheets_read = 0
         try:
+            _month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             for sheet in xls.sheet_names:
+                if _sheets_read >= _max_sheets_for_months:
+                    break
                 try:
-                    df = pd.read_excel(excel_path, sheet_name=sheet, engine="openpyxl")
+                    df = pd.read_excel(
+                        excel_path, sheet_name=sheet, engine="openpyxl", nrows=_max_rows
+                    )
                     df.columns = df.columns.str.strip().str.title()
                     possible_date_cols = [
-                        c
-                        for c in df.columns
+                        c for c in df.columns
                         if "date" in c.lower() or "month" in c.lower()
                     ]
                     if not possible_date_cols:
                         continue
+                    _sheets_read += 1
                     col = possible_date_cols[0]
                     df[col] = pd.to_datetime(df[col], errors="coerce")
                     df["MonthName"] = df[col].dt.strftime("%b")
-                    all_months.update(df["MonthName"].dropna().unique().tolist())
-                except Exception as inner_e:
+                    seen = set(df["MonthName"].dropna().unique().tolist())
+                    all_months = [m for m in _month_order if m in seen]
+                    if all_months:
+                        break
+                except Exception:
                     continue
-
-            all_months = sorted(
-                all_months, key=lambda m: pd.to_datetime(m, format="%b")
-            )
-            print("📅 [INFO] الشهور المستخرجة من كل الشيتات:", all_months)
+            print("📅 [INFO] الشهور (من شيت واحد أو اثنين):", all_months[:12] if len(all_months) > 12 else all_months)
         except Exception as e:
             print("⚠️ [ERROR] أثناء استخراج الشهور:", e)
             all_months = []
@@ -2111,16 +2134,22 @@ class UploadExcelViewRoche(View):
             "all_tab_data": all_tab_data,
             "raw_tab_data": None,
         }
-        try:
-            dashboard_ctx = self._get_dashboard_include_context(request)
-            render_context["dashboard_missing_data"] = dashboard_ctx.get("dashboard_missing_data", [])
-            if (selected_tab or "").lower() == "dashboard":
+        # تحميل سريع: لا نحمّل بيانات الداشبورد على أول طلب GET (تُحمّل لاحقاً عبر AJAX عند فتح تاب Dashboard)
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        if is_ajax and (selected_tab or "").lower() == "dashboard":
+            try:
+                dashboard_ctx = self._get_dashboard_include_context(request)
+                render_context["dashboard_missing_data"] = dashboard_ctx.get("dashboard_missing_data", [])
                 render_context.update(dashboard_ctx)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"⚠️ [Dashboard include context] {e}")
-            render_context.setdefault("dashboard_missing_data", [])
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"⚠️ [Dashboard include context] {e}")
+                render_context.setdefault("dashboard_missing_data", [])
+        else:
+            render_context["dashboard_missing_data"] = []
+            if (selected_tab or "").lower() == "dashboard":
+                render_context["load_dashboard_placeholder"] = True
 
         return render(request, self.template_name, render_context)
 
@@ -2348,9 +2377,13 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
-            # 🧾 قراءة الشيت المطابق
+            # 🧾 قراءة الشيت المطابق (حد 500 صف لتسريع التحميل)
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
             df = pd.read_excel(
-                excel_file_path, sheet_name=matching_sheet, engine="openpyxl"
+                excel_file_path,
+                sheet_name=matching_sheet,
+                engine="openpyxl",
+                nrows=_nrows,
             )
 
             # 🧹 تنظيف الأعمدة
@@ -2431,9 +2464,12 @@ class UploadExcelViewRoche(View):
 
             sheet_name = possible_sheets[0]  # ناخد أول واحد مطابق
             print(f"📄 قراءة الشيت: {sheet_name}")
-
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
             df = pd.read_excel(
-                excel_file_path, sheet_name=sheet_name, engine="openpyxl"
+                excel_file_path,
+                sheet_name=sheet_name,
+                engine="openpyxl",
+                nrows=_nrows,
             )
         except Exception as e:
             return {"error": f"⚠️ Unable to read the tab: {e}"}
@@ -2767,7 +2803,7 @@ class UploadExcelViewRoche(View):
                 )
                 return {"detail_html": html}
 
-            # ✅ تخزين مؤقت لنتيجة الـ overview لتسريع التحميل (90 ثانية)
+            # ✅ تخزين مؤقت لنتيجة الـ overview (10 دقائق) — أول فتح لتاب All-in-One بيكون أثقل، الباقي من الكاش
             import hashlib
             _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
             _month = (selected_month or "") + "_" + (str(selected_months) if selected_months else "")
@@ -2780,7 +2816,7 @@ class UploadExcelViewRoche(View):
                     selected_months=selected_months,
                     from_all_in_one=True,
                 )
-                cache.set(_cache_key, overview_data, 300)
+                cache.set(_cache_key, overview_data, 600)
 
             if not overview_data or "tab_cards" not in overview_data:
                 html = render_to_string(
@@ -3173,7 +3209,10 @@ class UploadExcelViewRoche(View):
             from django.template.loader import render_to_string
 
             sheet_name = "Dock to stock - Roche"
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             df.columns = df.columns.astype(str).str.strip()
 
             if df.empty:
@@ -3419,7 +3458,10 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             df.columns = df.columns.str.strip().str.lower()
 
             # التحقق من الأعمدة المطلوبة
@@ -3580,8 +3622,11 @@ class UploadExcelViewRoche(View):
                     "error": "⚠️ No sheet containing 'Total lead time preformance -R' was found."
                 }
 
-            # قراءة الشيت
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            # قراءة الشيت (حد صفوف لتسريع التحميل)
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             df.columns = df.columns.str.strip()
 
             # التحقق من وجود الأعمدة المطلوبة
@@ -3788,7 +3833,10 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             df.columns = df.columns.astype(str).str.strip()
 
             def find_col(d, candidates):
@@ -4103,7 +4151,10 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             df.columns = df.columns.astype(str).str.strip()
             df_full = df.copy()
 
@@ -5185,7 +5236,10 @@ class UploadExcelViewRoche(View):
                     "chart_data": [],
                 }
 
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             if df.empty:
                 return {
                     "detail_html": "<p class='text-warning'>⚠️ Inbound sheet is empty.</p>",
@@ -5381,7 +5435,12 @@ class UploadExcelViewRoche(View):
             misses = 0
             rows = []
             ship_month_hit = []
-            for ship_id in df["Shipment_nbr"].unique():
+            # ⚠️ لتقليل الحمل على السيرفر، نقيّد عدد الشحنات المفصّلة (مثلاً أول 500 شحنة فقط)
+            max_shipments_for_detail = 500
+            unique_shipments = list(df["Shipment_nbr"].unique())
+            limited_shipments = unique_shipments[:max_shipments_for_detail]
+
+            for ship_id in limited_shipments:
                 if not ship_id:
                     continue
                 create_ts = create_min.get(ship_id)
@@ -5738,16 +5797,34 @@ class UploadExcelViewRoche(View):
                 sub_tables.append(second_kpi_table)
             sub_tables.append(detail_table)
 
-            return {
-                "detail_html": "",
-                "sub_tables": sub_tables,
-                "chart_data": chart_data,
+            # بناء هيكل التاب لاستخدامه مع تمبلت excel-sheet-table
+            inbound_tab = {
+                "name": "Inbound",
                 "stats": {
                     "total": overall_total,
                     "hit": overall_hits,
                     "miss": overall_miss,
                     "hit_pct": overall_hit_pct,
                 },
+                "sub_tables": sub_tables,
+            }
+
+            from django.template.loader import render_to_string
+
+            html = render_to_string(
+                "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
+                {
+                    "tab": inbound_tab,
+                    "selected_month": selected_month,
+                    "selected_months": selected_months,
+                },
+            )
+
+            return {
+                "detail_html": html,
+                "sub_tables": sub_tables,
+                "chart_data": chart_data,
+                "stats": inbound_tab["stats"],
                 "regions_by_month": regions_by_month,
             }
 
@@ -5820,7 +5897,10 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
-            df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            df = pd.read_excel(
+                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+            )
             if df.empty:
                 return {
                     "detail_html": "<p class='text-warning'>⚠️ الشيت فاضي.</p>",
@@ -7816,540 +7896,92 @@ class UploadExcelViewRoche(View):
             }
 
     def filter_dock_to_stock_combined(
-        self, request, selected_month=None, selected_months=None
+        self, request, selected_month=None, selected_months=None, from_all_in_one=False
     ):
         """
         🔹 يعرض تاب Dock to stock بالاعتماد على تحليل Inbound (KPI ≤24h).
+        ⚡️ سرعة تحميل عالية للتاب.
         """
-        print("🚀 معالجة Dock to stock — Inbound KPI")
+        import hashlib
+        from django.template.loader import render_to_string
 
-        try:
-            from django.template.loader import render_to_string
-            import hashlib
+        # --- Improvement: Faster cache, less code, non-blocking data retrieval ---
 
-            # ✅ كاش مخصص لـ Dock to stock يعتمد على مسار ملف الإكسل + الفلاتر
-            excel_path = _get_excel_path_for_request(request)
-            _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
-            _month_part = (
-                str(selected_month).strip() if selected_month is not None else ""
-            )
-            _months_list = (
-                ",".join(map(str, selected_months))
-                if selected_months is not None
-                else ""
-            )
-            _cache_key = f"tlp_dock_to_stock_{_path_hash}_{_month_part}_{_months_list}"
-            cached = cache.get(_cache_key)
-            if cached is not None:
-                return cached
+        # Key for caching based on source file and filters
+        excel_path = _get_excel_path_for_request(request)
+        _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+        _month_part = str(selected_month).strip() if selected_month is not None else ""
+        _months_list = (
+            ",".join(map(str, selected_months)) if selected_months is not None else ""
+        )
+        _cache_key = f"tlp_dock_to_stock_fast_{_path_hash}_{_month_part}_{_months_list}"
 
-            inbound_result = self.filter_inbound(
-                request, selected_month, selected_months
-            )
-            sub_tables = inbound_result.get("sub_tables", [])
-            chart_data = inbound_result.get("chart_data", [])
+        # Try cache very first (fast/minimal or full depending on mode)
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        requested_tab = (request.GET.get("tab") or "").strip().lower()
+        wants_full = is_ajax and ("inbound" in requested_tab) and (not from_all_in_one)
 
-            if not sub_tables:
-                fallback_html = inbound_result.get("detail_html") or (
-                    "<p class='text-warning'>⚠️ No inbound data available.</p>"
+        cache_key = _cache_key + ("::full" if wants_full else "::mini")
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # --- Full mode: when user opens Inbound tab (AJAX), return full details ---
+        if wants_full:
+            try:
+                full_res = self.filter_inbound(
+                    request, selected_month=selected_month, selected_months=selected_months
                 )
-                return {
-                    "chart_data": chart_data,
-                    "detail_html": fallback_html,
-                    "count": 0,
-                }
+                # Cache full payload longer (details are heavier)
+                cache.set(cache_key, _sanitize_for_json(full_res), 300)
+                return full_res
+            except Exception as e:
+                import traceback
 
-            tab_data = {
-                "name": "Inbound",
-                "sub_tables": sub_tables,
-                "chart_data": chart_data,
-                "canvas_id": "chart-inbound-kpi",
-                "stats": inbound_result.get("stats", {}),
-                "regions_by_month": inbound_result.get("regions_by_month", []),
-            }
-
-            selected_months_norm = []
-            if selected_months:
-                if isinstance(selected_months, str):
-                    selected_months = [selected_months]
-                seen = set()
-                for m in selected_months:
-                    norm = self.normalize_month_label(m)
-                    if norm and norm not in seen:
-                        seen.add(norm)
-                        selected_months_norm.append(norm)
-
-            month_norm_tab = self.apply_month_filter_to_tab(
-                tab_data,
-                None if selected_months_norm else selected_month,
-                selected_months_norm or None,
-            )
-
-            html = render_to_string(
-                "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
-                {"tab": tab_data, "selected_month": month_norm_tab},
-            )
-
-            stats = inbound_result.get("stats", {})
-            total_count = stats.get(
-                "total", sum(len(st.get("data", [])) for st in sub_tables)
-            )
-            hit_pct = stats.get("hit_pct", 0)
-
-            result = {
-                "chart_data": chart_data,
-                "detail_html": html,
-                "count": total_count,
-                "canvas_id": tab_data["canvas_id"],
-                "hit_pct": hit_pct,
-                "target_pct": 100,
-                "tab_data": tab_data,
-            }
-            # نخزّن النتيجة في الكاش لمدة 5 دقائق
-            result_sanitized = _sanitize_for_json(result)
-            cache.set(_cache_key, result_sanitized, 300)
-            return result_sanitized
-        except Exception as e:
-            import traceback
-
-            print(traceback.format_exc())
-            return {
-                "chart_data": [],
-                "detail_html": f"<p class='text-danger'>⚠️ Error: {e}</p>",
-                "count": 0,
-            }
-
-        """
-        ✅ فصل Dock to stock إلى جدولين (3PL + Roche)
-        ✅ ترتيب الشهور Jan → Dec
-        ✅ حساب التارجت الصحيح (on time / total * 100)
-        ✅ الشارت موحد (On Time % + Target)
-        ✅ عرض الجداول منفصلة
-        """
-        try:
-            import pandas as pd
-            import numpy as np
-            import os
-            from django.template.loader import render_to_string
-            from django.utils.text import slugify
-
-            if request and hasattr(request, "session"):
-                excel_path = (
-                    request.session.get("uploaded_excel_path") or self.get_excel_path()
-                )
-            else:
-                excel_path = self.get_excel_path()
-
-            if not excel_path or not os.path.exists(excel_path):
+                print(traceback.format_exc())
                 return {
                     "chart_data": [],
-                    "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
+                    "detail_html": f"<p class='text-danger'>⚠️ Error: {e}</p>",
                     "count": 0,
                 }
 
-            # ترتيب الشهور
-            def order_months(months):
-                month_map = {
-                    "jan": 1,
-                    "feb": 2,
-                    "mar": 3,
-                    "apr": 4,
-                    "may": 5,
-                    "jun": 6,
-                    "jul": 7,
-                    "aug": 8,
-                    "sep": 9,
-                    "oct": 10,
-                    "nov": 11,
-                    "dec": 12,
-                }
-                months_unique = list(dict.fromkeys(months))
+        # --- Minimal mode: used داخل All-in-One/Overview لتسريع التحميل ---
+        try:
+            # Fetch only the KPI summary from inbound
+            inbound_result = self.filter_inbound(request, selected_month, selected_months)
+            # sub_tables could be heavy, chart_data/statistics are small
+            stats = inbound_result.get("stats", {})
+            chart_data = inbound_result.get("chart_data", [])
+            hit_pct = stats.get("hit_pct", 0)
+            total_count = stats.get("total", 0)
 
-                def month_key(m):
-                    if m is None:
-                        return 999
-                    m_str = str(m).strip()
-                    m_lower = m_str.lower()[:3]
-                    if m_lower in month_map:
-                        return month_map[m_lower]
-                    if m_str.isdigit():
-                        return 1000 + int(m_str)
-                    return 2000 + months_unique.index(m)
-
-                return sorted(months_unique, key=month_key)
-
-            # =======================================
-            # 🟢 معالجة Dock to Stock (3PL)
-            # =======================================
-            selected_months_norm = []
-            if selected_months:
-                if isinstance(selected_months, str):
-                    selected_months = [selected_months]
-                seen = set()
-                for m in selected_months:
-                    norm = self.normalize_month_label(m)
-                    if norm and norm not in seen:
-                        seen.add(norm)
-                        selected_months_norm.append(norm)
-
-            result_3pl = self.filter_dock_to_stock_3pl(
-                request, selected_month, selected_months
-            )
-            df_3pl_table = pd.DataFrame()
-            df_chart_combined = {}
-            selected_month_norm = None
-            if selected_month and not selected_months_norm:
-                raw_month = str(selected_month).strip()
-                parsed = pd.to_datetime(raw_month, errors="coerce")
-                if pd.isna(parsed):
-                    selected_month_norm = raw_month[:3].capitalize()
-                else:
-                    selected_month_norm = parsed.strftime("%b")
-
-            if "chart_data" in result_3pl and result_3pl["chart_data"]:
-                df_kpi_full = pd.DataFrame(result_3pl["chart_data"])
-
-                # تحويل الأرقام إلى int
-                for col in df_kpi_full.columns:
-                    if col != "KPI":
-                        df_kpi_full[col] = df_kpi_full[col].apply(
-                            lambda x: int(round(float(x))) if pd.notna(x) else 0
-                        )
-
-                # حساب النسب الشهرية
-                on_time_rows = df_kpi_full[
-                    df_kpi_full["KPI"].str.lower().str.contains("on time", na=False)
-                ]
-                total_rows = df_kpi_full[
-                    df_kpi_full["KPI"].str.lower().str.contains("total", na=False)
-                ]
-
-                target_correct, on_time_percentage = {}, {}
-                month_cols = [
-                    c
-                    for c in df_kpi_full.columns
-                    if c not in ["KPI", "2025", "Total", "TOTAL"]
-                ]
-
-                for col in month_cols:
-                    try:
-                        on_time_val = float(on_time_rows[col].sum())
-                        total_val = float(total_rows[col].sum())
-                        percentage = (
-                            int(round((on_time_val / total_val) * 100))
-                            if total_val
-                            else 0
-                        )
-                        target_correct[col] = percentage
-                        on_time_percentage[col] = percentage
-                    except Exception as e:
-                        print(f"⚠️ Error in {col}: {e}")
-                        target_correct[col] = on_time_percentage[col] = 0
-
-                df_chart_combined["3PL On Time %"] = on_time_percentage
-                df_chart_combined["Target"] = target_correct
-
-                # تجهيز الجدول النهائي
-                df_kpi = df_kpi_full[
-                    ~df_kpi_full["KPI"].str.lower().str.contains("target", na=False)
-                ].copy()
-                ordered_cols = ["KPI"] + [
-                    c for c in order_months(df_kpi.columns.tolist()) if c != "KPI"
-                ]
-                df_3pl_table = df_kpi[ordered_cols]
-                if selected_months_norm:
-                    keep_cols = ["KPI"] + [
-                        m for m in selected_months_norm if m in df_3pl_table.columns
-                    ]
-                    if "2025" in df_3pl_table.columns:
-                        keep_cols.append("2025")
-                    df_3pl_table = df_3pl_table[
-                        [col for col in keep_cols if col in df_3pl_table.columns]
-                    ]
-                elif selected_month_norm:
-                    keep_cols = ["KPI", selected_month_norm]
-                    if "2025" in df_3pl_table.columns:
-                        keep_cols.append("2025")
-                    df_3pl_table = df_3pl_table[
-                        [col for col in keep_cols if col in df_3pl_table.columns]
-                    ]
-
-                # ✅ إضافة صف "3PL Delay" بعد "On Time Receiving"
-                on_time_receiving_idx = None
-                for idx in df_3pl_table.index:
-                    kpi_value = str(df_3pl_table.loc[idx, "KPI"]).strip()
-                    if "on time receiving" in kpi_value.lower():
-                        on_time_receiving_idx = idx
-                        break
-
-                if on_time_receiving_idx is not None:
-                    # إنشاء صف جديد بقيم صفرية
-                    delay_row = {"KPI": "3PL Delay"}
-                    for col in df_3pl_table.columns:
-                        if col != "KPI":
-                            delay_row[col] = 0
-
-                    # تحويل DataFrame إلى قائمة من القواميس
-                    rows_list = df_3pl_table.to_dict(orient="records")
-
-                    # العثور على موضع الصف في القائمة
-                    insert_position = None
-                    for i, row_dict in enumerate(rows_list):
-                        kpi_value = str(row_dict.get("KPI", "")).strip()
-                        if "on time receiving" in kpi_value.lower():
-                            insert_position = i + 1
-                            break
-
-                    # إدراج الصف الجديد
-                    if insert_position is not None:
-                        rows_list.insert(insert_position, delay_row)
-                        df_3pl_table = pd.DataFrame(rows_list)
-
-            reasons_3pl = result_3pl.get("reason", [])
-
-            # =======================================
-            # 🔵 معالجة Dock to Stock (Roche)
-            # =======================================
-            reasons_roche = []
-            try:
-
-                # df_roche = pd.read_excel(excel_path, sheet_name="Dock to stock - Roche", engine="openpyxl")
-                # قراءة كل الشيتات أولاً
-                xls = pd.ExcelFile(excel_path, engine="openpyxl")
-
-                # محاولة إيجاد الشيت الصحيح تلقائيًا (حتى لو الاسم فيه مسافات أو اختلاف حروف)
-                sheet_name = None
-                for name in xls.sheet_names:
-                    if (
-                        "dock" in name.lower()
-                        and "stock" in name.lower()
-                        and "roche" in name.lower()
-                    ):
-                        sheet_name = name
-                        break
-
-                if not sheet_name:
-                    raise ValueError(
-                        f"❌ لم يتم العثور على شيت Roche في الملف. الشيتات المتاحة: {xls.sheet_names}"
-                    )
-
-                print(f"✅ تم استخدام الشيت: {sheet_name}")
-
-                # قراءة الشيت الصحيح
-                df_roche = pd.read_excel(xls, sheet_name=sheet_name)
-                df_roche.columns = df_roche.columns.astype(str).str.strip()
-
-                print("🔍 Roche columns:", df_roche.columns.tolist())
-
-                month_col = df_roche.columns[0]
-
-                melted_df = df_roche.melt(
-                    id_vars=[month_col], var_name="KPI", value_name="Value"
-                )
-                pivot_df = (
-                    melted_df.pivot_table(
-                        index="KPI", columns=month_col, values="Value", aggfunc="sum"
-                    )
-                    .reset_index()
-                    .rename_axis(None, axis=1)
-                )
-
-                # تحويل القيم إلى int
-                for col in pivot_df.columns:
-                    if col != "KPI":
-                        pivot_df[col] = pivot_df[col].apply(
-                            lambda x: int(round(float(x))) if pd.notna(x) else 0
-                        )
-
-                ordered_cols = ["KPI"] + [
-                    c for c in order_months(pivot_df.columns.tolist()) if c != "KPI"
-                ]
-                pivot_df = pivot_df[ordered_cols]
-
-                # حذف الأعمدة "Total" بعد الشهور
-                pivot_df = pivot_df.loc[
-                    :, ~pivot_df.columns.str.lower().str.contains("total")
-                ]
-
-                # حساب عمود 2025 (إجمالي كل الشهور)
-                # حساب عمود 2025 (إجمالي كل الشهور)
-                month_cols = [
-                    c
-                    for c in pivot_df.columns
-                    if c not in ["KPI", "Reason Group", "2025"]
-                ]
-                pivot_df["2025"] = pivot_df[month_cols].sum(axis=1).astype(int)
-
-                # إضافة صف Total في نهاية الجدول
-                total_row = {"KPI": "Total (Roche)"}
-                for col in pivot_df.columns:
-                    if col != "KPI":
-                        total_row[col] = int(pivot_df[col].sum())
-                pivot_df = pd.concat(
-                    [pivot_df, pd.DataFrame([total_row])], ignore_index=True
-                )
-
-                # حذف عمود Reason Group نهائيًا قبل الإرجاع
-                if "Reason Group" in pivot_df.columns:
-                    pivot_df = pivot_df.drop(columns=["Reason Group"])
-
-                df_roche_table = pivot_df
-                if selected_months_norm:
-                    roche_cols = ["KPI"] + [
-                        m for m in selected_months_norm if m in df_roche_table.columns
-                    ]
-                    if "2025" in df_roche_table.columns:
-                        roche_cols.append("2025")
-                    df_roche_table = df_roche_table[
-                        [col for col in roche_cols if col in df_roche_table.columns]
-                    ]
-                elif selected_month_norm:
-                    roche_cols = ["KPI", selected_month_norm]
-                    if "2025" in df_roche_table.columns:
-                        roche_cols.append("2025")
-                    df_roche_table = df_roche_table[
-                        [col for col in roche_cols if col in df_roche_table.columns]
-                    ]
-                # reasons_roche = self.filter_dock_to_stock_roche_reasons(request)
-                reasons_roche = []
-
-            except Exception as e:
-                print(f"⚠️ Roche read error: {e}")
-                df_roche_table = pd.DataFrame()
-
-            # =======================================
-            # 🟣 تجهيز الشارت
-            # =======================================
-            all_months = order_months(
-                sorted(
-                    set().union(*[list(v.keys()) for v in df_chart_combined.values()])
-                )
-            )
-            if selected_months_norm:
-                all_months = [m for m in selected_months_norm if m in all_months]
-            on_time_values = df_chart_combined.get("3PL On Time %", {})
-            target_values = df_chart_combined.get("Target", {})
-
-            hit_pct = (
-                min(round(float(np.mean(list(on_time_values.values()))), 2), 100)
-                if on_time_values
-                else 0
-            )
-            target_pct = (
-                min(round(float(np.mean(list(target_values.values()))), 2), 100)
-                if target_values
-                else 100
-            )
-
-            chart_data = []
-            if selected_month_norm or any(v != 0 for v in on_time_values.values()):
-                chart_data.append(
-                    {
-                        "type": "column",
-                        "name": "On time receiving (%)",
-                        "color": "#d0e7ff",
-                        "showInLegend": False,  # ✅ إخفاء الـ legend لتجنب التكرار
-                        "dataPoints": [
-                            {"label": m, "y": min(float(on_time_values.get(m, 0)), 100)}
-                            for m in all_months
-                        ],
-                    }
-                )
-
-            # ✅ إزالة dataset الـ target لأننا نستخدم خط مخصص فقط
-            # if selected_month_norm or any(v != 0 for v in target_values.values()):
-            #     chart_data.append(...)
-
-            inbound_result = self.filter_inbound(
-                request, selected_month, selected_months
-            )
-            inbound_html = inbound_result.get("detail_html", "")
-            inbound_sub_table = inbound_result.get("sub_table")
-            combined_reasons = list(reasons_3pl) + list(reasons_roche)
-
-            # =======================================
-            # 🧱 بناء العرض النهائي
-            # =======================================
-            if chart_data:
-                for dataset in chart_data:
-                    dataset.setdefault("related_table", "Inbound")
-
-            # ✅ إضافة chart_data لكل sub_table بشكل منفصل
-            chart_data_3pl = []
-            chart_data_roche = []
-            if chart_data:
-                for dataset in chart_data:
-                    dataset_3pl = dataset.copy()
-                    dataset_3pl["related_table"] = "Inbound — 3PL"
-                    chart_data_3pl.append(dataset_3pl)
-
-                    dataset_roche = dataset.copy()
-                    dataset_roche["related_table"] = "Inbound — Roche"
-                    chart_data_roche.append(dataset_roche)
-
-            tab_data = {
-                "name": "Inbound",
-                "sub_tables": [
-                    {
-                        "id": "sub-table-inbound-3pl",
-                        "title": "Inbound — 3PL",
-                        "columns": df_3pl_table.columns.tolist(),
-                        "data": df_3pl_table.to_dict(orient="records"),
-                        "chart_data": chart_data_3pl,
-                    },
-                    {
-                        "id": "sub-table-inbound-roche",
-                        "title": "Inbound — Roche",
-                        "columns": df_roche_table.columns.tolist(),
-                        "data": df_roche_table.to_dict(orient="records"),
-                        "chart_data": chart_data_roche,
-                    },
-                ],
-                "combined_reasons": combined_reasons,
-                "canvas_id": f"chart-{slugify('inbound')}",
-                "inbound_html": inbound_html,
-                "chart_data": chart_data,  # ✅ الاحتفاظ بـ chart_data العام أيضاً
-            }
-            if inbound_sub_table:
-                tab_data["sub_tables"].append(inbound_sub_table)
-            month_norm_tab = self.apply_month_filter_to_tab(
-                tab_data,
-                (
-                    (selected_month_norm or selected_month)
-                    if not selected_months_norm
-                    else None
-                ),
-                selected_months_norm or None,
-            )
-
-            html = render_to_string(
-                "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
-                {"tab": tab_data, "selected_month": month_norm_tab},
-            )
-
-            total_count = len(df_3pl_table) + len(df_roche_table)
-
-            print(f"📊 [RESULT] Inbound — Hit={hit_pct}%, Target={target_pct}")
-
-            return {
+            # Prepare minimal result
+            result = {
                 "chart_data": chart_data,
-                "detail_html": html,
+                # في وضع All-in-One لا نعرض تفاصيل التاب هنا (الـ overview بيعرض progress فقط)
+                "detail_html": "",
                 "count": total_count,
-                "canvas_id": tab_data["canvas_id"],
+                "canvas_id": "chart-inbound-kpi",
                 "hit_pct": hit_pct,
-                "target_pct": target_pct,
-                "tab_data": tab_data,
+                "target_pct": 100,
+                "tab_data": {
+                    "name": "Inbound",
+                    "stats": stats,
+                    "canvas_id": "chart-inbound-kpi",
+                },
             }
-
+            # Put the fast minimal response in cache (short)
+            cache.set(cache_key, _sanitize_for_json(result), 60)
         except Exception as e:
             import traceback
-
             print(traceback.format_exc())
             return {
                 "chart_data": [],
                 "detail_html": f"<p class='text-danger'>⚠️ Error: {e}</p>",
                 "count": 0,
             }
+
+        return result
 
     def overview_tab(
         self,
@@ -8391,6 +8023,7 @@ class UploadExcelViewRoche(View):
                         request,
                         month_for_filters,
                         selected_months=selected_months,
+                        from_all_in_one=from_all_in_one,
                     )
                 elif tab_lower == "capacity + expiry":
                     res = self.filter_capacity_expiry(
@@ -8466,7 +8099,8 @@ class UploadExcelViewRoche(View):
                 "name": tab_name,
                 "hit_pct": hit_pct_val,
                 "target_pct": target_pct,
-                "detail_html": detail_html,
+                # في All-in-One نكتفي بعرض كروت الـ KPI بدون تفاصيل ثقيلة
+                "detail_html": progress_html if from_all_in_one else detail_html,
                 "count": count,
                 "chart_data": chart_data,
                 "chart_type": chart_type,

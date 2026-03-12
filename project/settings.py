@@ -26,7 +26,11 @@ SECRET_KEY = "django-insecure-7)5so7+#iijuv!u6%#dejnnzlznlf+a+27)2dji%b$m8*z0%=6
 DEBUG = True
 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "nespresso-aaljohani.pythonanywhere.com",
+]
 
 
 # Application definition
@@ -149,6 +153,9 @@ CACHES = {
         "LOCATION": "/tmp/django_cache",
     }
 }
+
+# حد أقصى لعدد صفوف الإكسل المُحمّلة للعرض (لتسريع فتح الموقع)
+EXCEL_LOAD_MAX_ROWS = 500
 
 # CACHES = {
 #     'default': {

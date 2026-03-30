@@ -4,6 +4,7 @@ import hashlib
 import shutil
 import os
 import re
+import unicodedata
 from io import BytesIO
 from collections import OrderedDict
 
@@ -132,41 +133,84 @@ def _normalize_upload_to_latest_xlsx_and_update_cache(file_path, folder_path):
         return file_path
 
 
-def _get_sheet_dataframe(excel_path, sheet_name, use_cache=True, max_rows=None):
+def _excel_full_data_requested(request):
+    """الوضع الكامل: GET/POST full_data=1 أو true أو all."""
+    if not request:
+        return False
+    v = (request.GET.get("full_data") or request.POST.get("full_data") or "").strip().lower()
+    return v in ("1", "true", "yes", "all", "full")
+
+
+def _excel_max_rows_for_request(request, *, force_full=False):
     """
-    يرجع DataFrame للشيت مع كاش في الذاكرة (Django cache) لتقليل قراءات الديسك.
-    لا يتم تخزين أي بيانات في قاعدة البيانات.
-    max_rows: حد أقصى لعدد الصفوف (None = الكل، أو استخدم settings.EXCEL_LOAD_MAX_ROWS لتسريع التحميل).
+    معاينة سريعة (EXCEL_PREVIEW_MAX_ROWS) إلا إذا طُلب full_data أو force_full (مثلاً Traceability).
+    EXCEL_FULL_MAX_ROWS = None يعني بدون حد (كل الشيت).
+    """
+    if force_full:
+        cap = getattr(settings, "EXCEL_FULL_MAX_ROWS", None)
+        return cap
+    if request is not None and _excel_full_data_requested(request):
+        cap = getattr(settings, "EXCEL_FULL_MAX_ROWS", None)
+        return cap
+    try:
+        return int(getattr(settings, "EXCEL_PREVIEW_MAX_ROWS", 200))
+    except (TypeError, ValueError):
+        return 200
+
+
+def _read_excel_nrows_kw(max_rows):
+    """وسيط لـ pandas.read_excel: لا تمرّر nrows إن كان الحد = None (كل الصفوف)."""
+    if max_rows is None:
+        return {}
+    try:
+        n = int(max_rows)
+        if n <= 0:
+            return {}
+        return {"nrows": n}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _get_sheet_dataframe(
+    excel_path, sheet_name, use_cache=True, max_rows=None, request=None, force_full=False
+):
+    """
+    يرجع DataFrame للشيت مع كاش Django لتقليل قراءات الديسك.
+    max_rows صريح يتجاوز الطلب؛ وإلا يُستخدم full_data / معاينة من request.
     """
     if not excel_path or not os.path.exists(excel_path):
         return None
     if max_rows is None:
-        max_rows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+        if request is not None:
+            max_rows = _excel_max_rows_for_request(request, force_full=force_full)
+        else:
+            try:
+                max_rows = int(getattr(settings, "EXCEL_PREVIEW_MAX_ROWS", 200))
+            except (TypeError, ValueError):
+                max_rows = 200
     try:
+        from django.core.cache import cache as _dj_cache
+        import hashlib as _hashlib
+
+        _path_hash = _hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+        _nkey = "all" if max_rows is None else int(max_rows)
+        cache_key = f"excel_df::{_path_hash}::{sheet_name}::n{_nkey}"
         if use_cache:
             try:
-                # ✅ كاش في الذاكرة: يعتمد على مسار الملف + اسم الشيت + max_rows
-                from django.core.cache import cache
-                import hashlib
-
-                _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
-                cache_key = f"excel_df::{_path_hash}::{sheet_name}::n{max_rows}"
-                cached_df = cache.get(cache_key)
+                cached_df = _dj_cache.get(cache_key)
                 if cached_df is not None:
                     return cached_df.copy()
             except Exception as e:
                 print(f"⚠️ [Cache-MEM] قراءة الشيت من الكاش فشلت '{sheet_name}': {e}")
 
         read_kw = {"engine": "openpyxl", "header": 0}
-        if max_rows:
-            read_kw["nrows"] = max_rows
+        read_kw.update(_read_excel_nrows_kw(max_rows))
         df = pd.read_excel(excel_path, sheet_name=sheet_name, **read_kw)
         df.columns = [str(c).strip() for c in df.columns]
 
         if use_cache:
             try:
-                # نخزّن نسخة في الكاش لمدة 5 دقائق
-                cache.set(cache_key, df, 300)
+                _dj_cache.set(cache_key, df, 3600)
             except Exception as e:
                 print(f"⚠️ [Cache-MEM] حفظ الشيت في الكاش فشل '{sheet_name}': {e}")
 
@@ -204,6 +248,112 @@ def _get_excel_path_for_request(request):
     return None
 
 
+def _excel_file_signature(excel_path):
+    """mtime + حجم الملف — يتغيّر عند استبدال الملف فيُبطَل الكاش."""
+    try:
+        st = os.stat(excel_path)
+        return f"{int(st.st_mtime)}_{st.st_size}"
+    except OSError:
+        return "0_0"
+
+
+def _list_excel_sheet_names_openpyxl(excel_path):
+    """أسماء الشيتات فقط: read_only يقرأ بنية الملف بسرعة دون تحميل كل الخلايا."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(excel_path, read_only=True, data_only=True)
+    try:
+        return [str(s).strip() for s in wb.sheetnames]
+    finally:
+        wb.close()
+
+
+def _get_excel_sheet_names_cached(excel_path):
+    """قائمة أسماء الشيتات مع كاش Django (تفادي تكرار فتح الملف على كل GET)."""
+    if not excel_path or not os.path.isfile(excel_path):
+        return []
+    sig = _excel_file_signature(excel_path)
+    path_key = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
+    cache_key = f"excel_sheet_names::{path_key}::{sig}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return list(cached)
+    try:
+        names = _list_excel_sheet_names_openpyxl(excel_path)
+    except Exception:
+        try:
+            xls = pd.ExcelFile(excel_path, engine="openpyxl")
+            names = [str(s).strip() for s in xls.sheet_names]
+        except Exception:
+            names = []
+    try:
+        cache.set(cache_key, names, 86400)
+    except Exception:
+        pass
+    return names
+
+
+def _extract_months_from_excel_cached(excel_path, sheet_names):
+    """استخراج الشهور من أو أول شيتين فيهما أعمدة تاريخ/شهر — مع كاش."""
+    if not excel_path or not sheet_names:
+        return []
+    sig = _excel_file_signature(excel_path)
+    path_key = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
+    cache_key = f"excel_months::{path_key}::{sig}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
+    all_months = []
+    _max_rows = min(
+        300, int(getattr(settings, "EXCEL_PREVIEW_MAX_ROWS", 200))
+    )
+    _max_sheets_for_months = 2
+    _sheets_read = 0
+    _month_order = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    try:
+        for sheet in sheet_names:
+            if _sheets_read >= _max_sheets_for_months:
+                break
+            try:
+                df = pd.read_excel(
+                    excel_path, sheet_name=sheet, engine="openpyxl", nrows=_max_rows
+                )
+                df.columns = df.columns.str.strip().str.title()
+                possible_date_cols = [
+                    c for c in df.columns
+                    if "date" in c.lower() or "month" in c.lower()
+                ]
+                if not possible_date_cols:
+                    continue
+                _sheets_read += 1
+                col = possible_date_cols[0]
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+                df["MonthName"] = df[col].dt.strftime("%b")
+                seen = set(df["MonthName"].dropna().unique().tolist())
+                all_months = [m for m in _month_order if m in seen]
+                if all_months:
+                    break
+            except Exception:
+                continue
+        print(
+            "📅 [INFO] الشهور (من شيت واحد أو اثنين):",
+            all_months[:12] if len(all_months) > 12 else all_months,
+        )
+    except Exception as e:
+        print("⚠️ [ERROR] أثناء استخراج الشهور:", e)
+        all_months = []
+
+    try:
+        cache.set(cache_key, all_months, 86400)
+    except Exception:
+        pass
+    return all_months
+
+
 # اسم ملف الداشبورد الثابت (شيت تاني للتاب Dashboard فقط)
 DASHBOARD_EXCEL_FILENAME = "Aramco_Tamer3PL_KPI_Dashboard.xlsx"
 
@@ -236,12 +386,13 @@ DASHBOARD_DEFAULT_CHART_DATA = {
 }
 
 
-def _read_dashboard_charts_from_excel(excel_path):
+def _read_dashboard_charts_from_excel(excel_path, request=None):
     """
     يقرأ داتا الشارتات (Outbound, Returns, Inventory) من ملف الداشبورد لو الشيتات موجودة.
     ترجع ديكت باللي اتقرا فقط (لو مفيش داتا للشارت ترجع None للكاي) — عشان نعمل الشارتات دينامك.
     """
     result = {}
+    _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
     try:
         xls = pd.ExcelFile(excel_path, engine="openpyxl")
     except Exception:
@@ -256,9 +407,8 @@ def _read_dashboard_charts_from_excel(excel_path):
         if not sheet_name:
             continue
         try:
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             if df.empty or len(df) < 2:
                 break
@@ -289,9 +439,8 @@ def _read_dashboard_charts_from_excel(excel_path):
         if not sheet_name:
             continue
         try:
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             if df.empty or len(df) < 2:
                 break
@@ -323,9 +472,8 @@ def _read_dashboard_charts_from_excel(excel_path):
         if not sheet_name:
             continue
         try:
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             if df.empty:
                 break
@@ -373,7 +521,7 @@ def _is_dashboard_excel_filename(name):
     return "kpi_dashboard" in n or "aramco_tamer3pl" in n
 
 
-def _read_inbound_data_from_excel(excel_path):
+def _read_inbound_data_from_excel(excel_path, request=None):
     """
     يقرأ بيانات Inbound (KPI + Pending Shipments) من ملف الإكسل.
     الشيت: "Inbound" أو أول شيت اسمه يحتوي "inbound".
@@ -400,9 +548,9 @@ def _read_inbound_data_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
         df = pd.read_excel(
-            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, nrows=_nrows
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
         )
     except Exception:
         return None
@@ -554,7 +702,7 @@ def _read_inbound_data_from_excel(excel_path):
     return {"inbound_kpi": inbound_kpi, "pending_shipments": pending}
 
 
-def _read_outbound_data_from_excel(excel_path):
+def _read_outbound_data_from_excel(excel_path, request=None):
     """
     يقرأ بيانات Outbound من شيت Outbound_Data في ملف الداشبورد.
     - عمود Status: نفلتر "Released" → released_orders، "Picked" → picked_orders
@@ -577,7 +725,10 @@ def _read_outbound_data_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -633,7 +784,7 @@ def _read_outbound_data_from_excel(excel_path):
     }
 
 
-def _read_pods_data_from_excel(excel_path):
+def _read_pods_data_from_excel(excel_path, request=None):
     """
     يقرأ من شيت PODs_Data: عمود POD_Status (On Time, Pending, Late)،
     Delivery_Date للشهور، POD_ID للعدد. يرجّع داتا لشارت خط: كل شهر ونسبة كل حالة %.
@@ -656,7 +807,10 @@ def _read_pods_data_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -743,7 +897,7 @@ def _read_pods_data_from_excel(excel_path):
     }
 
 
-def _read_returns_data_from_excel(excel_path):
+def _read_returns_data_from_excel(excel_path, request=None):
     """
     يقرأ من شيت Returns_Data: عمود Return_Status (فلترة مثل PODs: On Time, Pending, Late)،
     Request_Date للشهور، Return_ID لعدد الشحنات (unique). يرجّع returns_kpi و returns_chart_data.
@@ -771,7 +925,10 @@ def _read_returns_data_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -858,7 +1015,7 @@ def _read_returns_data_from_excel(excel_path):
     }
 
 
-def _read_inventory_data_from_excel(excel_path):
+def _read_inventory_data_from_excel(excel_path, request=None):
     """
     يقرأ من شيت Inventory_Lots:
     - عمود LPNs: تجميع كل القيم (مجموع) = Total LPNs.
@@ -888,7 +1045,10 @@ def _read_inventory_data_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -931,7 +1091,7 @@ def _read_inventory_data_from_excel(excel_path):
     }
 
 
-def _read_inventory_snapshot_capacity_from_excel(excel_path):
+def _read_inventory_snapshot_capacity_from_excel(excel_path, request=None):
     """
     يقرأ من شيت Inventory_Snapshot:
     - Used_Space_m3 → Used (مجموع ثم نسبة مئوية).
@@ -956,7 +1116,10 @@ def _read_inventory_snapshot_capacity_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -996,7 +1159,7 @@ def _read_inventory_snapshot_capacity_from_excel(excel_path):
     }
 
 
-def _read_inventory_warehouse_table_from_excel(excel_path):
+def _read_inventory_warehouse_table_from_excel(excel_path, request=None):
     """
     يقرأ من شيت Inventory_Snapshot جدول الـ Warehouse:
     - Warehouse من عمود Warehouse
@@ -1023,7 +1186,10 @@ def _read_inventory_warehouse_table_from_excel(excel_path):
     if not sheet_name:
         return None
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl", header=0)
+        _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+        df = pd.read_excel(
+            excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df.empty or len(df) < 1:
@@ -1088,7 +1254,7 @@ def _read_inventory_warehouse_table_from_excel(excel_path):
     return {"inventory_warehouse_table": rows}
 
 
-def _read_returns_region_table_from_excel(excel_path):
+def _read_returns_region_table_from_excel(excel_path, request=None):
     """
     يبني returns_region_table من Inventory_Lots + Inventory_Snapshot:
     - Region من عمود Warehouse في Inventory_Lots (فلترة بالـ Warehouse).
@@ -1114,8 +1280,11 @@ def _read_returns_region_table_from_excel(excel_path):
     if not lots_sheet:
         return None
 
+    _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
     try:
-        df_lots = pd.read_excel(excel_path, sheet_name=lots_sheet, engine="openpyxl", header=0)
+        df_lots = pd.read_excel(
+            excel_path, sheet_name=lots_sheet, engine="openpyxl", header=0, **_nr_kw
+        )
     except Exception:
         return None
     if df_lots.empty:
@@ -1154,7 +1323,9 @@ def _read_returns_region_table_from_excel(excel_path):
     capacity_by_warehouse = {}
     if snapshot_sheet:
         try:
-            df_snap = pd.read_excel(excel_path, sheet_name=snapshot_sheet, engine="openpyxl", header=0)
+            df_snap = pd.read_excel(
+                excel_path, sheet_name=snapshot_sheet, engine="openpyxl", header=0, **_nr_kw
+            )
             if not df_snap.empty:
                 df_snap.columns = [str(c).strip() for c in df_snap.columns]
                 snap_cols = {c.lower(): c for c in df_snap.columns if c}
@@ -1295,6 +1466,52 @@ def get_dashboard_tab_context(request):
     }
 
 
+# إزالة الحروف العربية (وما شابهها) من وصف الصنف في نتائج Traceability — يزيل أيضًا نص UTF-8 المعروض كـ mojibake
+_ARABIC_SCRIPT_RE = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF"
+    r"\u061C\u200F\u200E]+"
+)
+
+
+def _keep_traceability_desc_char(c):
+    """Keep printable ASCII, whitespace, real letters/numbers; drop modifier letters (e.g. ˆ U+02C6, Lm) and junk symbols."""
+    if c in " \t\n\r":
+        return True
+    o = ord(c)
+    if 32 <= o <= 126:
+        return False if c == "^" else True
+    cat = unicodedata.category(c)
+    if cat == "Lm":
+        return False
+    if cat.startswith("L") or cat == "Nd":
+        return True
+    return False
+
+
+def _clean_traceability_item_description(val):
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    if not s:
+        return ""
+    s = _ARABIC_SCRIPT_RE.sub("", s)
+    # بقايا UTF-8 مقروء كـ Latin-1 (حروف في نطاق 0x80–0xFF كثيرة)
+    compact = re.sub(r"\s", "", s)
+    if compact:
+        hi_latin = sum(1 for c in compact if "\x80" <= c <= "\xff")
+        if hi_latin >= 3 and hi_latin * 2 >= len(compact):
+            s = "".join(c for c in s if ord(c) < 128)
+    s = "".join(c for c in s if _keep_traceability_desc_char(c))
+    s = re.sub(r"[\^\u02c6\u0302]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class UploadExcelViewRoche(View):
     template_name = "index.html"
@@ -1304,9 +1521,8 @@ class UploadExcelViewRoche(View):
     # تابات تحذف من الداشبورد (أضف أسماء الشيتات كما هي في الإكسل)
     EXCLUDE_TABS = []  # مثال: ["Sheet2", "تقارير قديمة", "Backup"]
     # أو: اعرض تابات معينة فقط (لو ضعت قائمة هنا، التابات الأخرى كلها تختفي)
-    INCLUDE_ONLY_TABS = (
-        None  # مثال: ["Overview", "Dock to stock", "Order General Information"]
-    )
+    # لو عايزة تابات محددة فقط: ["Overview", "Dock to stock", ...] — وإلا اتركي None
+    INCLUDE_ONLY_TABS = None
     # تابات افتراضية نعرضها بدون الاعتماد على شيت مباشر
     DASHBOARD_TAB_NAME = "Dashboard"
     DEFAULT_EXCEL_FILENAMES = [
@@ -1845,7 +2061,7 @@ class UploadExcelViewRoche(View):
                     effective_month,
                     selected_months=quarter_months or None,
                 ),
-                "safety kpi": lambda: self._placeholder_tab_response("Safety KPI"),
+                "safety kpi": lambda: self._render_safety_kpi_tab(request),
                 "traceability kpi": lambda: self._traceability_kpi_tab_response(request),
                 "meeting points": lambda: self.meeting_points_tab(request),
                 "capacity + expiry": lambda: self.filter_capacity_expiry(
@@ -1964,9 +2180,7 @@ class UploadExcelViewRoche(View):
                     safe=False,
                 )
             elif (selected_tab or "").strip().lower() == "safety kpi":
-                return JsonResponse(
-                    self._placeholder_tab_response("Safety KPI"), safe=False
-                )
+                return JsonResponse(self._render_safety_kpi_tab(request), safe=False)
             elif (selected_tab or "").strip().lower() == "traceability kpi":
                 return JsonResponse(
                     self._traceability_kpi_tab_response(request), safe=False
@@ -1993,9 +2207,12 @@ class UploadExcelViewRoche(View):
                 return JsonResponse({"error": "⚠️ Please select a tab first."})
 
         # ====================== الطلب العادي ======================
+        # تبويبات الشيتات: openpyxl read_only + كاش (أسرع بكثير من pd.ExcelFile لكل GET)
+        all_sheets = []
         try:
-            xls = pd.ExcelFile(excel_path, engine="openpyxl")
-            all_sheets = [s.strip() for s in xls.sheet_names]
+            all_sheets = _get_excel_sheet_names_cached(excel_path)
+            if not all_sheets:
+                raise ValueError("empty sheet list")
 
             MERGE_SHEETS = ["Urgent orders details", "Outbound details"]
             REJECTION_SHEETS = ["Rejection", "Rejection breakdown"]
@@ -2067,44 +2284,9 @@ class UploadExcelViewRoche(View):
         except Exception as e:
             print(f"⚠️ [ERROR] تعذر قراءة الشيتات من الملف: {e}")
             excel_tabs = []
+            all_sheets = []
 
-        # ======================================================
-        # 🗓️ استخراج الشهور من شيت واحد أو اثنين فقط (لتسريع فتح الصفحة — بدل قراءة كل الشيتات)
-        # ======================================================
-        all_months = []
-        _max_rows = min(300, getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500))
-        _max_sheets_for_months = 2
-        _sheets_read = 0
-        try:
-            _month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-            for sheet in xls.sheet_names:
-                if _sheets_read >= _max_sheets_for_months:
-                    break
-                try:
-                    df = pd.read_excel(
-                        excel_path, sheet_name=sheet, engine="openpyxl", nrows=_max_rows
-                    )
-                    df.columns = df.columns.str.strip().str.title()
-                    possible_date_cols = [
-                        c for c in df.columns
-                        if "date" in c.lower() or "month" in c.lower()
-                    ]
-                    if not possible_date_cols:
-                        continue
-                    _sheets_read += 1
-                    col = possible_date_cols[0]
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
-                    df["MonthName"] = df[col].dt.strftime("%b")
-                    seen = set(df["MonthName"].dropna().unique().tolist())
-                    all_months = [m for m in _month_order if m in seen]
-                    if all_months:
-                        break
-                except Exception:
-                    continue
-            print("📅 [INFO] الشهور (من شيت واحد أو اثنين):", all_months[:12] if len(all_months) > 12 else all_months)
-        except Exception as e:
-            print("⚠️ [ERROR] أثناء استخراج الشهور:", e)
-            all_months = []
+        all_months = _extract_months_from_excel_cached(excel_path, all_sheets)
 
         meeting_points = MeetingPoint.objects.all().order_by("is_done", "-created_at")
         done_count = meeting_points.filter(is_done=True).count()
@@ -2355,14 +2537,11 @@ class UploadExcelViewRoche(View):
             }
 
         try:
-            # 📖 قراءة جميع الشيتات
-            xls = pd.ExcelFile(excel_file_path, engine="openpyxl")
-
-            # 🔍 البحث عن الشيت بدون حساسية لحالة الأحرف
+            sheet_names = _get_excel_sheet_names_cached(excel_file_path)
             matching_sheet = next(
                 (
                     s
-                    for s in xls.sheet_names
+                    for s in sheet_names
                     if s.lower().strip() == sheet_name.lower().strip()
                 ),
                 None,
@@ -2370,7 +2549,7 @@ class UploadExcelViewRoche(View):
 
             if not matching_sheet:
                 print(
-                    f"⚠️ [WARNING] التاب '{sheet_name}' غير موجود. الشيتات المتاحة: {xls.sheet_names}"
+                    f"⚠️ [WARNING] التاب '{sheet_name}' غير موجود. الشيتات المتاحة: {sheet_names}"
                 )
                 return {
                     "detail_html": f"<p class='text-danger'>❌ Tab '{sheet_name}' does not exist in the file.</p>",
@@ -2378,12 +2557,13 @@ class UploadExcelViewRoche(View):
                 }
 
             # 🧾 قراءة الشيت المطابق (حد 500 صف لتسريع التحميل)
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
                 excel_file_path,
                 sheet_name=matching_sheet,
                 engine="openpyxl",
-                nrows=_nrows,
+                header=0,
+                **_nr_kw,
             )
 
             # 🧹 تنظيف الأعمدة
@@ -2423,13 +2603,28 @@ class UploadExcelViewRoche(View):
             }
             month_norm = self.apply_month_filter_to_tab(tab_data, selected_month)
 
-            html = render_to_string(
+            preview_mode = not _excel_full_data_requested(request)
+            cap = _excel_max_rows_for_request(request)
+            banner = ""
+            if preview_mode and cap:
+                banner = (
+                    "<div class=\"alert alert-info small py-2 mb-3\" role=\"alert\">"
+                    f"Fast load: first <strong>{cap}</strong> rows from Excel. "
+                    "Use <strong>Load full data</strong> above for more rows (may be slower).</div>"
+                )
+            html = banner + render_to_string(
                 "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
                 {"tab": tab_data, "selected_month": month_norm},
             )
 
             # 📤 إرجاع النتيجة للواجهة
-            return {"detail_html": html, "count": len(df), "tab_data": tab_data}
+            return {
+                "detail_html": html,
+                "count": len(df),
+                "tab_data": tab_data,
+                "excel_preview_mode": preview_mode,
+                "excel_row_cap": cap,
+            }
 
         except Exception as e:
             print(f"❌ [ERROR] أثناء قراءة الشيت '{sheet_name}': {e}")
@@ -2464,12 +2659,13 @@ class UploadExcelViewRoche(View):
 
             sheet_name = possible_sheets[0]  # ناخد أول واحد مطابق
             print(f"📄 قراءة الشيت: {sheet_name}")
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
                 excel_file_path,
                 sheet_name=sheet_name,
                 engine="openpyxl",
-                nrows=_nrows,
+                header=0,
+                **_nr_kw,
             )
         except Exception as e:
             return {"error": f"⚠️ Unable to read the tab: {e}"}
@@ -2807,7 +3003,8 @@ class UploadExcelViewRoche(View):
             import hashlib
             _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
             _month = (selected_month or "") + "_" + (str(selected_months) if selected_months else "")
-            _cache_key = f"tlp_overview_{_path_hash}_{_month}_{status_filter}"
+            _full_flag = "1" if request and _excel_full_data_requested(request) else "0"
+            _cache_key = f"tlp_overview_{_path_hash}_{_month}_{status_filter}_{_full_flag}"
             overview_data = cache.get(_cache_key)
             if overview_data is None:
                 overview_data = self.overview_tab(
@@ -2980,8 +3177,13 @@ class UploadExcelViewRoche(View):
                 return {"error": "⚠️ Excel file was not found in the session."}
 
             # قراءة الشيت المطلوب
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name="Total lead time preformance", engine="openpyxl"
+                excel_path,
+                sheet_name="Total lead time preformance",
+                engine="openpyxl",
+                header=0,
+                **_nr_kw,
             )
             df.columns = df.columns.str.strip().str.lower()
 
@@ -3152,7 +3354,10 @@ class UploadExcelViewRoche(View):
             return {"error": "⚠️ Excel file not found."}
 
         try:
-            df = pd.read_excel(excel_path, sheet_name="Rejection", engine="openpyxl")
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+            df = pd.read_excel(
+                excel_path, sheet_name="Rejection", engine="openpyxl", header=0, **_nr_kw
+            )
             print("🟢 [DEBUG] الأعمدة:", df.columns.tolist())
             print(df.head(3))
         except Exception as e:
@@ -3209,9 +3414,9 @@ class UploadExcelViewRoche(View):
             from django.template.loader import render_to_string
 
             sheet_name = "Dock to stock - Roche"
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             df.columns = df.columns.astype(str).str.strip()
 
@@ -3297,7 +3502,14 @@ class UploadExcelViewRoche(View):
                 return {"error": "⚠️ File not found."}
 
             # 🧩 قراءة الشيت
-            df = pd.read_excel(file_path, sheet_name="Dock to stock", engine="openpyxl")
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+            df = pd.read_excel(
+                file_path,
+                sheet_name="Dock to stock",
+                engine="openpyxl",
+                header=0,
+                **_nr_kw,
+            )
             print(f"📄 [DEBUG] أول 10 صفوف من الشيت Dock to stock:\n{df.head(10)}")
 
             # ✅ التحقق من وجود الأعمدة المطلوبة
@@ -3458,9 +3670,9 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             df.columns = df.columns.str.strip().str.lower()
 
@@ -3623,9 +3835,9 @@ class UploadExcelViewRoche(View):
                 }
 
             # قراءة الشيت (حد صفوف لتسريع التحميل)
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             df.columns = df.columns.str.strip()
 
@@ -3833,9 +4045,9 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             df.columns = df.columns.astype(str).str.strip()
 
@@ -4105,10 +4317,9 @@ class UploadExcelViewRoche(View):
     ):
         """
         B2C Outbound: يقرأ من شيت B2C_Outbound.
-        - جدول Pick & Peak (Creation / Picked): مقارنة CREATION DATE مع PICKED DATE.
-        - إذا Creation من 9am إلى 3pm → يجب Picked قبل 4pm وإلا Miss.
-        - إذا Creation من 3pm إلى 12am أو من 12am إلى 9am → يجب Picked قبل 10am وإلا Miss.
-        - تسجيل مدة كل شحنة بالساعات (Duration).
+        - جدول Pick & Peak (Creation / Picked): حسب مدة (Creation → Picked) بالساعات،
+          صفوف Cycle (0-9HRS … 105+HRS)، أعمدة بالشهر (YYYY-MM)، عمود %، Status = Delivered فقط.
+        - كروت الـ KPI: نفس منطق Hit/Miss حسب الموعد (Deadline) على كل الصفوف الصالحة.
         """
         try:
             import os
@@ -4124,7 +4335,18 @@ class UploadExcelViewRoche(View):
                 }
 
             import hashlib
-            _b2c_key = "b2c_outbound_" + hashlib.md5((excel_path or "").encode()).hexdigest()[:16]
+
+            _b2c_mode = (
+                "full"
+                if _excel_full_data_requested(request)
+                else str(_excel_max_rows_for_request(request))
+            )
+            _b2c_key = (
+                "b2c_outbound_"
+                + hashlib.md5((excel_path or "").encode()).hexdigest()[:16]
+                + "_"
+                + _b2c_mode
+            )
             _b2c_cached = cache.get(_b2c_key)
             if _b2c_cached is not None:
                 return _b2c_cached
@@ -4151,9 +4373,9 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             df.columns = df.columns.astype(str).str.strip()
             df_full = df.copy()
@@ -4313,37 +4535,150 @@ class UploadExcelViewRoche(View):
                     return ""
                 return s
 
-            pick_peak_rows = []
-            for _, row in df.iterrows():
-                dur = row["Duration_Hours"]
-                if pd.notna(dur) and not (isinstance(dur, float) and (dur != dur)):
-                    dur = int(round(dur)) if isinstance(dur, (int, float)) else dur
-                else:
-                    dur = ""
-                pick_peak_rows.append(
-                    {
-                        "Order / SO": _to_blank(row["Order_SO"]),
-                        "Creation Date": _fmt_dt(row["Creation_Date"]),
-                        "Picked Date": _fmt_dt(row["Picked_Date"]),
-                        "Deadline": _fmt_dt(row["Deadline"]),
-                        "Duration (Hours)": dur,
-                        "Hit / Miss": "Hit" if row["is_hit"] else "Miss",
-                    }
+            pick_peak_cycles = [
+                "0-9HRS / SAME DAY",
+                "9-24HRS / 1 DAY",
+                "24-33HRS / 1.5 DAY",
+                "33-48HRS / 2 DAYS",
+                "48-57HRS / 2.5 DAYS",
+                "57-72HRS / 3 DAYS",
+                "72-81HRS / 3.5 DAYS",
+                "81-96HRS / 4 DAYS",
+                "96-105HRS / 4.5 DAYS",
+                "105+HRS / 5+ DAYS",
+            ]
+
+            def _pick_peak_cycle_from_hours(hours):
+                if hours is None or (
+                    isinstance(hours, float) and (hours != hours)
+                ):
+                    return None
+                try:
+                    h = float(hours)
+                except (TypeError, ValueError):
+                    return None
+                if h < 0:
+                    return None
+                if h < 9:
+                    return pick_peak_cycles[0]
+                if h < 24:
+                    return pick_peak_cycles[1]
+                if h < 33:
+                    return pick_peak_cycles[2]
+                if h < 48:
+                    return pick_peak_cycles[3]
+                if h < 57:
+                    return pick_peak_cycles[4]
+                if h < 72:
+                    return pick_peak_cycles[5]
+                if h < 81:
+                    return pick_peak_cycles[6]
+                if h < 96:
+                    return pick_peak_cycles[7]
+                if h < 105:
+                    return pick_peak_cycles[8]
+                return pick_peak_cycles[9]
+
+            df_pp = df.copy()
+            if status_col:
+                st_series = (
+                    df_full.loc[df_pp.index, status_col]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
                 )
+                df_pp = df_pp[st_series == "DELIVERED"].copy()
+
+            df_pp["Duration_Hours_Float"] = (
+                df_pp["Picked_Date"] - df_pp["Creation_Date"]
+            ).dt.total_seconds() / 3600.0
+            df_pp = df_pp[
+                df_pp["Duration_Hours_Float"].notna()
+                & (df_pp["Duration_Hours_Float"] >= 0)
+            ]
+            df_pp["Cycle"] = df_pp["Duration_Hours_Float"].apply(
+                _pick_peak_cycle_from_hours
+            )
+            df_pp = df_pp.dropna(subset=["Cycle"])
+            df_pp["Month_YM"] = df_pp["Creation_Date"].dt.strftime("%Y-%m")
+
+            month_cols_pp = sorted(
+                m
+                for m in df_pp["Month_YM"].dropna().unique().tolist()
+                if m and str(m).strip().lower() not in ("nan", "nat")
+            )
+            if df_pp.empty:
+                pivot_pp = pd.DataFrame(
+                    index=pick_peak_cycles, columns=month_cols_pp, dtype=int
+                ).fillna(0)
+            else:
+                pivot_pp = (
+                    df_pp.groupby(["Cycle", "Month_YM"], observed=True)
+                    .size()
+                    .unstack(fill_value=0)
+                )
+                if month_cols_pp:
+                    pivot_pp = pivot_pp.reindex(
+                        columns=month_cols_pp, fill_value=0
+                    )
+                pivot_pp = pivot_pp.reindex(
+                    index=pick_peak_cycles, fill_value=0
+                )
+
+            grand_total_pp = int(len(df_pp))
+
+            pick_peak_count_rows = []
+            for cyc in pick_peak_cycles:
+                row = {"Cycle": cyc}
+                row_sum = 0
+                for ym in month_cols_pp:
+                    c = int(pivot_pp.loc[cyc, ym])
+                    row[ym] = c
+                    row_sum += c
+                rp = (
+                    round(100.0 * row_sum / grand_total_pp, 1)
+                    if grand_total_pp
+                    else 0.0
+                )
+                row["%"] = f"{rp}%"
+                pick_peak_count_rows.append(row)
+            total_row_pp = {"Cycle": "TOTAL"}
+            for ym in month_cols_pp:
+                total_row_pp[ym] = int(df_pp[df_pp["Month_YM"] == ym].shape[0])
+            total_row_pp["%"] = "100%" if grand_total_pp else "0%"
+            pick_peak_count_rows.append(total_row_pp)
+
+            pick_peak_columns = ["Cycle"] + month_cols_pp + ["%"]
+            pick_peak_summary = {}
+            if not df_pp.empty:
+                cmin = df_pp["Creation_Date"].min()
+                cmax = df_pp["Creation_Date"].max()
+                try:
+                    pick_peak_summary["date_from"] = pd.Timestamp(
+                        cmin
+                    ).strftime("%d-%b-%y")
+                    pick_peak_summary["date_to"] = pd.Timestamp(
+                        cmax
+                    ).strftime("%d-%b-%y")
+                except Exception:
+                    pick_peak_summary["date_from"] = ""
+                    pick_peak_summary["date_to"] = ""
+                y_del = int(df_pp["Creation_Date"].dt.year.max())
+                pick_peak_summary["delivered_label"] = f"Delivered {y_del}"
+            else:
+                pick_peak_summary = {
+                    "date_from": "",
+                    "date_to": "",
+                    "delivered_label": "Delivered",
+                }
 
             sub_tables = [
                 {
                     "id": "sub-table-b2c-pick-peak",
                     "title": "Pick & Peak — Creation / Picked",
-                    "columns": [
-                        "Order / SO",
-                        "Creation Date",
-                        "Picked Date",
-                        "Deadline",
-                        "Duration (Hours)",
-                        "Hit / Miss",
-                    ],
-                    "data": pick_peak_rows,
+                    "columns": pick_peak_columns,
+                    "data": pick_peak_count_rows,
+                    "pick_peak_summary": pick_peak_summary,
                     "full_width": True,
                     "col_12": True,
                 }
@@ -4424,41 +4759,78 @@ class UploadExcelViewRoche(View):
                         else pd.NA
                     )
 
-                    dispatch_rows = []
-                    for _, row in df_d.iterrows():
-                        dur = row["Duration_Hours"]
-                        if pd.notna(dur) and not (
-                            isinstance(dur, float) and (dur != dur)
-                        ):
-                            dur = (
-                                int(round(dur))
-                                if isinstance(dur, (int, float))
-                                else dur
-                            )
-                        else:
-                            dur = ""
-                        dispatch_rows.append(
-                            {
-                                "Order / SO": _to_blank(row["Order_SO"]),
-                                "Creation Date": _fmt_dt(row["Creation_Date"]),
-                                "Dispatch Date & Time": _fmt_dt(
-                                    row["Dispatch_Date"]
-                                ),
-                                "Deadline": _fmt_dt(row["Deadline"]),
-                                "Duration (Hours)": dur,
-                                "Hit / Miss": "Hit"
-                                if row["is_hit"]
-                                else "Miss",
-                            }
-                        )
+                    df_d["Month"] = df_d["Creation_Date"].dt.strftime("%b")
+                    df_d = df_d[df_d["Month"].notna()]
 
-                    dispatch_hits = int(df_d["is_hit"].sum())
-                    dispatch_total = len(df_d)
-                    dispatch_hit_pct = (
-                        round((dispatch_hits / dispatch_total) * 100, 2)
-                        if dispatch_total
-                        else 0
+                    month_order = [
+                        "Jan",
+                        "Feb",
+                        "Mar",
+                        "Apr",
+                        "May",
+                        "Jun",
+                        "Jul",
+                        "Aug",
+                        "Sep",
+                        "Oct",
+                        "Nov",
+                        "Dec",
+                    ]
+                    month_order_value = {m: i for i, m in enumerate(month_order)}
+
+                    dispatch_summary = (
+                        df_d.groupby("Month", as_index=False)
+                        .agg(
+                            Total_Shipments=("Order_SO", "count"),
+                            Hits=("is_hit", "sum"),
+                        )
                     )
+                    dispatch_summary["Misses"] = (
+                        dispatch_summary["Total_Shipments"]
+                        - dispatch_summary["Hits"]
+                    )
+                    dispatch_summary = dispatch_summary.sort_values(
+                        by="Month",
+                        key=lambda c: c.map(
+                            lambda m: month_order_value.get(m, 99)
+                        ),
+                    )
+                    ordered_dispatch = dispatch_summary["Month"].tolist()
+                    agg_col = None
+                    if len(ordered_dispatch) >= 2:
+                        agg_col = str(
+                            int(df_d["Creation_Date"].dropna().dt.year.max())
+                        )
+                    pivot_dispatch = ["KPI"] + ordered_dispatch + (
+                        [agg_col] if agg_col else []
+                    )
+
+                    hit_pct_d = {"KPI": "Hit %"}
+                    hit_d = {"KPI": "Hit"}
+                    miss_d = {"KPI": "Miss"}
+                    total_d = {"KPI": "Total Shipments"}
+                    for _, r in dispatch_summary.iterrows():
+                        m = r["Month"]
+                        t = int(r["Total_Shipments"])
+                        h = int(r["Hits"])
+                        ms = int(r["Misses"])
+                        hp = int(round(h * 100 / t)) if t else 0
+                        mp = int(round(ms * 100 / t)) if t else 0
+                        hit_pct_d[m] = hp
+                        hit_d[m] = f"{h} ({hp}%)"
+                        miss_d[m] = f"{ms} ({mp}%)"
+                        total_d[m] = t
+                    if agg_col:
+                        t_all = int(dispatch_summary["Total_Shipments"].sum())
+                        h_all = int(dispatch_summary["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
+                        mp_all = int(round(ms_all * 100 / t_all)) if t_all else 0
+                        hit_pct_d[agg_col] = hp_all
+                        hit_d[agg_col] = f"{h_all} ({hp_all}%)"
+                        miss_d[agg_col] = f"{ms_all} ({mp_all}%)"
+                        total_d[agg_col] = t_all
+
                     dispatch_chart_data = [
                         {
                             "type": "column",
@@ -4466,10 +4838,9 @@ class UploadExcelViewRoche(View):
                             "color": "#81613E",
                             "related_table": "sub-table-b2c-dispatch",
                             "dataPoints": [
-                                {
-                                    "label": "Hit %",
-                                    "y": dispatch_hit_pct,
-                                }
+                                {"label": m, "y": int(hit_pct_d[m])}
+                                for m in ordered_dispatch
+                                if int(hit_pct_d[m]) > 0
                             ],
                         }
                     ]
@@ -4478,15 +4849,13 @@ class UploadExcelViewRoche(View):
                         {
                             "id": "sub-table-b2c-dispatch",
                             "title": "Dispatch — Creation to Dispatch",
-                            "columns": [
-                                "Order / SO",
-                                "Creation Date",
-                                "Dispatch Date & Time",
-                                "Deadline",
-                                "Duration (Hours)",
-                                "Hit / Miss",
+                            "columns": pivot_dispatch,
+                            "data": [
+                                hit_pct_d,
+                                hit_d,
+                                miss_d,
+                                total_d,
                             ],
-                            "data": dispatch_rows,
                             "full_width": False,
                             "side_by_side_chart": True,
                             "chart_data": dispatch_chart_data,
@@ -4535,38 +4904,79 @@ class UploadExcelViewRoche(View):
                         else pd.NA
                     )
 
-                    lastmile_rows = []
-                    for _, row in df_lm.iterrows():
-                        dur = row["Duration_Hours"]
-                        if pd.notna(dur) and not (
-                            isinstance(dur, float) and (dur != dur)
-                        ):
-                            dur = (
-                                int(round(dur))
-                                if isinstance(dur, (int, float))
-                                else dur
-                            )
-                        else:
-                            dur = ""
-                        lastmile_rows.append(
-                            {
-                                "Order / SO": _to_blank(row["Order_SO"]),
-                                "Dispatch Date & Time": _fmt_dt(
-                                    row["Dispatch_Date"]
-                                ),
-                                "Delivered Date": _fmt_dt(row["Delivered_Date"]),
-                                "Duration (Hours)": dur,
-                                "Hit / Miss": "Hit"
-                                if row["is_hit"]
-                                else "Miss",
-                            }
-                        )
+                    df_lm["Month"] = df_lm["Dispatch_Date"].dt.strftime("%b")
+                    df_lm = df_lm[df_lm["Month"].notna()]
 
-                    lm_hits = int(df_lm["is_hit"].sum())
-                    lm_total = len(df_lm)
-                    lm_hit_pct = (
-                        round((lm_hits / lm_total) * 100, 2) if lm_total else 0
+                    month_order_lm = [
+                        "Jan",
+                        "Feb",
+                        "Mar",
+                        "Apr",
+                        "May",
+                        "Jun",
+                        "Jul",
+                        "Aug",
+                        "Sep",
+                        "Oct",
+                        "Nov",
+                        "Dec",
+                    ]
+                    month_order_value_lm = {
+                        m: i for i, m in enumerate(month_order_lm)
+                    }
+
+                    lm_summary = (
+                        df_lm.groupby("Month", as_index=False)
+                        .agg(
+                            Total_Shipments=("Order_SO", "count"),
+                            Hits=("is_hit", "sum"),
+                        )
                     )
+                    lm_summary["Misses"] = (
+                        lm_summary["Total_Shipments"] - lm_summary["Hits"]
+                    )
+                    lm_summary = lm_summary.sort_values(
+                        by="Month",
+                        key=lambda c: c.map(
+                            lambda m: month_order_value_lm.get(m, 99)
+                        ),
+                    )
+                    ordered_lm = lm_summary["Month"].tolist()
+                    agg_col_lm = None
+                    if len(ordered_lm) >= 2:
+                        agg_col_lm = str(
+                            int(df_lm["Dispatch_Date"].dropna().dt.year.max())
+                        )
+                    pivot_lm = ["KPI"] + ordered_lm + (
+                        [agg_col_lm] if agg_col_lm else []
+                    )
+
+                    hit_pct_lm = {"KPI": "Hit %"}
+                    hit_lm = {"KPI": "Hit"}
+                    miss_lm = {"KPI": "Miss"}
+                    total_lm = {"KPI": "Total Shipments"}
+                    for _, r in lm_summary.iterrows():
+                        m = r["Month"]
+                        t = int(r["Total_Shipments"])
+                        h = int(r["Hits"])
+                        ms = int(r["Misses"])
+                        hp = int(round(h * 100 / t)) if t else 0
+                        mp = int(round(ms * 100 / t)) if t else 0
+                        hit_pct_lm[m] = hp
+                        hit_lm[m] = f"{h} ({hp}%)"
+                        miss_lm[m] = f"{ms} ({mp}%)"
+                        total_lm[m] = t
+                    if agg_col_lm:
+                        t_all = int(lm_summary["Total_Shipments"].sum())
+                        h_all = int(lm_summary["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
+                        mp_all = int(round(ms_all * 100 / t_all)) if t_all else 0
+                        hit_pct_lm[agg_col_lm] = hp_all
+                        hit_lm[agg_col_lm] = f"{h_all} ({hp_all}%)"
+                        miss_lm[agg_col_lm] = f"{ms_all} ({mp_all}%)"
+                        total_lm[agg_col_lm] = t_all
+
                     lastmile_chart_data = [
                         {
                             "type": "column",
@@ -4574,7 +4984,9 @@ class UploadExcelViewRoche(View):
                             "color": "#9F8170",
                             "related_table": "sub-table-b2c-lastmile",
                             "dataPoints": [
-                                {"label": "Hit %", "y": lm_hit_pct}
+                                {"label": m, "y": int(hit_pct_lm[m])}
+                                for m in ordered_lm
+                                if int(hit_pct_lm[m]) > 0
                             ],
                         }
                     ]
@@ -4583,14 +4995,13 @@ class UploadExcelViewRoche(View):
                         {
                             "id": "sub-table-b2c-lastmile",
                             "title": "Last Mile KPI — Dispatch / Delivered (≤48 hours)",
-                            "columns": [
-                                "Order / SO",
-                                "Dispatch Date & Time",
-                                "Delivered Date",
-                                "Duration (Hours)",
-                                "Hit / Miss",
+                            "columns": pivot_lm,
+                            "data": [
+                                hit_pct_lm,
+                                hit_lm,
+                                miss_lm,
+                                total_lm,
                             ],
-                            "data": lastmile_rows,
                             "full_width": False,
                             "side_by_side_chart": True,
                             "chart_data": lastmile_chart_data,
@@ -4635,43 +5046,90 @@ class UploadExcelViewRoche(View):
                         else pd.NA
                     )
 
-                    endtoend_rows = []
-                    for _, row in df_ee.iterrows():
-                        dur = row["Duration_Hours"]
-                        if pd.notna(dur) and not (
-                            isinstance(dur, float) and (dur != dur)
-                        ):
-                            dur = (
-                                int(round(dur))
-                                if isinstance(dur, (int, float))
-                                else dur
-                            )
-                        else:
-                            dur = ""
-                        endtoend_rows.append(
-                            {
-                                "Order / SO": _to_blank(row["Order_SO"]),
-                                "Creation Date": _fmt_dt(row["Creation_Date"]),
-                                "Delivered Date": _fmt_dt(row["Delivered_Date"]),
-                                "Duration (Hours)": dur,
-                                "Hit / Miss": "Hit"
-                                if row["is_hit"]
-                                else "Miss",
-                            }
-                        )
+                    df_ee["Month"] = df_ee["Creation_Date"].dt.strftime("%b")
+                    df_ee = df_ee[df_ee["Month"].notna()]
 
-                    ee_hits = int(df_ee["is_hit"].sum())
-                    ee_total = len(df_ee)
-                    ee_hit_pct = (
-                        round((ee_hits / ee_total) * 100, 2) if ee_total else 0
+                    month_order_ee = [
+                        "Jan",
+                        "Feb",
+                        "Mar",
+                        "Apr",
+                        "May",
+                        "Jun",
+                        "Jul",
+                        "Aug",
+                        "Sep",
+                        "Oct",
+                        "Nov",
+                        "Dec",
+                    ]
+                    month_order_value_ee = {
+                        m: i for i, m in enumerate(month_order_ee)
+                    }
+
+                    ee_summary = (
+                        df_ee.groupby("Month", as_index=False)
+                        .agg(
+                            Total_Shipments=("Order_SO", "count"),
+                            Hits=("is_hit", "sum"),
+                        )
                     )
+                    ee_summary["Misses"] = (
+                        ee_summary["Total_Shipments"] - ee_summary["Hits"]
+                    )
+                    ee_summary = ee_summary.sort_values(
+                        by="Month",
+                        key=lambda c: c.map(
+                            lambda m: month_order_value_ee.get(m, 99)
+                        ),
+                    )
+                    ordered_ee = ee_summary["Month"].tolist()
+                    agg_col_ee = None
+                    if len(ordered_ee) >= 2:
+                        agg_col_ee = str(
+                            int(df_ee["Creation_Date"].dropna().dt.year.max())
+                        )
+                    pivot_ee = ["KPI"] + ordered_ee + (
+                        [agg_col_ee] if agg_col_ee else []
+                    )
+
+                    hit_pct_ee = {"KPI": "Hit %"}
+                    hit_ee = {"KPI": "Hit"}
+                    miss_ee = {"KPI": "Miss"}
+                    total_ee = {"KPI": "Total Shipments"}
+                    for _, r in ee_summary.iterrows():
+                        m = r["Month"]
+                        t = int(r["Total_Shipments"])
+                        h = int(r["Hits"])
+                        ms = int(r["Misses"])
+                        hp = int(round(h * 100 / t)) if t else 0
+                        mp = int(round(ms * 100 / t)) if t else 0
+                        hit_pct_ee[m] = hp
+                        hit_ee[m] = f"{h} ({hp}%)"
+                        miss_ee[m] = f"{ms} ({mp}%)"
+                        total_ee[m] = t
+                    if agg_col_ee:
+                        t_all = int(ee_summary["Total_Shipments"].sum())
+                        h_all = int(ee_summary["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
+                        mp_all = int(round(ms_all * 100 / t_all)) if t_all else 0
+                        hit_pct_ee[agg_col_ee] = hp_all
+                        hit_ee[agg_col_ee] = f"{h_all} ({hp_all}%)"
+                        miss_ee[agg_col_ee] = f"{ms_all} ({mp_all}%)"
+                        total_ee[agg_col_ee] = t_all
+
                     endtoend_chart_data = [
                         {
                             "type": "column",
                             "name": "End to End Hit %",
                             "color": "#81613E",
                             "related_table": "sub-table-b2c-endtoend",
-                            "dataPoints": [{"label": "Hit %", "y": ee_hit_pct}],
+                            "dataPoints": [
+                                {"label": m, "y": int(hit_pct_ee[m])}
+                                for m in ordered_ee
+                                if int(hit_pct_ee[m]) > 0
+                            ],
                         }
                     ]
 
@@ -4679,14 +5137,13 @@ class UploadExcelViewRoche(View):
                         {
                             "id": "sub-table-b2c-endtoend",
                             "title": "End to End — Creation / Delivered (≤48 hours)",
-                            "columns": [
-                                "Order / SO",
-                                "Creation Date",
-                                "Delivered Date",
-                                "Duration (Hours)",
-                                "Hit / Miss",
+                            "columns": pivot_ee,
+                            "data": [
+                                hit_pct_ee,
+                                hit_ee,
+                                miss_ee,
+                                total_ee,
                             ],
-                            "data": endtoend_rows,
                             "full_width": False,
                             "side_by_side_chart": True,
                             "chart_data": endtoend_chart_data,
@@ -4698,9 +5155,10 @@ class UploadExcelViewRoche(View):
             miss = total_shipments - hits
             hit_pct = round((hits / total_shipments) * 100, 2) if total_shipments else 0
 
-            # جدول الإكسل الخام: كما هو في الملف من غير أي تعديل
+            # جدول الإكسل الخام: نفس حد المعاينة/الكامل ثم عرض أول 500 صف في الواجهة
+            _raw_nr = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             raw_df_original = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_raw_nr
             )
             raw_df_original.columns = raw_df_original.columns.astype(str).str.strip()
             raw_df_original = raw_df_original.head(500)
@@ -4759,8 +5217,65 @@ class UploadExcelViewRoche(View):
                 "stats": {},
             }
 
+    def _render_safety_kpi_tab(self, request):
+        """
+        يعرض شيت Safety KPI من ملف الإكسل (اسم الشيت يحتوي safety و kpi، أو مطابقة Safety KPI).
+        """
+        excel_file_path = self.get_uploaded_file_path(request) or self.get_excel_path()
+        if not excel_file_path or not os.path.exists(excel_file_path):
+            return {
+                "detail_html": "<p class='text-danger'>Excel file not found.</p>",
+                "chart_data": [],
+                "count": 0,
+                "hit_pct": 0,
+            }
+        sheet_names = _get_excel_sheet_names_cached(excel_file_path)
+        if not sheet_names:
+            return {
+                "detail_html": "<p class='text-danger'>No sheets found in the workbook.</p>",
+                "chart_data": [],
+                "count": 0,
+                "hit_pct": 0,
+            }
+
+        def _norm_sheet(s):
+            return (str(s) or "").lower().replace(" ", "").replace("_", "")
+
+        resolved = None
+        for s in sheet_names:
+            ns = _norm_sheet(s)
+            if "safety" in ns and "kpi" in ns:
+                resolved = s
+                break
+        if not resolved:
+            for s in sheet_names:
+                if _norm_sheet(s) == _norm_sheet("Safety KPI"):
+                    resolved = s
+                    break
+        if not resolved:
+            preview = ", ".join(str(x) for x in sheet_names[:30])
+            if len(sheet_names) > 30:
+                preview += ", …"
+            return {
+                "detail_html": (
+                    "<div class='alert alert-warning'>No <strong>Safety KPI</strong> sheet found. "
+                    "Use a sheet name that includes <em>Safety</em> and <em>KPI</em> (e.g. <code>Safety KPI</code>).</div>"
+                    f"<p class='text-muted small mb-0'>Sheets in this file: {preview}</p>"
+                ),
+                "chart_data": [],
+                "count": 0,
+                "hit_pct": 0,
+            }
+
+        data = self.render_raw_sheet(request, resolved)
+        if isinstance(data, dict) and "hit_pct" not in data:
+            data = dict(data)
+            data.setdefault("hit_pct", 0)
+            data.setdefault("chart_data", [])
+        return data
+
     def _placeholder_tab_response(self, tab_name):
-        """يرجع استجابة تاب placeholder (Safety KPI / Traceability KPI) مع رسالة Loading data."""
+        """يرجع استجابة تاب placeholder مع رسالة Loading data."""
         html = (
             "<div class='card p-4 shadow-sm'>"
             "<p class='text-muted text-center mb-0'>Loading data</p>"
@@ -4795,13 +5310,11 @@ class UploadExcelViewRoche(View):
                     return cols_map[col_key]
         return None
 
-    def _traceability_read_sheets(self, excel_path):
-        """قراءة شيتي Traceability_KPI_Inbound و Traceability_KPI_Outbound (من الكاش إن وُجد)."""
-        try:
-            xls = pd.ExcelFile(excel_path, engine="openpyxl")
-        except Exception:
+    def _traceability_read_sheets(self, excel_path, request):
+        """قراءة شيتي Traceability — دائمًا نطاق كامل (أو EXCEL_FULL_MAX_ROWS) لدقة البحث."""
+        sheet_names = _get_excel_sheet_names_cached(excel_path)
+        if not sheet_names:
             return None, None
-        sheet_names = [str(s).strip() for s in xls.sheet_names]
         norm = lambda s: (s or "").lower().replace(" ", "").replace("_", "")
 
         inbound_name = next(
@@ -4815,13 +5328,21 @@ class UploadExcelViewRoche(View):
         if not inbound_name:
             return None, None
 
-        df_in = _get_sheet_dataframe(excel_path, inbound_name)
-        df_out = _get_sheet_dataframe(excel_path, outbound_name) if outbound_name else None
+        df_in = _get_sheet_dataframe(
+            excel_path, inbound_name, request=request, force_full=True
+        )
+        df_out = (
+            _get_sheet_dataframe(
+                excel_path, outbound_name, request=request, force_full=True
+            )
+            if outbound_name
+            else None
+        )
         return df_in, df_out
 
     def _traceability_search_data(self, request):
         """
-        بحث Traceability: فلترة حسب Item Code أو batch_nbr من شيت Inbound ثم Outbound.
+        بحث Traceability: فلترة حسب Item Code و/أو Batch Nbr و/أو LPN Nbr من شيت Inbound ثم Outbound.
         يرجع قائمة عناصر كل عنصر: بيانات الوارد + حركات الصادر + الكمية الحالية.
         """
         excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
@@ -4830,24 +5351,15 @@ class UploadExcelViewRoche(View):
 
         item_code = (request.GET.get("item_code") or request.POST.get("item_code") or "").strip()
         batch_nbr = (request.GET.get("batch_nbr") or request.POST.get("batch_nbr") or "").strip()
-        if not item_code and not batch_nbr:
-            return {"error": "Please enter an Item Code, a Batch Number, or both.", "results": []}
+        lpn_nbr = (request.GET.get("lpn_nbr") or request.POST.get("lpn_nbr") or "").strip()
+        if not item_code and not batch_nbr and not lpn_nbr:
+            return {
+                "error": "Please enter an Item Code, Batch Number, and/or LPN Nbr.",
+                "results": [],
+            }
 
-        df_in, df_out = self._traceability_read_sheets(excel_path)
+        df_in, df_out = self._traceability_read_sheets(excel_path, request)
 
-        # 🔎 DEBUG: طباعة مسار الملف وأسماء الأعمدة في الشيتين في الترمينال
-        try:
-            print("🔎 [Traceability DEBUG] Excel path:", excel_path)
-            print(
-                "🔎 [Traceability DEBUG] Inbound columns:",
-                list(df_in.columns) if df_in is not None else "None",
-            )
-            print(
-                "🔎 [Traceability DEBUG] Outbound columns:",
-                list(df_out.columns) if df_out is not None else "None",
-            )
-        except Exception:
-            pass
         if df_in is None or df_in.empty:
             return {"error": "Traceability KPI Inbound sheet not found or is empty.", "results": []}
 
@@ -4874,11 +5386,37 @@ class UploadExcelViewRoche(View):
         )
         # تاريخ استلام الشحنة (من Inbound)
         received_ts_col = self._find_col(
-            cols_in, "Received Timestamp", "Received Timestamp", "ReceivedTimestamp"
+            cols_in,
+            "Received Timestamp",
+            "Received Timestamp",
+            "ReceivedTimestamp",
+            "Receipt Timestamp",
+            "Receipt Time",
+            "Received Date",
+            "Goods Receipt",
+            "GRN Timestamp",
+        )
+        received_ts_help = (
+            "Received Timestamp is read only from the Traceability KPI Inbound sheet "
+            "(«Received Timestamp» or similar receipt column), not from Outbound."
+            if received_ts_col
+            else (
+                "Received Timestamp is empty: no matching receipt column on the Inbound sheet "
+                "(this field is not read from Outbound)."
+            )
         )
 
-        if not item_col and not batch_col:
-            return {"error": "Item Code and Batch Nbr columns were not found in the Inbound sheet.", "results": []}
+        if not item_col and not batch_col and not lpn_col:
+            return {
+                "error": "Item Code, Batch Nbr, and LPN Nbr columns were not found in the Inbound sheet.",
+                "results": [],
+            }
+        if item_code and not item_col:
+            return {"error": "Item Code column was not found in the Inbound sheet.", "results": []}
+        if batch_nbr and not batch_col:
+            return {"error": "Batch Nbr column was not found in the Inbound sheet.", "results": []}
+        if lpn_nbr and not lpn_col:
+            return {"error": "LPN Nbr column was not found in the Inbound sheet.", "results": []}
 
         def safe_str(v):
             if pd.isna(v):
@@ -4933,13 +5471,61 @@ class UploadExcelViewRoche(View):
             except (TypeError, ValueError):
                 return 0.0
 
-        # فلترة: أولاً حسب Item Code ثم حسب batch_nbr (الاثنان معاً إذا وُجد المدخلان)
+        # بحث بـ LPN فقط: لازم نفس الـ LPN يظهر في Inbound و Outbound معًا
+        lpn_only_search = bool(lpn_nbr and not item_code and not batch_nbr)
+        if lpn_only_search:
+            q_lpn_match = normalize_code_value(lpn_nbr)
+            has_in_lpn = bool(lpn_col) and (
+                df_in[lpn_col].map(normalize_code_value) == q_lpn_match
+            ).any()
+            lpn_out_col = None
+            if df_out is not None and not df_out.empty:
+                lpn_out_col = self._find_col(
+                    {c: c for c in df_out.columns},
+                    "LPN Nbr",
+                    "LPN Nbr",
+                    "LPN",
+                )
+            msg_base = (
+                "LPN Nbr in Traceability KPI Inbound does not match LPN Nbr in "
+                "Traceability KPI Outbound."
+            )
+            if df_out is None or df_out.empty:
+                return {
+                    "error": msg_base + " (Outbound sheet missing or empty.)",
+                    "results": [],
+                }
+            if not lpn_out_col:
+                return {
+                    "error": msg_base + " (LPN Nbr column not found on Outbound sheet.)",
+                    "results": [],
+                }
+            has_out_lpn = (
+                df_out[lpn_out_col].map(normalize_code_value) == q_lpn_match
+            ).any()
+            if has_in_lpn and not has_out_lpn:
+                return {
+                    "error": msg_base + " (This LPN was not found on Outbound.)",
+                    "results": [],
+                }
+            if not has_in_lpn and has_out_lpn:
+                return {
+                    "error": msg_base + " (This LPN was not found on Inbound.)",
+                    "results": [],
+                }
+            if not has_in_lpn and not has_out_lpn:
+                return {"error": "", "results": []}
+
+        # فلترة (AND): Item Code، Batch Nbr، LPN Nbr — حسب ما أدخل المستخدم
         if item_col and item_code:
             q_item = normalize_code_value(item_code)
-            df_in = df_in[df_in[item_col].apply(normalize_code_value) == q_item]
+            df_in = df_in[df_in[item_col].map(normalize_code_value) == q_item]
         if not df_in.empty and batch_col and batch_nbr:
             q_batch = normalize_code_value(batch_nbr)
-            df_in = df_in[df_in[batch_col].apply(normalize_code_value) == q_batch]
+            df_in = df_in[df_in[batch_col].map(normalize_code_value) == q_batch]
+        if not df_in.empty and lpn_col and lpn_nbr:
+            q_lpn = normalize_code_value(lpn_nbr)
+            df_in = df_in[df_in[lpn_col].map(normalize_code_value) == q_lpn]
 
         if df_in.empty:
             return {"error": "", "results": []}
@@ -4978,40 +5564,63 @@ class UploadExcelViewRoche(View):
             mask_out = pd.Series(False, index=df_out.index)
             if item_out and item_code:
                 q_item = normalize_code_value(item_code)
-                series_items_out = df_out[item_out].apply(normalize_code_value)
-                mask_out = mask_out | (series_items_out == q_item)
+                mask_out = mask_out | (
+                    df_out[item_out].map(normalize_code_value) == q_item
+                )
             if batch_out and batch_nbr:
                 q_batch = normalize_code_value(batch_nbr)
-                series_batch_out = df_out[batch_out].apply(normalize_code_value)
-                mask_out = mask_out | (series_batch_out == q_batch)
+                mask_out = mask_out | (
+                    df_out[batch_out].map(normalize_code_value) == q_batch
+                )
+            if lpn_out and lpn_nbr:
+                q_lpn_o = normalize_code_value(lpn_nbr)
+                mask_out = mask_out | (
+                    df_out[lpn_out].map(normalize_code_value) == q_lpn_o
+                )
             df_out_filtered = df_out[mask_out].copy() if mask_out.any() else None
         else:
-            packed_qty_col = customer_col = picked_time_col = packed_ts_col = current_qty_col = lpn_out = item_out = None
+            packed_qty_col = customer_col = picked_time_col = packed_ts_col = current_qty_col = lpn_out = item_out = batch_out = None
 
         # بناء قائمة Outbound مرة واحدة (مع Item Code بدل LPN)
         outbound_list = []
         if df_out_filtered is not None and not df_out_filtered.empty:
-            for _, out_row in df_out_filtered.iterrows():
+            _out_cols = [
+                c
+                for c in (
+                    packed_qty_col,
+                    item_out,
+                    batch_out,
+                    lpn_out,
+                    customer_col,
+                    picked_time_col,
+                    packed_ts_col,
+                )
+                if c
+            ]
+            _sub_out = (
+                df_out_filtered[_out_cols] if _out_cols else df_out_filtered
+            )
+            for rec in _sub_out.to_dict("records"):
                 pq = (
-                    safe_float(out_row.get(packed_qty_col)) if packed_qty_col else 0.0
-                )
-                out_item_code = safe_str(out_row.get(item_out)) if item_out else ""
-                cust = safe_str(out_row.get(customer_col)) if customer_col else ""
-                picked = (
-                    safe_str(out_row.get(picked_time_col))
-                    if picked_time_col
-                    else ""
-                )
-                packed_ts = (
-                    safe_str(out_row.get(packed_ts_col)) if packed_ts_col else ""
+                    safe_float(rec.get(packed_qty_col)) if packed_qty_col else 0.0
                 )
                 outbound_list.append(
                     {
-                        "item_code": out_item_code,
+                        "item_code": safe_str(rec.get(item_out)) if item_out else "",
+                        "batch_nbr": safe_str(rec.get(batch_out)) if batch_out else "",
+                        "lpn_nbr": safe_str(rec.get(lpn_out)) if lpn_out else "",
                         "packed_qty": pq,
-                        "customer_name": cust,
-                        "detail_picked_time": picked,
-                        "packed_timestamp": packed_ts,
+                        "customer_name": (
+                            safe_str(rec.get(customer_col)) if customer_col else ""
+                        ),
+                        "detail_picked_time": (
+                            safe_str(rec.get(picked_time_col))
+                            if picked_time_col
+                            else ""
+                        ),
+                        "packed_timestamp": (
+                            safe_str(rec.get(packed_ts_col)) if packed_ts_col else ""
+                        ),
                     }
                 )
             def _parse_dt(s):
@@ -5025,8 +5634,8 @@ class UploadExcelViewRoche(View):
                     return pd.Timestamp.min
 
             outbound_list.sort(
-                key=lambda o: _parse_dt(o.get("detail_picked_time") or o.get("packed_timestamp")),
-                reverse=True,
+                key=lambda o: _parse_dt(o.get("packed_timestamp") or o.get("detail_picked_time")),
+                reverse=False,
             )
 
         # تجميع حسب التاريخ فقط (نفس اليوم): صفين نفس التاريخ → صف واحد + جمع Orig Qty
@@ -5049,7 +5658,7 @@ class UploadExcelViewRoche(View):
             df_in["__dummy__"] = ""
 
         df_in = df_in.copy()
-        df_in["_group_ts"] = df_in[create_ts_col].apply(_norm_ts)
+        df_in["_group_ts"] = df_in[create_ts_col].map(_norm_ts)
 
         results = []
         for _group_ts, grp in df_in.groupby("_group_ts", sort=False):
@@ -5070,9 +5679,20 @@ class UploadExcelViewRoche(View):
                 packed_total = sum(safe_float(o.get("packed_qty")) for o in outbound_list) if outbound_list else 0.0
                 orig_qty = inbound_current_sum + packed_total
             expiry = safe_str(grp[expiry_col].iloc[0]) if expiry_col and expiry_col in grp.columns else ""
-            item_desc = safe_str(grp[item_desc_col].iloc[0]) if item_desc_col and item_desc_col in grp.columns else ""
+            item_desc_raw = safe_str(grp[item_desc_col].iloc[0]) if item_desc_col and item_desc_col in grp.columns else ""
+            item_desc = _clean_traceability_item_description(item_desc_raw)
             received_ts_str = safe_str(grp[received_ts_col].iloc[0]) if received_ts_col and received_ts_col in grp.columns else ""
             item_code_display = safe_str(grp[item_col].iloc[0]) if item_col and item_col in grp.columns else (item_code or "")
+            batch_display = (
+                safe_str(grp[batch_col].iloc[0])
+                if batch_col and batch_col in grp.columns
+                else ""
+            )
+            lpn_display = (
+                safe_str(grp[lpn_col].iloc[0])
+                if lpn_col and lpn_col in grp.columns
+                else ""
+            )
             current_qty = (
                 grp[current_qty_in_col].apply(safe_float).sum()
                 if current_qty_in_col and current_qty_in_col in grp.columns
@@ -5081,6 +5701,8 @@ class UploadExcelViewRoche(View):
             results.append(
                 {
                     "item_code": item_code_display,
+                    "batch_nbr": batch_display,
+                    "lpn_nbr": lpn_display,
                     "create_timestamp": create_ts_str,
                     "orig_qty": orig_qty,
                     "expiry_date": expiry,
@@ -5103,14 +5725,84 @@ class UploadExcelViewRoche(View):
 
         results.sort(key=lambda r: _parse_create_ts(r), reverse=False)
 
-        return {"error": "", "results": results}
+        def _coerce_ts(val):
+            if val is None:
+                return pd.NaT
+            if isinstance(val, str) and not val.strip():
+                return pd.NaT
+            try:
+                t = pd.to_datetime(val, errors="coerce")
+                return t if pd.notna(t) else pd.NaT
+            except Exception:
+                return pd.NaT
+
+        def _outbound_event_ts(o):
+            for key in ("packed_timestamp", "detail_picked_time"):
+                t = _coerce_ts(o.get(key))
+                if pd.notna(t):
+                    return t
+            return pd.Timestamp.min
+
+        timeline = []
+        for r in results:
+            ir = {k: v for k, v in r.items() if k != "outbounds"}
+            timeline.append(
+                {
+                    "kind": "inbound",
+                    "display_date": ir.get("create_timestamp") or "",
+                    "inbound": ir,
+                }
+            )
+        for o in outbound_list:
+            od = {
+                "item_code": o.get("item_code"),
+                "batch_nbr": o.get("batch_nbr"),
+                "lpn_nbr": o.get("lpn_nbr"),
+                "packed_qty": o.get("packed_qty"),
+                "customer_name": o.get("customer_name"),
+                "detail_picked_time": o.get("detail_picked_time"),
+                "packed_timestamp": o.get("packed_timestamp"),
+            }
+            label = od.get("packed_timestamp") or od.get("detail_picked_time") or ""
+            timeline.append(
+                {
+                    "kind": "outbound",
+                    "display_date": label,
+                    "outbound": od,
+                }
+            )
+
+        def _ev_sort_key(ev):
+            if ev["kind"] == "inbound":
+                t = _coerce_ts(ev["inbound"].get("create_timestamp"))
+                sub = 0
+            else:
+                t = _outbound_event_ts(ev["outbound"])
+                sub = 1
+            if pd.isna(t) or t == pd.Timestamp.min:
+                t = pd.Timestamp.max
+            return (t, sub)
+
+        timeline.sort(key=_ev_sort_key)
+
+        return {
+            "error": "",
+            "results": results,
+            "timeline": timeline,
+            "received_timestamp_help": received_ts_help,
+        }
 
     def traceability_search(self, request):
-        """استجابة AJAX لبحث Traceability (Item Code أو Batch Nbr)."""
-        print("🔍 [Traceability] بحث — item_code=%s, batch_nbr=%s" % (
-            request.GET.get("item_code", ""),
-            request.GET.get("batch_nbr", ""),
-        ))
+        """استجابة AJAX لبحث Traceability (Item Code / Batch Nbr / LPN Nbr)."""
+        if getattr(settings, "DEBUG", False):
+            print(
+                "[Traceability] search item_code=%s batch_nbr=%s lpn_nbr=%s"
+                % (
+                    request.GET.get("item_code", ""),
+                    request.GET.get("batch_nbr", ""),
+                    request.GET.get("lpn_nbr", ""),
+                )
+            )
         data = self._traceability_search_data(request)
         return JsonResponse(data, safe=False)
 
@@ -5122,13 +5814,14 @@ class UploadExcelViewRoche(View):
             "<h5 class='mb-0'>Traceability KPI — Shipment Traceability</h5>"
             "</div>"
             "<div class='mb-3'>"
-            "<label class='form-label fw-semibold' style='color: #81613E;'>Search by Item Code and/or Batch Number</label>"
+            "<label class='form-label fw-semibold' style='color: #81613E;'>Search by Item Code, Batch Nbr, and/or LPN Nbr</label>"
             "<div class='d-flex flex-wrap align-items-center justify-content-center gap-2'>"
-            "<input type='text' id='traceability-item-code' class='form-control' placeholder='Item Code' style='border-color: #C3B091; max-width: 200px;' />"
-            "<input type='text' id='traceability-batch-nbr' class='form-control' placeholder='Batch Nbr' style='border-color: #C3B091; max-width: 200px;' />"
+            "<input type='text' id='traceability-item-code' class='form-control' placeholder='Item Code' style='border-color: #C3B091; max-width: 180px;' />"
+            "<input type='text' id='traceability-batch-nbr' class='form-control' placeholder='Batch Nbr' style='border-color: #C3B091; max-width: 180px;' />"
+            "<input type='text' id='traceability-lpn-nbr' class='form-control' placeholder='LPN Nbr' style='border-color: #C3B091; max-width: 180px;' />"
             "<button type='button' id='traceability-search-btn' class='btn text-white' style='background-color: #9F8170; border-color: #9F8170;'>Search</button>"
             "</div>"
-            "<small class='text-muted'>Enter Item Code and/or Batch Number then click Search or press Enter.</small>"
+            "<small class='text-muted'>Enter at least one field, then Search or press Enter.</small>"
             "</div>"
             "<div id='traceability-loading' class='mb-3' style='display:none;'>"
             "<p class='text-muted mb-0'><span class='spinner-border spinner-border-sm me-2' role='status'></span>Searching...</p>"
@@ -5236,9 +5929,9 @@ class UploadExcelViewRoche(View):
                     "chart_data": [],
                 }
 
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             if df.empty:
                 return {
@@ -5257,7 +5950,11 @@ class UploadExcelViewRoche(View):
                 or (first_col and "inbound report" in first_col.lower())
             ):
                 raw = pd.read_excel(
-                    excel_path, sheet_name=sheet_name, engine="openpyxl", header=None
+                    excel_path,
+                    sheet_name=sheet_name,
+                    engine="openpyxl",
+                    header=None,
+                    **_nr_kw,
                 )
                 if raw.empty or raw.shape[0] < 2:
                     raw.columns = raw.columns.astype(str).str.strip()
@@ -5897,9 +6594,9 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
-            _nrows = getattr(settings, "EXCEL_LOAD_MAX_ROWS", 500)
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", nrows=_nrows
+                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
             if df.empty:
                 return {
@@ -6260,12 +6957,14 @@ class UploadExcelViewRoche(View):
             if not sheet_name:
                 return {"error": "⚠️ Sheet 'PODs' was not found."}
 
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
                 excel_path,
                 sheet_name=sheet_name,
                 engine="openpyxl",
                 dtype=str,
                 header=0,
+                **_nr_kw,
             ).fillna("")
             df.columns = df.columns.astype(str).str.strip()
 
@@ -6820,12 +7519,14 @@ class UploadExcelViewRoche(View):
             )
             if inbound_sheet:
                 try:
+                    _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
                     df_in = pd.read_excel(
                         excel_path,
                         sheet_name=inbound_sheet,
                         engine="openpyxl",
                         dtype=str,
                         header=0,
+                        **_nr_kw,
                     ).fillna("")
                     df_in.columns = df_in.columns.astype(str).str.strip()
 
@@ -7093,12 +7794,14 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
             df = pd.read_excel(
                 excel_path,
                 sheet_name=expiry_sheet,
                 engine="openpyxl",
                 dtype=str,
                 header=0,
+                **_nr_kw,
             ).fillna("")
             df.columns = df.columns.astype(str).str.strip()
 
@@ -7340,7 +8043,8 @@ class UploadExcelViewRoche(View):
                 if selected_months is not None
                 else ""
             )
-            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_month_part}_{_months_list}"
+            _full_flag = "1" if _excel_full_data_requested(request) else "0"
+            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_month_part}_{_months_list}_{_full_flag}"
             cached_result = cache.get(_cache_key)
             if cached_result is not None:
                 return cached_result
@@ -7387,9 +8091,12 @@ class UploadExcelViewRoche(View):
             )
 
             final_df_3pl = None
+            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
 
             if sheet_3pl:
-                df = pd.read_excel(excel_path, sheet_name=sheet_3pl, engine="openpyxl")
+                df = pd.read_excel(
+                    excel_path, sheet_name=sheet_3pl, engine="openpyxl", header=0, **_nr_kw
+                )
                 df.columns = df.columns.str.strip().str.lower()
 
                 required_cols = [
@@ -7641,7 +8348,7 @@ class UploadExcelViewRoche(View):
             )
             if sheet_roche:
                 df = pd.read_excel(
-                    excel_path, sheet_name=sheet_roche, engine="openpyxl"
+                    excel_path, sheet_name=sheet_roche, engine="openpyxl", header=0, **_nr_kw
                 )
                 df.columns = df.columns.str.strip()
                 if "Month" in df.columns:
@@ -8032,7 +8739,7 @@ class UploadExcelViewRoche(View):
                         selected_months=selected_months,
                     )
                 elif tab_lower == "safety kpi":
-                    res = {"detail_html": "<p class='text-muted text-center p-4'>Loading data</p>", "count": 0, "hit_pct": 0}
+                    res = self._render_safety_kpi_tab(request)
                 elif tab_lower == "traceability kpi":
                     res = {"detail_html": "<p class='text-muted text-center p-4'>Loading data</p>", "count": 0, "hit_pct": 0}
                 elif tab_lower == "b2c outbound":
@@ -8170,22 +8877,22 @@ class UploadExcelViewRoche(View):
 
         # كل الداتا من الشيت فقط — لا قيم يدوية. لو مفيش ملف أو الشيت فاضي نستخدم قيم فارغة/صفر.
         if excel_path:
-            inbound_data = _read_inbound_data_from_excel(excel_path)
+            inbound_data = _read_inbound_data_from_excel(excel_path, request)
             if inbound_data:
                 context["inbound_kpi"] = inbound_data["inbound_kpi"]
                 context["pending_shipments"] = inbound_data["pending_shipments"]
 
-            charts_from_excel = _read_dashboard_charts_from_excel(excel_path)
+            charts_from_excel = _read_dashboard_charts_from_excel(excel_path, request)
             for key, value in charts_from_excel.items():
                 if value is not None:
                     context[key] = value
 
-            outbound_data = _read_outbound_data_from_excel(excel_path)
+            outbound_data = _read_outbound_data_from_excel(excel_path, request)
             if outbound_data and "outbound_kpi" in outbound_data:
                 context["outbound_kpi"] = outbound_data["outbound_kpi"]
                 context["outbound_kpi_keys_from_sheet"] = outbound_data.get("outbound_kpi_keys_from_sheet", [])
 
-            pods_data = _read_pods_data_from_excel(excel_path)
+            pods_data = _read_pods_data_from_excel(excel_path, request)
             if pods_data:
                 context["pod_compliance_chart_data"] = {
                     "categories": pods_data.get("categories", []),
@@ -8194,25 +8901,25 @@ class UploadExcelViewRoche(View):
                 if "pod_status_breakdown" in pods_data:
                     context["pod_status_breakdown"] = pods_data["pod_status_breakdown"]
 
-            returns_data = _read_returns_data_from_excel(excel_path)
+            returns_data = _read_returns_data_from_excel(excel_path, request)
             if returns_data:
                 context["returns_kpi"] = returns_data.get("returns_kpi", {})
                 if "returns_chart_data" in returns_data:
                     context["returns_chart_data"] = returns_data["returns_chart_data"]
 
-            inventory_data = _read_inventory_data_from_excel(excel_path)
+            inventory_data = _read_inventory_data_from_excel(excel_path, request)
             if inventory_data:
                 context["inventory_kpi"] = inventory_data.get("inventory_kpi", {})
 
-            capacity_data = _read_inventory_snapshot_capacity_from_excel(excel_path)
+            capacity_data = _read_inventory_snapshot_capacity_from_excel(excel_path, request)
             if capacity_data:
                 context["inventory_capacity_data"] = capacity_data.get("inventory_capacity_data", {})
 
-            warehouse_table = _read_inventory_warehouse_table_from_excel(excel_path)
+            warehouse_table = _read_inventory_warehouse_table_from_excel(excel_path, request)
             if warehouse_table:
                 context["inventory_warehouse_table"] = warehouse_table.get("inventory_warehouse_table", [])
 
-            returns_region = _read_returns_region_table_from_excel(excel_path)
+            returns_region = _read_returns_region_table_from_excel(excel_path, request)
             if returns_region:
                 context["returns_region_table"] = returns_region.get("returns_region_table", [])
 

@@ -10,10 +10,20 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# كاش ملفات على PythonAnywhere: ضعي المسار تحت home بدل /tmp إن أمكن (أدوم)
+_default_cache_dir = os.environ.get("DJANGO_CACHE_DIR", "") or str(
+    Path.home() / "django_excel_cache"
+)
+try:
+    os.makedirs(_default_cache_dir, mode=0o700, exist_ok=True)
+except OSError:
+    _default_cache_dir = "/tmp/django_cache"
 
 
 # Quick-start development settings - unsuitable for production
@@ -150,11 +160,18 @@ SASS_PROCESSOR_ROOT = BASE_DIR / "static"
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
-        "LOCATION": "/tmp/django_cache",
+        "LOCATION": _default_cache_dir,
+        "TIMEOUT": 3600,
     }
 }
 
-# حد أقصى لعدد صفوف الإكسل المُحمّلة للعرض (لتسريع فتح الموقع)
+# ─── إكسل: معاينة سريعة ثم تحميل كامل عند ?full_data=1 ───
+# أول تحميل للتاب (بدون full_data): يقرأ أول N صف فقط → أسرع على PythonAnywhere
+EXCEL_PREVIEW_MAX_ROWS = 200
+# عند الضغط على «تحميل كامل» أو full_data=1: حد أقصى للصفوف (خفّضيه لو السيرفر يتعطل)
+# None = قراءة الشيت كاملًا (قد يكون بطيئًا جدًا على ملفات ضخمة)
+EXCEL_FULL_MAX_ROWS = 50000
+# للتوافق مع كود قديم يشير لـ EXCEL_LOAD_MAX_ROWS
 EXCEL_LOAD_MAX_ROWS = 500
 
 # CACHES = {

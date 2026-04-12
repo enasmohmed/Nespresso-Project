@@ -1,8 +1,10 @@
 # views.py
 import datetime
+import time
 import hashlib
 import shutil
 import os
+import uuid
 import re
 import unicodedata
 from io import BytesIO
@@ -13,12 +15,13 @@ import numpy as np
 from django.conf import settings
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.http import JsonResponse, HttpResponse
 from django.views import View
 from .forms import ExcelUploadForm
 from django.core.cache import cache
 
-from django.views.decorators.cache import cache_control
+from django.views.decorators.cache import never_cache
 import json, traceback, os
 from datetime import date
 from django.db.models import Q
@@ -31,6 +34,122 @@ from django.utils.decorators import method_decorator
 from django.utils.text import slugify
 
 from .models import MeetingPoint, ExcelSheetCache
+
+try:
+    from dateutil import parser as _dateutil_parser
+except ImportError:  # pragma: no cover
+    _dateutil_parser = None
+
+
+def _strip_excel_date_str(val):
+    """Normalize Excel-exported date strings (NBSP, BOM, bidi marks)."""
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    if not s or s.lower() in ("nat", "nan", "none", "<na>"):
+        return ""
+    for ch in ("\ufeff", "\u200e", "\u200f", "\u202a", "\u202c"):
+        s = s.replace(ch, "")
+    s = s.replace("\xa0", " ").strip()
+    while "  " in s:
+        s = s.replace("  ", " ")
+    return s
+
+
+def _try_dateutil_parse(val):
+    """
+    Last-resort parse for US-style Excel strings (e.g. 1/26/2026 12:15:00 PM)
+    when pandas infer / strptime formats leave NaT.
+    """
+    if _dateutil_parser is None:
+        return pd.NaT
+    if val is None:
+        return pd.NaT
+    try:
+        if isinstance(val, (float, int)) and not isinstance(val, bool):
+            if pd.isna(val):
+                return pd.NaT
+    except TypeError:
+        pass
+    if isinstance(val, pd.Timestamp):
+        return val if pd.notna(val) else pd.NaT
+    if isinstance(val, datetime.datetime):
+        return pd.Timestamp(val)
+    if isinstance(val, datetime.date):
+        return pd.Timestamp(datetime.datetime.combine(val, datetime.time.min))
+    s = _strip_excel_date_str(val)
+    if not s:
+        return pd.NaT
+    try:
+        dt = _dateutil_parser.parse(s, dayfirst=False, yearfirst=False)
+        return pd.Timestamp(dt)
+    except (ValueError, TypeError, OverflowError, OSError):
+        return pd.NaT
+
+
+def _excel_dates_to_datetime(arg, **kwargs):
+    """
+    Parse Excel/date columns for the dashboard. Ambiguous strings such as 01/02/2024
+    are read as month/day/year (US order): January 2, 2024 — not February 1.
+    After the generic pass, any still-missing values in a Series are retried with
+    explicit US (m/d/Y) and ISO formats so one column keeps one interpretation.
+    ISO datetimes and Excel serials from the first pass stay as-is. Pass dayfirst=True
+    to force European order for the whole column instead.
+    Remaining NaT strings (e.g. ``1/26/2026 12:15:00 PM`` with odd spacing) are retried
+    with US strptime formats first, then ``dateutil.parser`` as a last resort.
+    """
+    kw = dict(kwargs)
+    kw.setdefault("errors", "coerce")
+    kw.setdefault("dayfirst", False)
+    out = pd.to_datetime(arg, **kw)
+    if not isinstance(arg, pd.Series):
+        try:
+            if pd.isna(out):
+                t2 = _try_dateutil_parse(arg)
+                if pd.notna(t2):
+                    return t2
+        except (TypeError, ValueError):
+            pass
+        return out
+    if kw.get("dayfirst", False) is not True:
+        need = out.isna() & arg.notna()
+        if need.any():
+            s = (
+                arg.loc[need]
+                .map(lambda x: _strip_excel_date_str(x) if pd.notna(x) else "")
+                .replace("", pd.NA)
+            )
+            s = s.dropna()
+            if not s.empty:
+                acc = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
+                for fmt in (
+                    "%m/%d/%Y %I:%M:%S %p",
+                    "%m/%d/%Y %I:%M %p",
+                    "%m/%d/%Y %H:%M:%S",
+                    "%m/%d/%Y %H:%M",
+                    "%m/%d/%Y",
+                    "%m/%d/%y %I:%M:%S %p",
+                    "%m/%d/%y %H:%M:%S",
+                    "%m/%d/%y",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%d",
+                ):
+                    part = pd.to_datetime(s, format=fmt, errors="coerce")
+                    acc = acc.where(acc.notna(), part)
+                out = out.copy()
+                sub = out.reindex(acc.index)
+                out.loc[acc.index] = acc.combine_first(sub)
+        loose = out.isna() & arg.notna()
+        if loose.any():
+            extra = arg.loc[loose].map(_try_dateutil_parse)
+            out = out.copy()
+            out.loc[loose] = extra.where(extra.notna(), out.loc[loose])
+    return out
 
 
 def make_json_serializable(df):
@@ -133,6 +252,278 @@ def _normalize_upload_to_latest_xlsx_and_update_cache(file_path, folder_path):
         return file_path
 
 
+_MERGE_KEY_EXACT = [
+    "ORDER / SO",
+    "ORDER/SO",
+    "Order / SO",
+    "SO",
+    "Order Number",
+    "Order Nbr",
+    "Order No",
+    "LPN Nbr",
+    "LPN NBR",
+    "Item Code",
+    "ITEM CODE",
+    "Batch Nbr",
+    "Shipment ID",
+    "AWB",
+    "Tracking Number",
+    "ASN",
+]
+
+_MERGE_KEY_SUBSTRINGS = [
+    "order nbr",
+    "order number",
+    "order/so",
+    "lpn nbr",
+    "item code",
+    "batch nbr",
+    "shipment id",
+    "tracking",
+    "awb",
+    "invoice",
+    "asn",
+]
+
+
+def _find_sheet_merge_key_column(df):
+    """عمود مميّز لدمج صفوف الشيت (الرفع الجديد يفوز عند التكرار)."""
+    if df is None or df.empty:
+        return None
+    cols = list(df.columns)
+    for cand in _MERGE_KEY_EXACT:
+        cl = cand.lower()
+        for c in cols:
+            if str(c).strip().lower() == cl:
+                return c
+    for cand in _MERGE_KEY_EXACT:
+        cl = cand.lower()
+        for c in cols:
+            if cl in str(c).strip().lower():
+                return c
+    for sub in _MERGE_KEY_SUBSTRINGS:
+        for c in cols:
+            if sub in str(c).strip().lower():
+                return c
+    return None
+
+
+def _strip_empty_rows(df):
+    """
+    يحذف الصفوف اللي كل خلاياها فاضية (NaN / نص فاضي) ويعيد ترقيم الصفوف في الـ DataFrame.
+    عند الحفظ بـ pandas لا تُكتب صفوف فارغة في الإكسل.
+    """
+    if df is None:
+        return pd.DataFrame()
+    original_cols = df.columns
+    d = df.copy()
+    if d.empty:
+        return pd.DataFrame(columns=original_cols)
+    d.columns = d.columns.astype(str)
+
+    def _cell_blank(x):
+        if x is None:
+            return True
+        try:
+            if pd.isna(x):
+                return True
+        except (ValueError, TypeError):
+            pass
+        if isinstance(x, str) and not str(x).strip():
+            return True
+        return False
+
+    keep = ~d.apply(lambda row: all(_cell_blank(v) for v in row), axis=1)
+    d = d.loc[keep].reset_index(drop=True)
+    if d.empty:
+        return pd.DataFrame(columns=original_cols)
+    return d
+
+
+def _merge_two_sheet_dfs(old_df, new_df):
+    if old_df is None or getattr(old_df, "empty", True):
+        return new_df.copy() if new_df is not None else pd.DataFrame()
+    if new_df is None or getattr(new_df, "empty", True):
+        return old_df.copy()
+    o = old_df.copy()
+    n = new_df.copy()
+    o.columns = o.columns.astype(str).str.strip()
+    n.columns = n.columns.astype(str).str.strip()
+    key = _find_sheet_merge_key_column(n) or _find_sheet_merge_key_column(o)
+    all_cols = list(
+        dict.fromkeys(list(n.columns) + [c for c in o.columns if c not in n.columns])
+    )
+    oa = o.reindex(columns=all_cols)
+    na = n.reindex(columns=all_cols)
+    if key and key in all_cols:
+        combined = pd.concat([oa, na], ignore_index=True)
+        k = combined[key].astype(str).str.strip()
+        combined = combined.loc[
+            ~k.isin(("", "nan", "none", "<na>", "nat", "NaT"))
+        ].copy()
+        combined = combined.drop_duplicates(subset=[key], keep="last")
+    else:
+        combined = pd.concat([oa, na], ignore_index=True).drop_duplicates()
+    return combined
+
+
+def _try_remove_libreoffice_lock_files(folder_path):
+    """
+    LibreOffice ينشئ ملفات مثل .~lock.latest.xlsx# في نفس مجلد الملف المفتوح.
+    حذفها آمن (نص صغير) وقد يزيل تعارض الحذف/الاستبدال على لينكس.
+    """
+    for fname in (".~lock.latest.xlsx#", ".~lock.latest.xlsm#"):
+        p = os.path.join(folder_path, fname)
+        if not os.path.isfile(p):
+            continue
+        try:
+            os.remove(p)
+            print(f"🗑️ [upload] تم حذف ملف قفل LibreOffice: {fname}")
+        except OSError as e:
+            print(f"⚠️ [upload] تعذر حذف ملف القفل {fname}: {e}")
+
+
+def _write_django_uploaded_file_to_disk(uploaded_file, dest_path):
+    """
+    حفظ موثوق لملف الرفع: الملفات الأكبر من حد الذاكرة تكون TemporaryUploadedFile
+    ويُفضّل النسخ من temporary_file_path() بدل copyfileobj/chunks حتى لا يُكتب ملف فارغ.
+    """
+    tfp = getattr(uploaded_file, "temporary_file_path", None)
+    if callable(tfp):
+        try:
+            src = uploaded_file.temporary_file_path()
+            if src and os.path.isfile(src):
+                try:
+                    shutil.copy2(src, dest_path)
+                    return
+                except OSError as e:
+                    if getattr(e, "errno", None) in (13, 1):
+                        raise RuntimeError(
+                            "لا يمكن الكتابة في مجلد الرفع (صلاحيات). أعد ملكية المجلد لمستخدم السيرفر، مثلاً: "
+                            'sudo chown -R "$USER":"$USER" media/excel_uploads'
+                        ) from e
+                    raise
+        except RuntimeError:
+            raise
+        except Exception as e:
+            print(f"⚠️ [upload] نسخ من temporary_file_path فشل، نستخدم chunks: {e}")
+
+    if hasattr(uploaded_file, "seek"):
+        try:
+            uploaded_file.seek(0)
+        except (OSError, AttributeError, TypeError, ValueError):
+            pass
+    try:
+        with open(dest_path, "wb") as out:
+            for chunk in uploaded_file.chunks():
+                out.write(chunk)
+    except OSError as e:
+        if getattr(e, "errno", None) in (13, 1):
+            raise RuntimeError(
+                "لا يمكن الكتابة في مجلد الرفع (صلاحيات). أعد ملكية المجلد لمستخدم السيرفر، مثلاً: "
+                'sudo chown -R "$USER":"$USER" media/excel_uploads'
+            ) from e
+        raise
+
+
+def _existing_main_workbook_before_upload(folder_path):
+    """آخر ملف رئيسي قبل الاستبدال (latest.xlsx ثم latest.xlsm)."""
+    for name in ("latest.xlsx", "latest.xlsm"):
+        p = os.path.join(folder_path, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _merge_clean_excel_workbook(target_path, previous_path=None):
+    """
+    - إن وُجد previous_path: يدمج كل الشيتات ذات الاسم بين الملفين (الجديد يفوز عند تكرار المفتاح)،
+      ويُلحق شيتات موجودة في القديم فقط.
+    - دائماً: يحذف الصفوف الفارغة من كل شيت ويعيد كتابة الملف (صفوف متتالية بدون فراغات).
+    """
+    if not target_path or not os.path.isfile(target_path):
+        return
+    tmp_path = os.path.join(
+        os.path.dirname(target_path) or ".",
+        f"_workbook_merge_clean_{uuid.uuid4().hex}.xlsx",
+    )
+    try:
+        new_xls = pd.ExcelFile(target_path, engine="openpyxl")
+    except Exception as e:
+        print(f"⚠️ [Excel merge/clean] لا يمكن قراءة الملف الجديد: {e}")
+        return
+
+    new_names = list(new_xls.sheet_names)
+    old_by_name = {}
+    if previous_path and os.path.isfile(previous_path):
+        try:
+            old_xls = pd.ExcelFile(previous_path, engine="openpyxl")
+            for sn in old_xls.sheet_names:
+                try:
+                    odf = pd.read_excel(
+                        previous_path, sheet_name=sn, engine="openpyxl", header=0
+                    )
+                    odf.columns = odf.columns.astype(str).str.strip()
+                    old_by_name[str(sn)] = odf
+                except Exception as se:
+                    print(f"⚠️ [Excel merge/clean] تخطّي شيت قديم '{sn}': {se}")
+        except Exception as e:
+            print(f"⚠️ [Excel merge/clean] لا يمكن قراءة الملف القديم للدمج: {e}")
+
+    new_name_set = {str(x) for x in new_names}
+    ordered = list(new_names) + [s for s in old_by_name if s not in new_name_set]
+
+    def _excel_safe_sheet_title(name):
+        s = str(name or "Sheet").strip() or "Sheet"
+        return s[:31]
+
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            for sn in ordered:
+                snk = str(sn)
+                if snk in new_name_set:
+                    try:
+                        new_df = pd.read_excel(
+                            target_path, sheet_name=sn, engine="openpyxl", header=0
+                        )
+                        new_df.columns = new_df.columns.astype(str).str.strip()
+                    except Exception as re:
+                        print(f"⚠️ [Excel merge/clean] شيت جديد '{sn}': {re}")
+                        continue
+                else:
+                    new_df = None
+
+                if snk in new_name_set and snk in old_by_name:
+                    try:
+                        out = _merge_two_sheet_dfs(old_by_name[snk], new_df)
+                    except Exception as me:
+                        print(f"⚠️ [Excel merge/clean] دمج شيت '{sn}': {me}")
+                        out = new_df.copy()
+                elif snk in new_name_set:
+                    out = new_df.copy()
+                elif snk in old_by_name:
+                    out = old_by_name[snk].copy()
+                else:
+                    continue
+
+                out = _strip_empty_rows(out)
+                out.to_excel(
+                    writer, sheet_name=_excel_safe_sheet_title(sn), index=False
+                )
+        os.replace(tmp_path, target_path)
+        print(
+            f"✅ [Excel merge/clean] تمت المعالجة: شيتات={len(ordered)} "
+            f"{'(مع دمج)' if old_by_name else '(تنظيف فقط)'}"
+        )
+    except Exception as e:
+        print(f"⚠️ [Excel merge/clean] فشل إعادة الكتابة: {e}")
+        if os.path.isfile(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
 def _excel_full_data_requested(request):
     """الوضع الكامل: GET/POST full_data=1 أو true أو all."""
     if not request:
@@ -223,7 +614,9 @@ def _get_excel_path_for_request(request):
     """يرجع مسار ملف الإكسل المرفوع من الجلسة أو المجلد الافتراضي."""
     if not request:
         return None
-    folder = os.path.join(settings.MEDIA_ROOT, "excel_uploads")
+    folder = os.path.abspath(
+        os.path.join(str(settings.MEDIA_ROOT), "excel_uploads")
+    )
     if not os.path.isdir(folder):
         return None
     path = request.session.get("uploaded_excel_path")
@@ -236,6 +629,8 @@ def _get_excel_path_for_request(request):
         "all_sheet_nespresso.xlsm",
         "all sheet nespresso.xlsx",
         "all sheet nespresso.xlsm",
+        "latest.xlsm",
+        "latest.xlsx",
         "all_sheet.xlsx",
         "all_sheet.xlsm",
         "all sheet.xlsx",
@@ -331,7 +726,7 @@ def _extract_months_from_excel_cached(excel_path, sheet_names):
                     continue
                 _sheets_read += 1
                 col = possible_date_cols[0]
-                df[col] = pd.to_datetime(df[col], errors="coerce")
+                df[col] = _excel_dates_to_datetime(df[col], errors="coerce")
                 df["MonthName"] = df[col].dt.strftime("%b")
                 seen = set(df["MonthName"].dropna().unique().tolist())
                 all_months = [m for m in _month_order if m in seen]
@@ -352,6 +747,189 @@ def _extract_months_from_excel_cached(excel_path, sheet_names):
     except Exception:
         pass
     return all_months
+
+
+_MONTH_ABBR_ORDER = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+]
+_MONTH_ABBR_RANK = {m: i for i, m in enumerate(_MONTH_ABBR_ORDER)}
+
+
+def _dt_series_to_month_abbr_en(dt_series):
+    """
+    Map datetimes to English Jan..Dec. Does not use strftime('%b'), which follows
+    LC_TIME and can mismatch our fixed month lists on non-English servers.
+    """
+    if dt_series is None:
+        return pd.Series(dtype=object)
+    m = pd.to_numeric(dt_series.dt.month, errors="coerce")
+    labels = np.array(_MONTH_ABBR_ORDER, dtype=object)
+    out = pd.Series(pd.NA, index=dt_series.index, dtype=object)
+    valid = m.notna() & (m >= 1) & (m <= 12)
+    if valid.any():
+        out.loc[valid] = labels[(m.loc[valid].astype(int).values - 1)]
+    return out
+
+
+def _sorted_unique_month_abbrs(months_set):
+    return sorted((m for m in months_set if m in _MONTH_ABBR_RANK), key=lambda x: _MONTH_ABBR_RANK.get(x, 99))
+
+
+def _resolve_workbook_sheet_name(excel_path, sheet_guess):
+    if not excel_path or not sheet_guess or not os.path.isfile(excel_path):
+        return None
+    try:
+        xls = pd.ExcelFile(excel_path, engine="openpyxl")
+        names = list(xls.sheet_names)
+        if sheet_guess in names:
+            return sheet_guess
+        g = str(sheet_guess).strip().lower().replace(" ", "_")
+        for s in names:
+            if (s or "").strip().lower() == str(sheet_guess).strip().lower():
+                return s
+            if (s or "").strip().replace(" ", "_").lower() == g:
+                return s
+    except Exception:
+        return None
+    return None
+
+
+def _inbound_sheet_name_for_months(excel_path):
+    try:
+        xls = pd.ExcelFile(excel_path, engine="openpyxl")
+
+        def _n(s):
+            return re.sub(r"[^a-z0-9]", "", (str(s) or "").strip().lower())
+
+        for s in xls.sheet_names:
+            if _n(s) == "inboundtab":
+                return s
+        for s in xls.sheet_names:
+            if "ARAMCO Inbound Report" in (s or "").strip():
+                return s
+        for s in xls.sheet_names:
+            if "inbound" in (s or "").lower():
+                return s
+    except Exception:
+        pass
+    return None
+
+
+def _total_lead_time_sheet_for_months(excel_path):
+    try:
+        xls = pd.ExcelFile(excel_path, engine="openpyxl")
+        for s in xls.sheet_names:
+            sl = (s or "").lower()
+            if "total lead time preformance" in sl and "-r" not in sl:
+                return s
+    except Exception:
+        pass
+    return None
+
+
+def _capacity_expiry_sheet_for_months(excel_path):
+    try:
+        xls = pd.ExcelFile(excel_path, engine="openpyxl")
+
+        def _norm(s):
+            return (
+                str(s).strip().lower().replace(" ", "").replace("+", "").replace("_", "")
+                if s
+                else ""
+            )
+
+        for s in xls.sheet_names:
+            if _norm(s) == "capacityexpirytab":
+                return s
+        for s in xls.sheet_names:
+            if "capacity" in _norm(s) and "expiry" in _norm(s):
+                return s
+        for s in xls.sheet_names:
+            if (s or "").strip().lower() == "expiry":
+                return s
+        for s in xls.sheet_names:
+            if "expiry" in (s or "").lower():
+                return s
+    except Exception:
+        pass
+    return None
+
+
+def _distinct_month_abbrs_from_sheet(
+    excel_path,
+    sheet_guess,
+    *,
+    preferred_columns=None,
+    max_rows=None,
+):
+    """شهور مختصرة (Jan..Dec) من شيت واحد حسب أعمدة تاريخ أو قائمة أعمدة مفضلة."""
+    sn = _resolve_workbook_sheet_name(excel_path, sheet_guess)
+    if not sn:
+        return []
+    try:
+        read_kw = {"engine": "openpyxl", "header": 0}
+        mr = max_rows
+        if mr is None:
+            mr = getattr(settings, "EXCEL_FULL_MAX_ROWS", None)
+        if mr is not None:
+            try:
+                ni = int(mr)
+                if ni > 0:
+                    read_kw["nrows"] = ni
+            except (TypeError, ValueError):
+                pass
+        df = pd.read_excel(excel_path, sheet_name=sn, **read_kw)
+        df.columns = df.columns.astype(str).str.strip()
+        months = set()
+        cols_try = []
+        if preferred_columns:
+            for pref in preferred_columns:
+                pl = str(pref).lower()
+                hit = None
+                for c in df.columns:
+                    if str(c).strip().lower() == pl:
+                        hit = c
+                        break
+                if hit:
+                    cols_try.append(hit)
+                else:
+                    for c in df.columns:
+                        if pl in str(c).lower():
+                            cols_try.append(c)
+                            break
+        for c in df.columns:
+            if c in cols_try:
+                continue
+            cl = str(c).lower()
+            if any(
+                k in cl
+                for k in (
+                    "date",
+                    "time",
+                    "timestamp",
+                    "month",
+                )
+            ):
+                cols_try.append(c)
+        seen = set()
+        for c in cols_try:
+            if c in seen or c not in df.columns:
+                continue
+            seen.add(c)
+            try:
+                ser = _excel_dates_to_datetime(df[c], errors="coerce")
+            except Exception:
+                continue
+            if ser.notna().sum() == 0:
+                continue
+            for ab in _dt_series_to_month_abbr_en(ser).dropna().unique().tolist():
+                if ab in _MONTH_ABBR_RANK:
+                    months.add(ab)
+        return _sorted_unique_month_abbrs(months)
+    except Exception as e:
+        print(f"⚠️ [_distinct_month_abbrs_from_sheet] {sheet_guess}: {e}")
+        return []
 
 
 # اسم ملف الداشبورد الثابت (شيت تاني للتاب Dashboard فقط)
@@ -420,7 +998,7 @@ def _read_dashboard_charts_from_excel(excel_path, request=None):
                     month_col = cols_lower[c]
                     break
             if month_col:
-                df["_m"] = pd.to_datetime(df[month_col], errors="coerce").dt.strftime("%b")
+                df["_m"] = _excel_dates_to_datetime(df[month_col], errors="coerce").dt.strftime("%b")
                 by_month = df.groupby("_m").size().reindex(
                     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                 ).dropna()
@@ -577,7 +1155,7 @@ def _read_inbound_data_from_excel(excel_path, request=None):
     if not date_col and df.columns.size > 0:
         for c in df.columns:
             try:
-                pd.to_datetime(df[c].dropna().head(20), errors="coerce")
+                _excel_dates_to_datetime(df[c].dropna().head(20), errors="coerce")
                 date_col = c
                 break
             except Exception:
@@ -604,7 +1182,7 @@ def _read_inbound_data_from_excel(excel_path, request=None):
     if date_col and (vehicle_col or shipment_col):
         # تجميع يوم بيوم
         df_date = df.copy()
-        df_date["_date"] = pd.to_datetime(df_date[date_col], errors="coerce")
+        df_date["_date"] = _excel_dates_to_datetime(df_date[date_col], errors="coerce")
         df_date = df_date.dropna(subset=["_date"])
         df_date["_day"] = df_date["_date"].dt.normalize()
 
@@ -664,7 +1242,7 @@ def _read_inbound_data_from_excel(excel_path, request=None):
         s = df_status[status_col].fillna("").astype(str).str.strip().str.lower()
         df_status["_status_norm"] = s.str.replace(r"\s+", " ", regex=True)
         if date_col:
-            df_status["_date"] = pd.to_datetime(df_status[date_col], errors="coerce")
+            df_status["_date"] = _excel_dates_to_datetime(df_status[date_col], errors="coerce")
             df_status = df_status.dropna(subset=["_date"])
             df_status["_day"] = df_status["_date"].dt.normalize()
             # كل يوم: عدد الصفوف (شحنات) لكل حالة، ثم جمع كل الأيام
@@ -844,7 +1422,7 @@ def _read_pods_data_from_excel(excel_path, request=None):
     if df.empty:
         return None
 
-    df["_date"] = pd.to_datetime(df[date_col], errors="coerce")
+    df["_date"] = _excel_dates_to_datetime(df[date_col], errors="coerce")
     df = df.dropna(subset=["_date"])
     df["_month"] = df["_date"].dt.strftime("%b")
     month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -964,7 +1542,7 @@ def _read_returns_data_from_excel(excel_path, request=None):
     if df.empty:
         return None
 
-    df["_date"] = pd.to_datetime(df[date_col], errors="coerce")
+    df["_date"] = _excel_dates_to_datetime(df[date_col], errors="coerce")
     df = df.dropna(subset=["_date"])
     df["_month"] = df["_date"].dt.strftime("%b")
     month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -1312,7 +1890,7 @@ def _read_returns_region_table_from_excel(excel_path, request=None):
     if not lpns_col:
         return None
 
-    df_lots["_date"] = pd.to_datetime(df_lots[snap_col], errors="coerce")
+    df_lots["_date"] = _excel_dates_to_datetime(df_lots[snap_col], errors="coerce")
     df_lots = df_lots.dropna(subset=["_date"])
     if df_lots.empty:
         return None
@@ -1570,7 +2148,9 @@ class UploadExcelViewRoche(View):
 
     # اسم الملف الافتراضي إذا وُضع في excel_uploads بدون رفع (مثلاً all sheet.xlsm)
     def get_excel_path(self):
-        folder_path = os.path.join(settings.MEDIA_ROOT, "excel_uploads")
+        folder_path = os.path.abspath(
+            os.path.join(str(settings.MEDIA_ROOT), "excel_uploads")
+        )
         os.makedirs(folder_path, exist_ok=True)
         # الملف الرئيسي لكل التابات (ما عدا Dashboard): all_sheet_nespresso.xlsx
         priority_files = [
@@ -1592,14 +2172,22 @@ class UploadExcelViewRoche(View):
         return os.path.join(folder_path, "latest.xlsx")
 
     def get_uploaded_file_path(self, request):
-        folder = os.path.join(settings.MEDIA_ROOT, "excel_uploads")
+        folder = os.path.abspath(
+            os.path.join(str(settings.MEDIA_ROOT), "excel_uploads")
+        )
         os.makedirs(folder, exist_ok=True)
 
         # أولوية: ملف الجلسة ثم all_sheet_nespresso ثم latest ثم all sheet
         if request:
             saved_path = request.session.get("uploaded_excel_path")
-            if saved_path and os.path.exists(saved_path):
-                return saved_path
+            if saved_path:
+                if os.path.exists(saved_path):
+                    return os.path.abspath(saved_path)
+                try:
+                    request.session.pop("uploaded_excel_path", None)
+                    request.session.save()
+                except Exception:
+                    pass
         priority_files = [
             "all_sheet_nespresso.xlsx",
             "all_sheet_nespresso.xlsm",
@@ -1613,12 +2201,258 @@ class UploadExcelViewRoche(View):
             if os.path.exists(path):
                 if request:
                     try:
-                        request.session["uploaded_excel_path"] = path
+                        request.session["uploaded_excel_path"] = os.path.abspath(path)
                         request.session.save()
                     except Exception:
                         pass
-                return path
-        return os.path.join(folder, "latest.xlsx")
+                return os.path.abspath(path)
+        # لا تُرجع مساراً وهمياً — كان يمنع سلسلة `or get_excel_path()` ويُضلل فحص exists
+        return None
+
+    def resolve_excel_file_path(self, request):
+        """
+        مسار ملف الإكسل الرئيسي فقط إذا الملف موجود فعلاً على القرص.
+        يجمع الجلسة + أولوية أسماء الملفات في المجلد (مثل get_uploaded ثم get_excel).
+        """
+        p = self.get_uploaded_file_path(request)
+        if p and os.path.isfile(p):
+            return os.path.abspath(p)
+        p2 = self.get_excel_path()
+        if p2 and os.path.isfile(p2):
+            return os.path.abspath(p2)
+        return None
+
+    def _available_months_for_tab(self, request, tab_key):
+        """
+        شهور تظهر في قائمة الفلتر حسب التاب/الشيت المعني فقط (وليس كل ملف الإكسل).
+        tab_key يُفضّل أن يكون نص الطلب الأصلي للشيتات الخام؛ للتابات الافتراضية يُستخدم الاسم بعد lower().
+        """
+        excel_path = self.resolve_excel_file_path(request)
+        if not excel_path:
+            return []
+        t = (tab_key or "").strip().lower()
+        # الاسم كما في الرابط (يحافظ على حالة الأحرف لأسماء الشيتات الخام)
+        tab_raw = (request.GET.get("tab") or "").strip()
+
+        def _union(*lists):
+            acc = set()
+            for L in lists:
+                for x in L or []:
+                    if x:
+                        acc.add(x)
+            return _sorted_unique_month_abbrs(acc)
+
+        if t == "all":
+            m_in = []
+            ins = _inbound_sheet_name_for_months(excel_path)
+            if ins:
+                m_in = _distinct_month_abbrs_from_sheet(
+                    excel_path,
+                    ins,
+                    preferred_columns=[
+                        "Create Timestamp",
+                        "Creation Date",
+                        "Last LPN Rcv TS",
+                        "Create shipment D&T",
+                        "Month",
+                    ],
+                )
+            m_b2b = _distinct_month_abbrs_from_sheet(
+                excel_path,
+                "B2B_Outbound",
+                preferred_columns=["Actual Delivery Date", "Creation Date & Time"],
+            )
+            m_b2c = _distinct_month_abbrs_from_sheet(
+                excel_path,
+                "B2C_Outbound",
+                preferred_columns=[
+                    "Delivered Date",
+                    "CREATION DATE",
+                    "Creation Date",
+                    "Picked Date",
+                ],
+            )
+            return _union(m_in, m_b2b, m_b2c)
+
+        if "b2c outbound" in t:
+            return _distinct_month_abbrs_from_sheet(
+                excel_path,
+                "B2C_Outbound",
+                preferred_columns=[
+                    "Delivered Date",
+                    "DELIVERED DATE",
+                    "CREATION DATE",
+                    "Creation Date",
+                    "Picked Date",
+                    "Dispatch",
+                ],
+            )
+
+        if "b2b outbound" in t:
+            return _distinct_month_abbrs_from_sheet(
+                excel_path,
+                "B2B_Outbound",
+                preferred_columns=["Actual Delivery Date", "Creation Date & Time"],
+            )
+
+        if t == "inbound" or ("dock" in t and "stock" in t):
+            ins = _inbound_sheet_name_for_months(excel_path)
+            if ins:
+                return _distinct_month_abbrs_from_sheet(
+                    excel_path,
+                    ins,
+                    preferred_columns=[
+                        "Create Timestamp",
+                        "Creation Date",
+                        "Last LPN Rcv TS",
+                        "Create shipment D&T",
+                        "Month",
+                    ],
+                )
+            return []
+
+        if "return" in t or "refusal" in t or "rejections" in t:
+            ins = _inbound_sheet_name_for_months(excel_path)
+            if ins:
+                return _distinct_month_abbrs_from_sheet(
+                    excel_path,
+                    ins,
+                    preferred_columns=[
+                        "Create Timestamp",
+                        "Creation Date",
+                        "Month",
+                    ],
+                )
+            return []
+
+        if ("capacity" in t and "expiry" in t) or t == "expiry":
+            cap_sn = _capacity_expiry_sheet_for_months(excel_path)
+            if cap_sn:
+                return _distinct_month_abbrs_from_sheet(
+                    excel_path,
+                    cap_sn,
+                    preferred_columns=[
+                        "Expiry Date",
+                        "Batch Date",
+                        "Creation Date",
+                        "Month",
+                    ],
+                )
+            return []
+
+        if "safety" in t and "kpi" in t:
+            try:
+                xls = pd.ExcelFile(excel_path, engine="openpyxl")
+                sn = next(
+                    (
+                        s
+                        for s in xls.sheet_names
+                        if "safety" in (s or "").lower() and "kpi" in (s or "").lower()
+                    ),
+                    None,
+                )
+                if sn:
+                    return _distinct_month_abbrs_from_sheet(
+                        excel_path, sn, preferred_columns=None
+                    )
+            except Exception:
+                pass
+            return []
+
+        if "traceability" in t and "kpi" in t:
+            ins = _inbound_sheet_name_for_months(excel_path)
+            mi = (
+                _distinct_month_abbrs_from_sheet(
+                    excel_path,
+                    ins,
+                    preferred_columns=["Create Timestamp", "Last LPN Rcv TS"],
+                )
+                if ins
+                else []
+            )
+            m2 = _distinct_month_abbrs_from_sheet(
+                excel_path,
+                "B2C_Outbound",
+                preferred_columns=["Delivered Date", "Creation Date"],
+            )
+            return _union(mi, m2)
+
+        if "total lead time" in t and "-r" in t:
+            try:
+                xls = pd.ExcelFile(excel_path, engine="openpyxl")
+                for s in xls.sheet_names:
+                    sl = (s or "").lower()
+                    if "total lead time" in sl and "preformance" in sl and "-r" in sl:
+                        return _distinct_month_abbrs_from_sheet(
+                            excel_path,
+                            s,
+                            preferred_columns=["Month", "OB Distribution Date"],
+                        )
+            except Exception:
+                pass
+            return []
+
+        if "total lead time" in t or t == "outbound":
+            tlsn = _total_lead_time_sheet_for_months(excel_path)
+            if tlsn:
+                return _distinct_month_abbrs_from_sheet(
+                    excel_path,
+                    tlsn,
+                    preferred_columns=["Month", "OB Distribution Date"],
+                )
+            return []
+
+        if "dashboard" in t or "meeting" in t:
+            return []
+
+        if "rejection" in t and "return" not in t:
+            try:
+                xls = pd.ExcelFile(excel_path, engine="openpyxl")
+                for cand in ("Rejection", "Rejection breakdown"):
+                    sn = _resolve_workbook_sheet_name(excel_path, cand)
+                    if sn:
+                        m = _distinct_month_abbrs_from_sheet(
+                            excel_path, sn, preferred_columns=None
+                        )
+                        if m:
+                            return m
+            except Exception:
+                pass
+            return []
+
+        # شيت خام: الاسم كما في الإكسل (الأصل من الطلب ثم tab_key)
+        try:
+            xls = pd.ExcelFile(excel_path, engine="openpyxl")
+            names = set(xls.sheet_names)
+            for candidate in (tab_raw, tab_key):
+                if not candidate:
+                    continue
+                if candidate in names:
+                    return _distinct_month_abbrs_from_sheet(
+                        excel_path, candidate, preferred_columns=None
+                    )
+                sl = candidate.strip().lower()
+                for s in xls.sheet_names:
+                    if (s or "").strip().lower() == sl:
+                        return _distinct_month_abbrs_from_sheet(
+                            excel_path, s, preferred_columns=None
+                        )
+        except Exception:
+            pass
+        return []
+
+    def _ajax_tab_json(self, request, tab_for_months, data):
+        """JsonResponse للتابات مع available_months حسب الشيت."""
+        if isinstance(data, dict):
+            data = dict(data)
+            if "available_months" not in data:
+                if list(data.keys()) == ["error"]:
+                    data["available_months"] = []
+                else:
+                    data["available_months"] = self._available_months_for_tab(
+                        request, tab_for_months
+                    )
+        return JsonResponse(data, safe=False)
 
     @staticmethod
     def safe_format_value(val):
@@ -1650,7 +2484,7 @@ class UploadExcelViewRoche(View):
             return self.MONTH_LOOKUP[first_three]
 
         try:
-            parsed = pd.to_datetime(raw, errors="coerce")
+            parsed = _excel_dates_to_datetime(raw, errors="coerce")
             if not pd.isna(parsed):
                 return parsed.strftime("%b")
         except Exception:
@@ -1911,7 +2745,7 @@ class UploadExcelViewRoche(View):
             tab_data["selected_month"] = month_filters[0]
             return month_filters[0]
 
-    @method_decorator(cache_control(max_age=3600, public=True), name="get")
+    @method_decorator(never_cache, name="get")
     def get(self, request):
         print("🟢 [GET] Loading main dashboard with Overview/All-in-One tabs")
         # لا نمسح الكاش هنا حتى يبقى التحميل التالي أسرع (يُمسح عند رفع ملف جديد)
@@ -1931,12 +2765,22 @@ class UploadExcelViewRoche(View):
         # --------------------------
         # Resolve Excel path — نفتح الصفحة عادي لو في ملف (جلسة أو مجلد)، بدون إجبار على صفحة الرفع
         # --------------------------
-        excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-        data_is_uploaded = bool(excel_path and os.path.exists(excel_path))
+        excel_path = self.resolve_excel_file_path(request)
+        data_is_uploaded = bool(excel_path)
+        print(
+            f"🟢 [GET] data_is_uploaded={data_is_uploaded} "
+            f"excel_path={'—' if not excel_path else excel_path}"
+        )
         if not data_is_uploaded:
             form = ExcelUploadForm()
             return render(
-                request, self.template_name, {"form": form, "data_is_uploaded": False}
+                request,
+                self.template_name,
+                {
+                    "form": form,
+                    "data_is_uploaded": False,
+                    "excel_workbook_cache_sig": "",
+                },
             )
 
         # --------------------------
@@ -1961,8 +2805,8 @@ class UploadExcelViewRoche(View):
         # --------------------------
         # Read request parameters
         # --------------------------
-        # نخلي التاب الافتراضي خفيف (dashboard) عشان أول تحميل يبقى أسرع
-        selected_tab = request.GET.get("tab", "").lower() or "dashboard"
+        # الافتراضي = dashboard (تحميل أخف؛ تاب All-in-One اختياري من الرابط ?tab=all فقط)
+        selected_tab = request.GET.get("tab", "").strip().lower() or "dashboard"
         selected_month = request.GET.get("month", "").strip()
         selected_quarter = request.GET.get("quarter", "").strip()
         action = request.GET.get("action", "").lower()
@@ -1988,11 +2832,11 @@ class UploadExcelViewRoche(View):
         if action == "meeting_points_tab":
             return self.meeting_points_tab(request)
 
-        # ✅ إذا كان الطلب AJAX وبه status فقط (بدون tab)، نعيد قسم Meeting Points فقط
+        # ✅ فلتر Meeting Points عبر معامل صريح (يعمل مع أي tab=… بما فيه dashboard)
         if (
             request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            and (request.GET.get("meeting_points_only") or "").strip() in ("1", "true", "yes")
             and request.GET.get("status")
-            and not request.GET.get("tab")
         ):
             meeting_html = self.get_meeting_points_section_html(
                 request, request.GET.get("status", "all")
@@ -2088,23 +2932,45 @@ class UploadExcelViewRoche(View):
                     try:
                         result = func()
 
-                        # Direct HttpResponse/JsonResponse
+                        # JsonResponse (مثلاً Meeting Points): ندمج available_months ثم نعيد إرسال JSON
+                        if isinstance(result, JsonResponse):
+                            try:
+                                import json
+
+                                payload = json.loads(
+                                    result.content.decode("utf-8")
+                                )
+                                if isinstance(payload, dict):
+                                    return self._ajax_tab_json(
+                                        request, selected_tab, payload
+                                    )
+                            except Exception:
+                                pass
+                            return result
+
+                        # HttpResponse غير JSON (HTML، إلخ)
                         if isinstance(result, HttpResponse):
                             print(
-                                "ℹ️ Filter returned HttpResponse/JsonResponse; returning as-is."
+                                "ℹ️ Filter returned HttpResponse; returning as-is."
                             )
                             return result
 
                         # Dict/list response → JSON
-                        if isinstance(result, (dict, list)):
+                        if isinstance(result, dict):
+                            return self._ajax_tab_json(request, selected_tab, result)
+                        if isinstance(result, list):
                             return JsonResponse(result, safe=False)
 
                         # String response (likely HTML)
                         if isinstance(result, str):
-                            return JsonResponse({"detail_html": result}, safe=False)
+                            return self._ajax_tab_json(
+                                request, selected_tab, {"detail_html": result}
+                            )
 
                         # Fallback conversion
-                        return JsonResponse({"detail_html": str(result)}, safe=False)
+                        return self._ajax_tab_json(
+                            request, selected_tab, {"detail_html": str(result)}
+                        )
 
                     except Exception as e:
                         import traceback
@@ -2124,17 +2990,18 @@ class UploadExcelViewRoche(View):
                     selected_month=effective_month,
                     selected_months=quarter_months or None,
                 )
-                return JsonResponse(all_result, safe=False)
+                return self._ajax_tab_json(request, selected_tab, all_result)
 
             # Remaining tabs
             if selected_tab in ["rejections", "return & refusal"]:
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_rejections_combined(
                         request,
                         effective_month,
                         selected_months=quarter_months or None,
                     ),
-                    safe=False,
                 )
             # airport / seaport tabs تم إلغاؤها
             elif selected_tab in [
@@ -2142,66 +3009,78 @@ class UploadExcelViewRoche(View):
                 "total lead time performance",
                 "total lead time preformance",
             ]:
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_total_lead_time_performance(
                         request,
                         effective_month,
                         selected_months=quarter_months or None,
                     ),
-                    safe=False,
                 )
             elif selected_tab == "total lead time preformance -r":
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_total_lead_time_roche(request, effective_month),
-                    safe=False,
                 )
             # data logger tab تم إلغاؤه
             elif "dock to stock - roche" in selected_tab:
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_dock_to_stock_roche(request, effective_month),
-                    safe=False,
                 )
             elif (selected_tab or "").lower() == "inbound":
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_dock_to_stock_combined(
                         request,
                         effective_month,
                         selected_months=quarter_months or None,
                     ),
-                    safe=False,
                 )
             elif (selected_tab or "").strip().lower() == "capacity + expiry":
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_capacity_expiry(
                         request,
                         effective_month,
                         selected_months=quarter_months or None,
                     ),
-                    safe=False,
                 )
             elif (selected_tab or "").strip().lower() == "safety kpi":
-                return JsonResponse(self._render_safety_kpi_tab(request), safe=False)
+                return self._ajax_tab_json(
+                    request, selected_tab, self._render_safety_kpi_tab(request)
+                )
             elif (selected_tab or "").strip().lower() == "traceability kpi":
-                return JsonResponse(
-                    self._traceability_kpi_tab_response(request), safe=False
+                return self._ajax_tab_json(
+                    request, selected_tab, self._traceability_kpi_tab_response(request)
                 )
             elif "rejection" in selected_tab:
-                return JsonResponse(
-                    self.filter_rejection_data(request, effective_month), safe=False
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
+                    self.filter_rejection_data(request, effective_month),
                 )
             elif "dock to stock" in selected_tab:
-                return JsonResponse(
+                return self._ajax_tab_json(
+                    request,
+                    selected_tab,
                     self.filter_dock_to_stock_combined(
                         request,
                         effective_month,
                         selected_months=quarter_months or None,
                     ),
-                    safe=False,
                 )
             elif "meeting points" in selected_tab:
                 return self.meeting_points_tab(request)
             elif selected_tab:
                 raw_data = self.render_raw_sheet(request, selected_tab)
+                if isinstance(raw_data, dict):
+                    return self._ajax_tab_json(request, selected_tab, raw_data)
                 return JsonResponse(raw_data, safe=False)
             else:
                 return JsonResponse({"error": "⚠️ Please select a tab first."})
@@ -2287,6 +3166,11 @@ class UploadExcelViewRoche(View):
             all_sheets = []
 
         all_months = _extract_months_from_excel_cached(excel_path, all_sheets)
+        months_for_select = self._available_months_for_tab(
+            request, (selected_tab or "dashboard").strip().lower()
+        )
+        if not months_for_select:
+            months_for_select = all_months
 
         meeting_points = MeetingPoint.objects.all().order_by("is_done", "-created_at")
         done_count = meeting_points.filter(is_done=True).count()
@@ -2305,9 +3189,9 @@ class UploadExcelViewRoche(View):
 
         render_context = {
             "data_is_uploaded": True,
-            "months": all_months,
+            "months": months_for_select,
             "excel_tabs": excel_tabs,
-            "active_tab": selected_tab or "all",
+            "active_tab": selected_tab or "dashboard",
             "tab_summaries": [],
             "form": ExcelUploadForm(),
             "meeting_points": meeting_points,
@@ -2315,6 +3199,8 @@ class UploadExcelViewRoche(View):
             "total_count": total_count,
             "all_tab_data": all_tab_data,
             "raw_tab_data": None,
+            # لتفريق كاش التابات في المتصفح عند استبدال ملف الإكسل (mtime+size)
+            "excel_workbook_cache_sig": _excel_file_signature(excel_path),
         }
         # تحميل سريع: لا نحمّل بيانات الداشبورد على أول طلب GET (تُحمّل لاحقاً عبر AJAX عند فتح تاب Dashboard)
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -2360,15 +3246,27 @@ class UploadExcelViewRoche(View):
                     {"error": "⚠️ Please select an Excel file."}, status=400
                 )
             return render(
-                request, self.template_name, {"form": form, "data_is_uploaded": False}
+                request,
+                self.template_name,
+                {
+                    "form": form,
+                    "data_is_uploaded": False,
+                    "excel_workbook_cache_sig": "",
+                },
             )
 
         # ✅ حفظ الملف (يدعم .xlsx و .xlsm مثل all sheet.xlsm)
         excel_file = form.cleaned_data["excel_file"]
-        folder_path = os.path.join(settings.MEDIA_ROOT, "excel_uploads")
+        folder_path = os.path.abspath(
+            os.path.join(str(settings.MEDIA_ROOT), "excel_uploads")
+        )
         os.makedirs(folder_path, exist_ok=True)
+        _try_remove_libreoffice_lock_files(folder_path)
         file_name = getattr(excel_file, "name", "") or ""
         is_dashboard_file = _is_dashboard_excel_filename(file_name)
+        # رفع الملف الرئيسي: الافتراضي دمج مع النسخة السابقة؛ replace_workbook=1 يستبدل بالكامل بدون دمج
+        _rw = (request.POST.get("replace_workbook") or "").strip().lower()
+        replace_workbook = _rw in ("1", "true", "yes", "on")
 
         if is_dashboard_file:
             # ✅ ملف الداشبورد (شيت تاني): Aramco_Tamer3PL_KPI_Dashboard.xlsx — للتاب Dashboard فقط
@@ -2381,7 +3279,33 @@ class UploadExcelViewRoche(View):
                 ext = ".xlsx"
             file_path = os.path.join(folder_path, "latest" + ext)
 
+        merge_prev_copy = None
         try:
+            _prev_src = (
+                file_path
+                if is_dashboard_file
+                else _existing_main_workbook_before_upload(folder_path)
+            )
+            _do_merge_prev = (
+                _prev_src
+                and os.path.isfile(_prev_src)
+                and (is_dashboard_file or not replace_workbook)
+            )
+            if _do_merge_prev:
+                try:
+                    _ext = os.path.splitext(_prev_src)[1] or ".xlsx"
+                    merge_prev_copy = os.path.join(
+                        folder_path, f"_merge_prev_{uuid.uuid4().hex}{_ext}"
+                    )
+                    shutil.copy2(_prev_src, merge_prev_copy)
+                except Exception as _cp:
+                    print(f"⚠️ [Excel merge/clean] نسخ الملف السابق: {_cp}")
+                    merge_prev_copy = None
+            elif not is_dashboard_file and replace_workbook:
+                print(
+                    "📄 [upload] replace_workbook: تخطي دمج الملف السابق — الملف المرفوع يصبح المصدر الوحيد لـ latest"
+                )
+
             if not is_dashboard_file:
                 # ✅ حذف أي ملف latest قديم (xlsx أو xlsm) لتفادي بقاء ملف بالامتداد الآخر
                 for old_name in ("latest.xlsx", "latest.xlsm"):
@@ -2393,6 +3317,8 @@ class UploadExcelViewRoche(View):
                             print(f"🗑️ [DEBUG] تم حذف الملف القديم: {old_path}")
                         except Exception as e:
                             print(f"⚠️ [DEBUG] تحذير حذف {old_name}: {e}")
+            # إذا نجحت الكتابة عبر ملف مؤقت (ملف قديم مقفول)، لا نعيد chunks() — قد تكون مستنفدة فيُفرّغ الملف
+            skip_main_write = False
             if os.path.exists(file_path):
                 try:
                     os.chmod(file_path, 0o644)
@@ -2403,24 +3329,23 @@ class UploadExcelViewRoche(View):
                         f"⚠️ [DEBUG] تحذير: لا يمكن حذف الملف القديم (PermissionError): {pe}"
                     )
                     temp_path = os.path.join(folder_path, "temp_upload.xlsx")
-                    with open(temp_path, "wb+") as destination:
-                        for chunk in excel_file.chunks():
-                            destination.write(chunk)
+                    _write_django_uploaded_file_to_disk(excel_file, temp_path)
                     try:
                         os.replace(temp_path, file_path)
                         print(f"✅ [DEBUG] تم استبدال الملف باستخدام os.replace")
+                        skip_main_write = True
                     except Exception as replace_error:
                         print(
                             f"⚠️ [DEBUG] تحذير: لا يمكن استبدال الملف: {replace_error}"
                         )
                         file_path = temp_path
+                        skip_main_write = True
                 except Exception as delete_error:
                     print(f"⚠️ [DEBUG] تحذير: خطأ في حذف الملف القديم: {delete_error}")
 
             # ✅ حفظ الملف الجديد (كل الشيتات وكل الصفوف)
-            with open(file_path, "wb+") as destination:
-                for chunk in excel_file.chunks():
-                    destination.write(chunk)
+            if not skip_main_write:
+                _write_django_uploaded_file_to_disk(excel_file, file_path)
 
             try:
                 os.chmod(file_path, 0o644)
@@ -2434,6 +3359,34 @@ class UploadExcelViewRoche(View):
                 file_path = _normalize_upload_to_latest_xlsx_and_update_cache(
                     file_path, folder_path
                 )
+                # دائماً اجعل النسخة المرجعية على القرص = latest.xlsx (مسار الجلسة والـ GET يعتمدان عليه)
+                canonical_latest = os.path.abspath(
+                    os.path.join(folder_path, "latest.xlsx")
+                )
+                fp_abs = os.path.abspath(file_path)
+                if os.path.isfile(fp_abs) and fp_abs != canonical_latest:
+                    try:
+                        shutil.copy2(fp_abs, canonical_latest)
+                        file_path = canonical_latest
+                        print(f"✅ [upload] تم توحيد الملف إلى latest.xlsx ({canonical_latest})")
+                    except OSError as e:
+                        print(f"⚠️ [upload] تعذر النسخ إلى latest.xlsx: {e}")
+
+            file_path = os.path.abspath(file_path)
+            if not os.path.isfile(file_path) or os.path.getsize(file_path) < 64:
+                raise RuntimeError(
+                    "الملف بعد الحفظ غير موجود أو فارغ — تحقق من صلاحيات المجلد أو مساحة القرص."
+                )
+
+            # دمج/تنظيف كامل فقط عند وجود نسخة سابقة؛ أول رفع يبقى الملف كما حُفظ (أقل عطل)
+            if merge_prev_copy and os.path.isfile(merge_prev_copy):
+                try:
+                    _merge_clean_excel_workbook(file_path, merge_prev_copy)
+                    file_path = os.path.abspath(file_path)
+                    if not os.path.isfile(file_path) or os.path.getsize(file_path) < 64:
+                        raise RuntimeError("الملف بعد الدمج غير صالح.")
+                except Exception as _mc_err:
+                    print(f"⚠️ [Excel merge/clean] {_mc_err}")
 
             # ✅ حفظ المسار في الجلسة حسب نوع الملف (داشبورد أو رئيسي)
             if is_dashboard_file:
@@ -2456,13 +3409,41 @@ class UploadExcelViewRoche(View):
                     print(f"🗑️ [DEBUG] تم مسح كاش الشيتات ({n} سجلات) — التابات ستقرأ من الملف الجديد عند الفتح")
                 except Exception as e:
                     print(f"⚠️ [DEBUG] مسح كاش الشيتات: {e}")
+                # تسخين خفيف مرة واحدة بعد الرفع (أسماء الشيتات + الشهور) لتسريع أول GET والتابات التالية على السيرفر
+                try:
+                    _wn = _get_excel_sheet_names_cached(file_path)
+                    _extract_months_from_excel_cached(file_path, _wn or [])
+                    print("✅ [upload] تم تسخين كاش أسماء الشيتات والشهور على السيرفر")
+                except Exception as _warm_err:
+                    print(f"⚠️ [upload] تسخين الكاش: {_warm_err}")
 
             # ✅ إرجاع response
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
+                from urllib.parse import urlencode
+
+                _q = urlencode(
+                    {
+                        "tab": "dashboard",
+                        "full_data": "0",
+                        "_upload": str(int(time.time())),
+                    }
+                )
+                _rel = reverse("dashboard:upload_excel") + "?" + _q
+                _redirect = request.build_absolute_uri(_rel)
+                print(
+                    f"📤 [POST] رفع ناجح — الحجم={os.path.getsize(file_path)} بايت — {file_path}"
+                )
                 return JsonResponse(
-                    {"success": True, "message": "✅ File uploaded successfully!"}
+                    {
+                        "success": True,
+                        "message": "✅ File uploaded successfully!",
+                        "redirect_url": _redirect,
+                    }
                 )
             messages.success(request, "✅ File uploaded successfully!")
+            print(
+                f"📤 [POST] رفع ناجح — الحجم={os.path.getsize(file_path)} بايت — {file_path}"
+            )
             return redirect(request.path)
         except Exception as e:
             import traceback
@@ -2476,6 +3457,12 @@ class UploadExcelViewRoche(View):
                 )
             messages.error(request, f"❌ Error saving file: {str(e)}")
             return redirect(request.path)
+        finally:
+            if merge_prev_copy and os.path.isfile(merge_prev_copy):
+                try:
+                    os.remove(merge_prev_copy)
+                except Exception:
+                    pass
 
     def export_dashboard_excel(
         self, request, selected_month=None, selected_months=None
@@ -2485,8 +3472,8 @@ class UploadExcelViewRoche(View):
         أولوية: ملف الجلسة المرفوع ثم latest ثم all_sheet في المجلد.
         """
         # استخدام نفس مصدر الملف الذي تُقرأ منه كل التابات (all_sheet / ملف مرفوع)
-        excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-        if not excel_path or not os.path.exists(excel_path):
+        excel_path = self.resolve_excel_file_path(request)
+        if not excel_path:
             html = (
                 "<!DOCTYPE html><html><head><meta charset='utf-8'><title>File not found</title></head><body style='font-family:sans-serif;padding:2rem;'>"
                 "<h2>Excel file not found</h2>"
@@ -2528,8 +3515,8 @@ class UploadExcelViewRoche(View):
         print(f"🟢 [DEBUG] ✅ دخل على render_raw_sheet() - التاب: {sheet_name}")
 
         # 📁 جلب مسار ملف الإكسل
-        excel_file_path = self.get_uploaded_file_path(request)
-        if not excel_file_path or not os.path.exists(excel_file_path):
+        excel_file_path = self.resolve_excel_file_path(request)
+        if not excel_file_path:
             print("⚠️ [ERROR] لم يتم العثور على ملف Excel.")
             return {
                 "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
@@ -2574,7 +3561,7 @@ class UploadExcelViewRoche(View):
             if selected_month:
                 date_cols = [c for c in df.columns if "Date" in c]
                 if date_cols:
-                    df[date_cols[0]] = pd.to_datetime(df[date_cols[0]], errors="coerce")
+                    df[date_cols[0]] = _excel_dates_to_datetime(df[date_cols[0]], errors="coerce")
                     df["Month"] = df[date_cols[0]].dt.strftime("%b")
                     df = df[df["Month"] == selected_month]
 
@@ -2638,7 +3625,9 @@ class UploadExcelViewRoche(View):
         from django.template.loader import render_to_string
 
         try:
-            excel_file_path = self.get_uploaded_file_path(request)
+            excel_file_path = self.resolve_excel_file_path(request)
+            if not excel_file_path:
+                return {"error": "⚠️ Excel file not found."}
             xls = pd.ExcelFile(excel_file_path, engine="openpyxl")
 
             # 🧩 تحديد اسم الشيت المطلوب تلقائيًا
@@ -2682,7 +3671,7 @@ class UploadExcelViewRoche(View):
 
         month_raw = df["Month"]
         # حاول تحويله لتاريخ؛ اللي يفشل هنرجّعه نصياً
-        parsed = pd.to_datetime(month_raw, errors="coerce")
+        parsed = _excel_dates_to_datetime(month_raw, errors="coerce")
         month_abbr_from_dates = parsed.dt.strftime("%b")
 
         # طبّع النصوص: أول 3 حروف من اسم الشهر (Jan/February -> Feb)، والأرقام 1-12 إلى اختصار
@@ -2991,8 +3980,8 @@ class UploadExcelViewRoche(View):
                 status_filter = request.GET.get("status", "all")
 
             # ✅ الحصول على مسار ملف Excel
-            excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 html = render_to_string(
                     "components/ui-kits/tab-bootstrap/components/dashboard-overview.html",
                     {"message": "⚠️ لم يتم العثور على ملف Excel."},
@@ -3004,7 +3993,8 @@ class UploadExcelViewRoche(View):
             _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
             _month = (selected_month or "") + "_" + (str(selected_months) if selected_months else "")
             _full_flag = "1" if request and _excel_full_data_requested(request) else "0"
-            _cache_key = f"tlp_overview_{_path_hash}_{_month}_{status_filter}_{_full_flag}"
+            # v2: per-tab multiple chart series + merged chart_data_pods in overview_tab
+            _cache_key = f"tlp_overview_{_path_hash}_{_month}_{status_filter}_{_full_flag}_v2"
             overview_data = cache.get(_cache_key)
             if overview_data is None:
                 overview_data = self.overview_tab(
@@ -3201,7 +4191,7 @@ class UploadExcelViewRoche(View):
 
             # تحويل التاريخ إلى الشهر
             df["month"] = (
-                pd.to_datetime(df["month"], errors="coerce")
+                _excel_dates_to_datetime(df["month"], errors="coerce")
                 .dt.strftime("%b")
                 .str.capitalize()
             )
@@ -3209,7 +4199,7 @@ class UploadExcelViewRoche(View):
             # استخراج الشهور الموجودة فعليًا في الملف (بترتيب زمني)
             existing_months = df["month"].dropna().unique().tolist()
             existing_months = sorted(
-                existing_months, key=lambda x: pd.to_datetime(x, format="%b").month
+                existing_months, key=lambda x: _excel_dates_to_datetime(x, format="%b").month
             )
 
             if not existing_months:
@@ -3495,10 +4485,10 @@ class UploadExcelViewRoche(View):
     ):
         try:
             print("🟢 [DEBUG] ✅ دخل على filter_dock_to_stock_3pl()")
-            file_path = self.get_uploaded_file_path(request)
+            file_path = self.resolve_excel_file_path(request)
             print(f"📁 [DEBUG] مسار الملف المستخدم: {file_path}")
 
-            if not file_path or not os.path.exists(file_path):
+            if not file_path:
                 return {"error": "⚠️ File not found."}
 
             # 🧩 قراءة الشيت
@@ -3519,7 +4509,7 @@ class UploadExcelViewRoche(View):
                 }
 
             # 🧮 استخراج الشهر من العمود Month
-            df["Month"] = pd.to_datetime(df["Month"], errors="coerce").dt.strftime("%b")
+            df["Month"] = _excel_dates_to_datetime(df["Month"], errors="coerce").dt.strftime("%b")
 
             selected_months_norm = []
             if selected_months:
@@ -3701,7 +4691,7 @@ class UploadExcelViewRoche(View):
 
             # تحويل التاريخ إلى شهر
             df["month"] = (
-                pd.to_datetime(df["month"], errors="coerce")
+                _excel_dates_to_datetime(df["month"], errors="coerce")
                 .dt.strftime("%b")
                 .str.capitalize()
             )
@@ -3709,7 +4699,7 @@ class UploadExcelViewRoche(View):
             # استخراج الشهور الموجودة فعليًا
             existing_months = sorted(
                 df["month"].dropna().unique().tolist(),
-                key=lambda x: pd.to_datetime(x, format="%b").month,
+                key=lambda x: _excel_dates_to_datetime(x, format="%b").month,
             )
             if not existing_months:
                 return {
@@ -4012,15 +5002,18 @@ class UploadExcelViewRoche(View):
     ):
         """
         🔹 B2B Outbound: يقرأ من شيت B2B_Outbound فقط.
-        🔹 جدول B2B: Channel = B2B، ORDER STATUS ≠ Cancelled، Creation → Actual Delivery ≤48h = Hit.
+        🔹 جدول B2B: Channel = B2B أو Trade (نفس دلو الـ B2B في الإكسل)، ORDER STATUS ≠ Cancelled، Creation → Actual Delivery ≤48h = Hit.
         🔹 جدول BTQ: Channel = BTQ، ORDER STATUS ≠ Cancelled، نفس 48h.
         🔹 الشارت: عمودين (B2B و BTQ) مع تسمية "الشهر — اسم الجدول".
+        - يُحمّل شيت B2B_Outbound بنفس حد الصفوف الكامل مثل B2C (force_full) حتى تظهر كل الشهور
+          وليس أول 200 صف فقط (كانت تُظهر شهرين أو أقل في المعاينة).
+        - عمود Month للتجميع: شهر الإنشاء؛ لو التاريخ ناقص نستخدم شهر Actual Delivery حتى لا يختفي شهر (مثل يناير).
         """
         try:
             import os
 
-            excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 return {
                     "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
                     "sub_tables": [],
@@ -4045,7 +5038,8 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+            _b2b_max_rows = _excel_max_rows_for_request(request, force_full=True)
+            _nr_kw = _read_excel_nrows_kw(_b2b_max_rows)
             df = pd.read_excel(
                 excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
@@ -4081,12 +5075,31 @@ class UploadExcelViewRoche(View):
             df["Channel"] = df["Channel"].astype(str).str.strip()
             df["ORDER STATUS"] = df["ORDER STATUS"].astype(str).str.strip()
             df = df[~df["ORDER STATUS"].str.upper().str.contains("CANCELLED", na=False)]
-            df["Creation Date & Time"] = pd.to_datetime(df["Creation Date & Time"], errors="coerce")
-            df["Actual Delivery Date"] = pd.to_datetime(df["Actual Delivery Date"], errors="coerce")
-            df["POD Date"] = pd.to_datetime(df["POD Date"], errors="coerce")
-            df["Month"] = df["Actual Delivery Date"].dt.strftime("%b")
-
-            month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            df["Creation Date & Time"] = _excel_dates_to_datetime(df["Creation Date & Time"], errors="coerce")
+            df["Actual Delivery Date"] = _excel_dates_to_datetime(df["Actual Delivery Date"], errors="coerce")
+            df["POD Date"] = _excel_dates_to_datetime(df["POD Date"], errors="coerce")
+            # Month for KPIs / filters / charts = creation month (matches dashboard month filter & one-month files)
+            month_order = [
+                "Jan",
+                "Feb",
+                "Mar",
+                "Apr",
+                "May",
+                "Jun",
+                "Jul",
+                "Aug",
+                "Sep",
+                "Oct",
+                "Nov",
+                "Dec",
+            ]
+            # English abbr + creation-first; if creation is missing/invalid, fall back to Actual Delivery
+            # so months that exist on the sheet (e.g. Jan) are not dropped from KPIs/charts.
+            _m_cre = _dt_series_to_month_abbr_en(df["Creation Date & Time"])
+            _m_del = _dt_series_to_month_abbr_en(df["Actual Delivery Date"])
+            df["Month"] = _m_cre.where(_m_cre.notna(), _m_del)
+            # Keep only real calendar months (drops NaT / bad parses so pivots don't stretch to empty months)
+            df = df[df["Month"].isin(month_order)]
             month_order_value = {m: i for i, m in enumerate(month_order)}
 
             def _compute_48h(df_part):
@@ -4094,8 +5107,10 @@ class UploadExcelViewRoche(View):
                 is_hit = (hours <= 48) & hours.notna()
                 return df_part.assign(Hours_48=hours, is_hit=is_hit)
 
-            df_b2b = df[df["Channel"].str.upper() == "B2B"].copy()
-            df_btq = df[df["Channel"].str.upper() == "BTQ"].copy()
+            _chu = df["Channel"].str.upper()
+            # Trade (مثل Amazon / AFAQ في الشيت) يُعامل مع B2B في الـ KPI والجدول الخام
+            df_b2b = df[_chu.isin(["B2B", "TRADE"])].copy()
+            df_btq = df[_chu == "BTQ"].copy()
             df_b2b = _compute_48h(df_b2b)
             df_btq = _compute_48h(df_btq)
 
@@ -4143,7 +5158,15 @@ class UploadExcelViewRoche(View):
                 b2b_summary["Hit %"] = (b2b_summary["Hits"] / b2b_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
                 b2b_summary = b2b_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
                 ordered_b2b = b2b_summary["Month"].tolist()
-                pivot_b2b = ["KPI"] + ordered_b2b + (["2025"] if len(ordered_b2b) >= 2 else [])
+                agg_col_b2b = None
+                if len(ordered_b2b) >= 2 and not df_b2b.empty:
+                    try:
+                        agg_col_b2b = str(
+                            int(df_b2b["Creation Date & Time"].dropna().dt.year.max())
+                        )
+                    except Exception:
+                        agg_col_b2b = None
+                pivot_b2b = ["KPI"] + ordered_b2b + ([agg_col_b2b] if agg_col_b2b else [])
                 hit_pct_b2b = {"KPI": "Hit %"}
                 total_b2b = {"KPI": "Total Shipments"}
                 hit_b2b = {"KPI": "Hit (≤48h)"}
@@ -4153,18 +5176,24 @@ class UploadExcelViewRoche(View):
                     t, h = int(r["Total_Shipments"]), int(r["Hits"])
                     total_b2b[m], hit_b2b[m], miss_b2b[m] = t, h, int(r["Misses"])
                     hit_pct_b2b[m] = int(round(h * 100 / t)) if t > 0 else 0
-                if "2025" in pivot_b2b:
+                if agg_col_b2b and agg_col_b2b in pivot_b2b:
                     t2025 = int(b2b_summary["Total_Shipments"].sum())
                     h2025 = int(b2b_summary["Hits"].sum())
-                    total_b2b["2025"], hit_b2b["2025"], miss_b2b["2025"] = t2025, h2025, t2025 - h2025
-                    hit_pct_b2b["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
-                sub_tables.append({"id": "sub-table-b2b-hit-summary", "title": "B2B KPI (Creation → Delivery ≤ 48h)", "columns": pivot_b2b, "data": [hit_pct_b2b, hit_b2b, miss_b2b, total_b2b], "chart_data": [], "full_width": False, "side_by_side": True})
+                    total_b2b[agg_col_b2b], hit_b2b[agg_col_b2b], miss_b2b[agg_col_b2b] = (
+                        t2025,
+                        h2025,
+                        t2025 - h2025,
+                    )
+                    hit_pct_b2b[agg_col_b2b] = (
+                        int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                    )
+                sub_tables.append({"id": "sub-table-b2b-hit-summary", "title": "B2B & Trade KPI (Creation → Delivery ≤ 48h)", "columns": pivot_b2b, "data": [hit_pct_b2b, hit_b2b, miss_b2b, total_b2b], "chart_data": [], "full_width": False, "side_by_side": True})
                 chart_data.append({
                     "type": "column",
-                    "name": "B2B Hit % (≤48h)",
+                    "name": "B2B & Trade Hit % (≤48h)",
                     "color": "#9F8170",
                     "related_table": "sub-table-b2b-hit-summary",
-                    "dataPoints": [{"label": f"{m} — B2B", "y": hit_pct_b2b.get(m, 0)} for m in ordered_b2b],
+                    "dataPoints": [{"label": f"{m} — B2B & Trade", "y": hit_pct_b2b.get(m, 0)} for m in ordered_b2b],
                 })
 
             # ——— جدول BTQ KPI (48h) ———
@@ -4174,7 +5203,15 @@ class UploadExcelViewRoche(View):
                 btq_summary["Hit %"] = (btq_summary["Hits"] / btq_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
                 btq_summary = btq_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
                 ordered_btq = btq_summary["Month"].tolist()
-                pivot_btq = ["KPI"] + ordered_btq + (["2025"] if len(ordered_btq) >= 2 else [])
+                agg_col_btq = None
+                if len(ordered_btq) >= 2 and not df_btq.empty:
+                    try:
+                        agg_col_btq = str(
+                            int(df_btq["Creation Date & Time"].dropna().dt.year.max())
+                        )
+                    except Exception:
+                        agg_col_btq = None
+                pivot_btq = ["KPI"] + ordered_btq + ([agg_col_btq] if agg_col_btq else [])
                 hit_pct_btq = {"KPI": "Hit %"}
                 total_btq = {"KPI": "Total Shipments"}
                 hit_btq = {"KPI": "Hit (≤48h)"}
@@ -4184,11 +5221,17 @@ class UploadExcelViewRoche(View):
                     t, h = int(r["Total_Shipments"]), int(r["Hits"])
                     total_btq[m], hit_btq[m], miss_btq[m] = t, h, int(r["Misses"])
                     hit_pct_btq[m] = int(round(h * 100 / t)) if t > 0 else 0
-                if "2025" in pivot_btq:
+                if agg_col_btq and agg_col_btq in pivot_btq:
                     t2025 = int(btq_summary["Total_Shipments"].sum())
                     h2025 = int(btq_summary["Hits"].sum())
-                    total_btq["2025"], hit_btq["2025"], miss_btq["2025"] = t2025, h2025, t2025 - h2025
-                    hit_pct_btq["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                    total_btq[agg_col_btq], hit_btq[agg_col_btq], miss_btq[agg_col_btq] = (
+                        t2025,
+                        h2025,
+                        t2025 - h2025,
+                    )
+                    hit_pct_btq[agg_col_btq] = (
+                        int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                    )
                 sub_tables.append({"id": "sub-table-btq-hit-summary", "title": "BTQ KPI (Creation → Delivery ≤ 48h)", "columns": pivot_btq, "data": [hit_pct_btq, hit_btq, miss_btq, total_btq], "chart_data": [], "full_width": False, "side_by_side": True})
                 chart_data.append({
                     "type": "column",
@@ -4200,7 +5243,7 @@ class UploadExcelViewRoche(View):
 
             # ——— PODs B2B و PODs BTQ: Actual Delivery → POD Date ≤18 يوم = Hit ———
             chart_data_pods = []
-            df_pods_b2b = df[df["Channel"].str.upper() == "B2B"].copy()
+            df_pods_b2b = df[_chu.isin(["B2B", "TRADE"])].copy()
             df_pods_b2b = df_pods_b2b[df_pods_b2b["POD Date"].notna()]
             df_pods_btq = df[df["Channel"].str.upper() == "BTQ"].copy()
             df_pods_btq = df_pods_btq[df_pods_btq["POD Date"].notna()]
@@ -4208,11 +5251,9 @@ class UploadExcelViewRoche(View):
             if not df_pods_b2b.empty:
                 days_pod_b2b = (df_pods_b2b["POD Date"] - df_pods_b2b["Actual Delivery Date"]).dt.total_seconds() / (24 * 3600.0)
                 df_pods_b2b["PODs_is_hit"] = (days_pod_b2b <= 18) & days_pod_b2b.notna()
-                df_pods_b2b["Month"] = df_pods_b2b["Actual Delivery Date"].dt.strftime("%b")
             if not df_pods_btq.empty:
                 days_pod_btq = (df_pods_btq["POD Date"] - df_pods_btq["Actual Delivery Date"]).dt.total_seconds() / (24 * 3600.0)
                 df_pods_btq["PODs_is_hit"] = (days_pod_btq <= 18) & days_pod_btq.notna()
-                df_pods_btq["Month"] = df_pods_btq["Actual Delivery Date"].dt.strftime("%b")
 
             if selected_months_norm:
                 if not df_pods_b2b.empty:
@@ -4231,7 +5272,19 @@ class UploadExcelViewRoche(View):
                 pods_b2b_summary["Hit %"] = (pods_b2b_summary["Hits"] / pods_b2b_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
                 pods_b2b_summary = pods_b2b_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
                 ordered_pb2b = pods_b2b_summary["Month"].tolist()
-                pivot_pb2b = ["KPI"] + ordered_pb2b + (["2025"] if len(ordered_pb2b) >= 2 else [])
+                agg_col_pb2b = None
+                if len(ordered_pb2b) >= 2 and not df_pods_b2b.empty:
+                    try:
+                        agg_col_pb2b = str(
+                            int(
+                                df_pods_b2b["Creation Date & Time"]
+                                .dropna()
+                                .dt.year.max()
+                            )
+                        )
+                    except Exception:
+                        agg_col_pb2b = None
+                pivot_pb2b = ["KPI"] + ordered_pb2b + ([agg_col_pb2b] if agg_col_pb2b else [])
                 hit_pct_pb2b = {"KPI": "Hit %"}
                 total_pb2b = {"KPI": "Total Shipments"}
                 hit_pb2b = {"KPI": "Hit (≤18d)"}
@@ -4241,13 +5294,19 @@ class UploadExcelViewRoche(View):
                     t, h = int(r["Total_Shipments"]), int(r["Hits"])
                     total_pb2b[m], hit_pb2b[m], miss_pb2b[m] = t, h, int(r["Misses"])
                     hit_pct_pb2b[m] = int(round(h * 100 / t)) if t > 0 else 0
-                if "2025" in pivot_pb2b:
+                if agg_col_pb2b and agg_col_pb2b in pivot_pb2b:
                     t2025 = int(pods_b2b_summary["Total_Shipments"].sum())
                     h2025 = int(pods_b2b_summary["Hits"].sum())
-                    total_pb2b["2025"], hit_pb2b["2025"], miss_pb2b["2025"] = t2025, h2025, t2025 - h2025
-                    hit_pct_pb2b["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
-                sub_tables.append({"id": "sub-table-pods-b2b-hit-summary", "title": "PODs B2B KPI (Delivery → POD ≤ 18 days)", "columns": pivot_pb2b, "data": [hit_pct_pb2b, hit_pb2b, miss_pb2b, total_pb2b], "chart_data": [], "full_width": False, "side_by_side": True})
-                chart_data_pods.append({"type": "column", "name": "PODs B2B Hit % (≤18d)", "color": "#9F8170", "related_table": "sub-table-pods-b2b-hit-summary", "dataPoints": [{"label": f"{m} — PODs B2B", "y": hit_pct_pb2b.get(m, 0)} for m in ordered_pb2b]})
+                    total_pb2b[agg_col_pb2b], hit_pb2b[agg_col_pb2b], miss_pb2b[agg_col_pb2b] = (
+                        t2025,
+                        h2025,
+                        t2025 - h2025,
+                    )
+                    hit_pct_pb2b[agg_col_pb2b] = (
+                        int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                    )
+                sub_tables.append({"id": "sub-table-pods-b2b-hit-summary", "title": "PODs B2B & Trade KPI (Delivery → POD ≤ 18 days)", "columns": pivot_pb2b, "data": [hit_pct_pb2b, hit_pb2b, miss_pb2b, total_pb2b], "chart_data": [], "full_width": False, "side_by_side": True})
+                chart_data_pods.append({"type": "column", "name": "PODs B2B & Trade Hit % (≤18d)", "color": "#9F8170", "related_table": "sub-table-pods-b2b-hit-summary", "dataPoints": [{"label": f"{m} — PODs B2B & Trade", "y": hit_pct_pb2b.get(m, 0)} for m in ordered_pb2b]})
 
             if not df_pods_btq.empty:
                 pods_btq_summary = df_pods_btq.groupby("Month").agg(Total_Shipments=("SO", "nunique"), Hits=("PODs_is_hit", "sum")).reset_index()
@@ -4255,7 +5314,19 @@ class UploadExcelViewRoche(View):
                 pods_btq_summary["Hit %"] = (pods_btq_summary["Hits"] / pods_btq_summary["Total_Shipments"].replace(0, np.nan) * 100).fillna(0).round(2)
                 pods_btq_summary = pods_btq_summary.sort_values(by="Month", key=lambda c: c.map(month_order_value))
                 ordered_pbtq = pods_btq_summary["Month"].tolist()
-                pivot_pbtq = ["KPI"] + ordered_pbtq + (["2025"] if len(ordered_pbtq) >= 2 else [])
+                agg_col_pbtq = None
+                if len(ordered_pbtq) >= 2 and not df_pods_btq.empty:
+                    try:
+                        agg_col_pbtq = str(
+                            int(
+                                df_pods_btq["Creation Date & Time"]
+                                .dropna()
+                                .dt.year.max()
+                            )
+                        )
+                    except Exception:
+                        agg_col_pbtq = None
+                pivot_pbtq = ["KPI"] + ordered_pbtq + ([agg_col_pbtq] if agg_col_pbtq else [])
                 hit_pct_pbtq = {"KPI": "Hit %"}
                 total_pbtq = {"KPI": "Total Shipments"}
                 hit_pbtq = {"KPI": "Hit (≤18d)"}
@@ -4265,11 +5336,17 @@ class UploadExcelViewRoche(View):
                     t, h = int(r["Total_Shipments"]), int(r["Hits"])
                     total_pbtq[m], hit_pbtq[m], miss_pbtq[m] = t, h, int(r["Misses"])
                     hit_pct_pbtq[m] = int(round(h * 100 / t)) if t > 0 else 0
-                if "2025" in pivot_pbtq:
+                if agg_col_pbtq and agg_col_pbtq in pivot_pbtq:
                     t2025 = int(pods_btq_summary["Total_Shipments"].sum())
                     h2025 = int(pods_btq_summary["Hits"].sum())
-                    total_pbtq["2025"], hit_pbtq["2025"], miss_pbtq["2025"] = t2025, h2025, t2025 - h2025
-                    hit_pct_pbtq["2025"] = int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                    total_pbtq[agg_col_pbtq], hit_pbtq[agg_col_pbtq], miss_pbtq[agg_col_pbtq] = (
+                        t2025,
+                        h2025,
+                        t2025 - h2025,
+                    )
+                    hit_pct_pbtq[agg_col_pbtq] = (
+                        int(round(h2025 * 100 / t2025)) if t2025 > 0 else 0
+                    )
                 sub_tables.append({"id": "sub-table-pods-btq-hit-summary", "title": "PODs BTQ KPI (Delivery → POD ≤ 18 days)", "columns": pivot_pbtq, "data": [hit_pct_pbtq, hit_pbtq, miss_pbtq, total_pbtq], "chart_data": [], "full_width": False, "side_by_side": True})
                 chart_data_pods.append({"type": "column", "name": "PODs BTQ Hit % (≤18d)", "color": "#81613E", "related_table": "sub-table-pods-btq-hit-summary", "dataPoints": [{"label": f"{m} — PODs BTQ", "y": hit_pct_pbtq.get(m, 0)} for m in ordered_pbtq]})
 
@@ -4283,13 +5360,33 @@ class UploadExcelViewRoche(View):
 
             raw_sheet_cols = ["SO", "Channel", "ORDER STATUS", "Creation Date & Time", "Actual Delivery Date", "POD Date", "Month"]
             raw_sheet_cols = [c for c in raw_sheet_cols if c in df_all.columns]
-            raw_df = df_all[raw_sheet_cols].copy().sort_values("Actual Delivery Date", ascending=False).head(500)
+            _seen_b2b_m = {
+                str(m).strip()
+                for m in df_all["Month"].dropna()
+                if str(m).strip() in month_order
+            }
+            b2b_raw_month_filter_options = [m for m in month_order if m in _seen_b2b_m]
+            raw_df = df_all[raw_sheet_cols].copy().sort_values(
+                "Actual Delivery Date", ascending=False
+            ).head(500)
             raw_df["Creation Date & Time"] = raw_df["Creation Date & Time"].apply(_fmt_dt)
             raw_df["Actual Delivery Date"] = raw_df["Actual Delivery Date"].apply(_fmt_dt)
             if "POD Date" in raw_df.columns:
                 raw_df["POD Date"] = raw_df["POD Date"].apply(_fmt_dt)
-            raw_excel_rows = [{k: _to_blank(v) for k, v in row.items()} for row in raw_df.to_dict(orient="records")]
-            raw_excel_table = {"id": "sub-table-b2b-raw-sheet", "title": "B2B_Outbound (Sheet Data)", "columns": [{"name": c, "key": c, "group": "sheet"} for c in raw_sheet_cols], "data": raw_excel_rows, "full_width": True}
+            raw_excel_rows = []
+            for row in raw_df.to_dict(orient="records"):
+                rec = {k: _to_blank(row.get(k)) for k in raw_sheet_cols}
+                _fm = str(row.get("Month") or "").strip()
+                rec["_filter_month"] = _fm if _fm in month_order else ""
+                raw_excel_rows.append(rec)
+            raw_excel_table = {
+                "id": "sub-table-b2b-raw-sheet",
+                "title": "B2B_Outbound (Sheet Data)",
+                "columns": [{"name": c, "key": c, "group": "sheet"} for c in raw_sheet_cols],
+                "data": raw_excel_rows,
+                "full_width": True,
+                "month_filter_options": b2b_raw_month_filter_options,
+            }
 
             return {
                 "detail_html": "",
@@ -4317,6 +5414,8 @@ class UploadExcelViewRoche(View):
     ):
         """
         B2C Outbound: يقرأ من شيت B2C_Outbound.
+        - يُحمّل الشيت كاملاً (حد EXCEL_FULL_MAX_ROWS في settings، أو بدون حد لو None) حتى تظهر
+          كل الشهور/الصفوف في الجداول والشارتات دون الاعتماد على معاينة 200 صف.
         - جدول Pick & Peak (Creation / Picked): حسب مدة (Creation → Picked) بالساعات،
           صفوف Cycle (0-9HRS … 105+HRS)، أعمدة بالشهر (YYYY-MM)، عمود %، Status = Delivered فقط.
         - كروت الـ KPI: نفس منطق Hit/Miss حسب الموعد (Deadline) على كل الصفوف الصالحة.
@@ -4325,8 +5424,8 @@ class UploadExcelViewRoche(View):
             import os
             from datetime import time, datetime, timedelta
 
-            excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 return {
                     "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
                     "sub_tables": [],
@@ -4336,11 +5435,8 @@ class UploadExcelViewRoche(View):
 
             import hashlib
 
-            _b2c_mode = (
-                "full"
-                if _excel_full_data_requested(request)
-                else str(_excel_max_rows_for_request(request))
-            )
+            _b2c_max_rows = _excel_max_rows_for_request(request, force_full=True)
+            _b2c_mode = "full" if _b2c_max_rows is None else str(_b2c_max_rows)
             _b2c_key = (
                 "b2c_outbound_"
                 + hashlib.md5((excel_path or "").encode()).hexdigest()[:16]
@@ -4373,7 +5469,7 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+            _nr_kw = _read_excel_nrows_kw(_b2c_max_rows)
             df = pd.read_excel(
                 excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
             )
@@ -4471,8 +5567,8 @@ class UploadExcelViewRoche(View):
                     picked_col: "Picked_Date",
                 }
             )
-            df["Creation_Date"] = pd.to_datetime(df["Creation_Date"], errors="coerce")
-            df["Picked_Date"] = pd.to_datetime(df["Picked_Date"], errors="coerce")
+            df["Creation_Date"] = _excel_dates_to_datetime(df["Creation_Date"], errors="coerce")
+            df["Picked_Date"] = _excel_dates_to_datetime(df["Picked_Date"], errors="coerce")
             df = df.dropna(subset=["Order_SO", "Creation_Date", "Picked_Date"])
             if df.empty:
                 return {
@@ -4697,10 +5793,10 @@ class UploadExcelViewRoche(View):
                         dispatch_col: "Dispatch_Date",
                     }
                 )
-                df_d["Creation_Date"] = pd.to_datetime(
+                df_d["Creation_Date"] = _excel_dates_to_datetime(
                     df_d["Creation_Date"], errors="coerce"
                 )
-                df_d["Dispatch_Date"] = pd.to_datetime(
+                df_d["Dispatch_Date"] = _excel_dates_to_datetime(
                     df_d["Dispatch_Date"], errors="coerce"
                 )
                 df_d = df_d.dropna(
@@ -4867,26 +5963,36 @@ class UploadExcelViewRoche(View):
                 status_col
                 and dispatch_col
                 and delivered_col
+                and creation_col
             ):
                 df_lm = df_full[
                     df_full[status_col].astype(str).str.strip().str.upper()
                     == "DELIVERED"
-                ][[order_col, dispatch_col, delivered_col]].copy()
+                ][[order_col, creation_col, dispatch_col, delivered_col]].copy()
                 df_lm = df_lm.rename(
                     columns={
                         order_col: "Order_SO",
+                        creation_col: "Creation_Date",
                         dispatch_col: "Dispatch_Date",
                         delivered_col: "Delivered_Date",
                     }
                 )
-                df_lm["Dispatch_Date"] = pd.to_datetime(
+                df_lm["Creation_Date"] = _excel_dates_to_datetime(
+                    df_lm["Creation_Date"], errors="coerce"
+                )
+                df_lm["Dispatch_Date"] = _excel_dates_to_datetime(
                     df_lm["Dispatch_Date"], errors="coerce"
                 )
-                df_lm["Delivered_Date"] = pd.to_datetime(
+                df_lm["Delivered_Date"] = _excel_dates_to_datetime(
                     df_lm["Delivered_Date"], errors="coerce"
                 )
                 df_lm = df_lm.dropna(
-                    subset=["Order_SO", "Dispatch_Date", "Delivered_Date"]
+                    subset=[
+                        "Order_SO",
+                        "Creation_Date",
+                        "Dispatch_Date",
+                        "Delivered_Date",
+                    ]
                 )
                 if not df_lm.empty:
                     df_lm = (
@@ -4904,7 +6010,8 @@ class UploadExcelViewRoche(View):
                         else pd.NA
                     )
 
-                    df_lm["Month"] = df_lm["Dispatch_Date"].dt.strftime("%b")
+                    # Same month buckets as Pick & Peak / Dispatch (creation month), not dispatch month
+                    df_lm["Month"] = df_lm["Creation_Date"].dt.strftime("%b")
                     df_lm = df_lm[df_lm["Month"].notna()]
 
                     month_order_lm = [
@@ -4945,7 +6052,7 @@ class UploadExcelViewRoche(View):
                     agg_col_lm = None
                     if len(ordered_lm) >= 2:
                         agg_col_lm = str(
-                            int(df_lm["Dispatch_Date"].dropna().dt.year.max())
+                            int(df_lm["Creation_Date"].dropna().dt.year.max())
                         )
                     pivot_lm = ["KPI"] + ordered_lm + (
                         [agg_col_lm] if agg_col_lm else []
@@ -5021,10 +6128,10 @@ class UploadExcelViewRoche(View):
                         delivered_col: "Delivered_Date",
                     }
                 )
-                df_ee["Creation_Date"] = pd.to_datetime(
+                df_ee["Creation_Date"] = _excel_dates_to_datetime(
                     df_ee["Creation_Date"], errors="coerce"
                 )
-                df_ee["Delivered_Date"] = pd.to_datetime(
+                df_ee["Delivered_Date"] = _excel_dates_to_datetime(
                     df_ee["Delivered_Date"], errors="coerce"
                 )
                 df_ee = df_ee.dropna(
@@ -5155,13 +6262,12 @@ class UploadExcelViewRoche(View):
             miss = total_shipments - hits
             hit_pct = round((hits / total_shipments) * 100, 2) if total_shipments else 0
 
-            # جدول الإكسل الخام: نفس حد المعاينة/الكامل ثم عرض أول 500 صف في الواجهة
-            _raw_nr = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
+            # جدول الإكسل الخام: نفس حد القراءة الكاملة للتاب (بدون قص إضافي 500 صف)
+            _raw_nr = _read_excel_nrows_kw(_b2c_max_rows)
             raw_df_original = pd.read_excel(
                 excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_raw_nr
             )
             raw_df_original.columns = raw_df_original.columns.astype(str).str.strip()
-            raw_df_original = raw_df_original.head(500)
             raw_sheet_cols = list(raw_df_original.columns)
 
             def _raw_cell_val(val):
@@ -5179,16 +6285,72 @@ class UploadExcelViewRoche(View):
                     return ""
                 return s
 
-            raw_excel_rows = [
-                {c: _raw_cell_val(row.get(c)) for c in raw_sheet_cols}
-                for row in raw_df_original.to_dict(orient="records")
+            creation_col_raw = find_col(
+                raw_df_original,
+                [
+                    "CREATTION DATE",
+                    "CREATION DATE",
+                    "Creation Date & Time",
+                    "Creation Date and Time",
+                    "Create Timestamp",
+                    "Creation DateTime",
+                    "Create Date",
+                ],
+            )
+            _month_abbr_order = [
+                "Jan",
+                "Feb",
+                "Mar",
+                "Apr",
+                "May",
+                "Jun",
+                "Jul",
+                "Aug",
+                "Sep",
+                "Oct",
+                "Nov",
+                "Dec",
             ]
+            row_month_labels = []
+            if creation_col_raw and creation_col_raw in raw_df_original.columns:
+                _ts_r = _excel_dates_to_datetime(
+                    raw_df_original[creation_col_raw], errors="coerce"
+                )
+                for i in range(len(raw_df_original)):
+                    ts = _ts_r.iloc[i]
+                    if pd.isna(ts):
+                        row_month_labels.append("")
+                    else:
+                        try:
+                            row_month_labels.append(
+                                pd.Timestamp(ts).strftime("%b")
+                            )
+                        except Exception:
+                            row_month_labels.append("")
+            else:
+                row_month_labels = [""] * len(raw_df_original)
+
+            _seen_m = {m for m in row_month_labels if m}
+            month_filter_options = [
+                m for m in _month_abbr_order if m in _seen_m
+            ]
+
+            raw_records = raw_df_original.to_dict(orient="records")
+            raw_excel_rows = []
+            for idx, row in enumerate(raw_records):
+                rec = {c: _raw_cell_val(row.get(c)) for c in raw_sheet_cols}
+                rec["_filter_month"] = (
+                    row_month_labels[idx] if idx < len(row_month_labels) else ""
+                )
+                raw_excel_rows.append(rec)
+
             raw_excel_table = {
                 "id": "sub-table-b2c-raw-sheet",
                 "title": "B2C_Outbound (Sheet Data)",
                 "columns": [{"name": c, "key": c, "group": "sheet"} for c in raw_sheet_cols],
                 "data": raw_excel_rows,
                 "full_width": True,
+                "month_filter_options": month_filter_options,
             }
 
             result = {
@@ -5221,8 +6383,8 @@ class UploadExcelViewRoche(View):
         """
         يعرض شيت Safety KPI من ملف الإكسل (اسم الشيت يحتوي safety و kpi، أو مطابقة Safety KPI).
         """
-        excel_file_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-        if not excel_file_path or not os.path.exists(excel_file_path):
+        excel_file_path = self.resolve_excel_file_path(request)
+        if not excel_file_path:
             return {
                 "detail_html": "<p class='text-danger'>Excel file not found.</p>",
                 "chart_data": [],
@@ -5345,8 +6507,8 @@ class UploadExcelViewRoche(View):
         بحث Traceability: فلترة حسب Item Code و/أو Batch Nbr و/أو LPN Nbr من شيت Inbound ثم Outbound.
         يرجع قائمة عناصر كل عنصر: بيانات الوارد + حركات الصادر + الكمية الحالية.
         """
-        excel_path = self.get_uploaded_file_path(request) or self.get_excel_path()
-        if not excel_path or not os.path.exists(excel_path):
+        excel_path = self.resolve_excel_file_path(request)
+        if not excel_path:
             return {"error": "Excel file not found.", "results": []}
 
         item_code = (request.GET.get("item_code") or request.POST.get("item_code") or "").strip()
@@ -5629,7 +6791,7 @@ class UploadExcelViewRoche(View):
                 if hasattr(s, "to_pydatetime"):
                     return s
                 try:
-                    return pd.to_datetime(s, errors="coerce")
+                    return _excel_dates_to_datetime(s, errors="coerce")
                 except Exception:
                     return pd.Timestamp.min
 
@@ -5646,7 +6808,7 @@ class UploadExcelViewRoche(View):
                 return v.strftime("%Y-%m-%d")
             s = str(v).strip()
             try:
-                dt = pd.to_datetime(s, errors="coerce")
+                dt = _excel_dates_to_datetime(s, errors="coerce")
                 return dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else s
             except Exception:
                 return s
@@ -5719,7 +6881,7 @@ class UploadExcelViewRoche(View):
             if not ts:
                 return pd.Timestamp.min
             try:
-                return pd.to_datetime(ts, errors="coerce")
+                return _excel_dates_to_datetime(ts, errors="coerce")
             except Exception:
                 return pd.Timestamp.min
 
@@ -5731,7 +6893,7 @@ class UploadExcelViewRoche(View):
             if isinstance(val, str) and not val.strip():
                 return pd.NaT
             try:
-                t = pd.to_datetime(val, errors="coerce")
+                t = _excel_dates_to_datetime(val, errors="coerce")
                 return t if pd.notna(t) else pd.NaT
             except Exception:
                 return pd.NaT
@@ -6096,15 +7258,15 @@ class UploadExcelViewRoche(View):
             if col_facility:
                 df["Facility"] = df["Facility"].astype(str).str.strip()
             df["Shipment_nbr"] = df["Shipment_nbr"].astype(str).str.strip()
-            df["Create_shipment_DT"] = pd.to_datetime(
-                df["Create_shipment_DT"], errors="coerce", dayfirst=True
+            df["Create_shipment_DT"] = _excel_dates_to_datetime(
+                df["Create_shipment_DT"], errors="coerce"
             )
-            df["Received_LPN_DT"] = pd.to_datetime(
-                df["Received_LPN_DT"], errors="coerce", dayfirst=True
+            df["Received_LPN_DT"] = _excel_dates_to_datetime(
+                df["Received_LPN_DT"], errors="coerce"
             )
             if "First_LPN_Rcv_DT" in df.columns:
-                df["First_LPN_Rcv_DT"] = pd.to_datetime(
-                    df["First_LPN_Rcv_DT"], errors="coerce", dayfirst=True
+                df["First_LPN_Rcv_DT"] = _excel_dates_to_datetime(
+                    df["First_LPN_Rcv_DT"], errors="coerce"
                 )
             df["Month"] = df["Create_shipment_DT"].dt.strftime("%b").fillna("")
 
@@ -6397,7 +7559,7 @@ class UploadExcelViewRoche(View):
                             raw_columns.append(c)
             # إضافة عمود الشهر للفلتر (من تاريخ إنشاء الشحنة)
             if "Create_shipment_DT" in raw_df.columns:
-                raw_df["Month"] = pd.to_datetime(raw_df["Create_shipment_DT"], errors="coerce").dt.strftime("%b")
+                raw_df["Month"] = _excel_dates_to_datetime(raw_df["Create_shipment_DT"], errors="coerce").dt.strftime("%b")
                 if "Month" not in raw_columns:
                     raw_columns = list(raw_columns) + ["Month"]
 
@@ -6685,7 +7847,7 @@ class UploadExcelViewRoche(View):
                 detail_df = df_filtered.copy()
                 today_empty = pd.Timestamp.now().normalize()
                 if expiry_col and expiry_col in detail_df.columns:
-                    detail_df["_expiry_dt"] = pd.to_datetime(detail_df[expiry_col], errors="coerce")
+                    detail_df["_expiry_dt"] = _excel_dates_to_datetime(detail_df[expiry_col], errors="coerce")
                     detail_df["_days_to_expiry"] = (detail_df["_expiry_dt"] - today_empty).dt.days
                     def _days_lbl(d):
                         if pd.isna(d):
@@ -6761,7 +7923,7 @@ class UploadExcelViewRoche(View):
                 expiry_buckets = []
                 count_1_3 = count_3_6 = count_6_9 = 0
                 if batch_col and expiry_col:
-                    df_allocated[expiry_col] = pd.to_datetime(df_allocated[expiry_col], errors="coerce")
+                    df_allocated[expiry_col] = _excel_dates_to_datetime(df_allocated[expiry_col], errors="coerce")
                     df_exp = df_allocated.dropna(subset=[expiry_col]).copy()
                     df_exp["_months_to_expiry"] = (df_exp[expiry_col] - today).dt.days / 30.44
                     df_exp["_days_to_expiry"] = (df_exp[expiry_col] - today).dt.days
@@ -6829,7 +7991,7 @@ class UploadExcelViewRoche(View):
                 detail_df = df_filtered.copy()
                 today = pd.Timestamp.now().normalize()
                 if expiry_col and expiry_col in detail_df.columns:
-                    detail_df["_expiry_dt"] = pd.to_datetime(detail_df[expiry_col], errors="coerce")
+                    detail_df["_expiry_dt"] = _excel_dates_to_datetime(detail_df[expiry_col], errors="coerce")
                     detail_df["_days_to_expiry"] = (detail_df["_expiry_dt"] - today).dt.days
                     def _days_label(days):
                         if pd.isna(days):
@@ -6866,7 +8028,7 @@ class UploadExcelViewRoche(View):
             status_options = sorted(df[status_col].dropna().astype(str).str.strip().unique().tolist()) if status_col in df.columns else []
             expiry_options = []
             if expiry_col and expiry_col in df.columns:
-                exp_ser = pd.to_datetime(df[expiry_col], errors="coerce")
+                exp_ser = _excel_dates_to_datetime(df[expiry_col], errors="coerce")
                 expiry_options = exp_ser.dropna().dt.strftime("%Y-%m-%d").unique().tolist()
                 expiry_options = sorted([str(x) for x in expiry_options if str(x) and str(x) not in ("nan", "NaT")])
 
@@ -6941,8 +8103,8 @@ class UploadExcelViewRoche(View):
         from datetime import datetime, timedelta
 
         try:
-            excel_path = self.get_excel_path()
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 return {"error": "⚠️ Excel file not found."}
 
             xls = pd.ExcelFile(excel_path, engine="openpyxl")
@@ -7006,8 +8168,8 @@ class UploadExcelViewRoche(View):
                 }
 
             # تحويل التواريخ
-            df["_created_dt"] = pd.to_datetime(df[col_created], errors="coerce")
-            df["_pgi_dt"] = pd.to_datetime(df[col_pgi], errors="coerce")
+            df["_created_dt"] = _excel_dates_to_datetime(df[col_created], errors="coerce")
+            df["_pgi_dt"] = _excel_dates_to_datetime(df[col_pgi], errors="coerce")
 
             # حساب Days (باستثناء يوم الجمعة) - الفرق بين Created on و PGI Date
             def business_days_between(start, end):
@@ -7462,8 +8624,8 @@ class UploadExcelViewRoche(View):
         from django.template.loader import render_to_string
 
         try:
-            excel_path = self.get_excel_path()
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 return {
                     "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
                     "chart_data": [],
@@ -7597,7 +8759,7 @@ class UploadExcelViewRoche(View):
                                     }
                                 if "Create Timestamp" in df_in.columns:
                                     try:
-                                        ts = pd.to_datetime(
+                                        ts = _excel_dates_to_datetime(
                                             df_in["Create Timestamp"],
                                             errors="coerce",
                                         )
@@ -7617,10 +8779,10 @@ class UploadExcelViewRoche(View):
                         # حساب Hit/Miss للـ Return (≤24h بين Create Timestamp و Last LPN Rcv TS)
                         return_kpi = None
                         try:
-                            ts_create = pd.to_datetime(
+                            ts_create = _excel_dates_to_datetime(
                                 df_in["Create Timestamp"], errors="coerce"
                             )
-                            ts_last = pd.to_datetime(
+                            ts_last = _excel_dates_to_datetime(
                                 df_in["Last LPN Rcv TS"], errors="coerce"
                             )
                             hours = (ts_last - ts_create).dt.total_seconds() / 3600.0
@@ -7776,8 +8938,8 @@ class UploadExcelViewRoche(View):
         from django.template.loader import render_to_string
 
         try:
-            excel_path = self.get_excel_path()
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 return {
                     "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
                     "chart_data": [],
@@ -7886,7 +9048,7 @@ class UploadExcelViewRoche(View):
             six_months = today + pd.DateOffset(months=6)
             nine_months = today + pd.DateOffset(months=9)
 
-            expiry_ser = pd.to_datetime(df["Expiry Date"], errors="coerce")
+            expiry_ser = _excel_dates_to_datetime(df["Expiry Date"], errors="coerce")
             df["_expiry_dt"] = expiry_ser
             df["Expiry Date"] = expiry_ser.dt.strftime("%Y-%m-%d").fillna("")
 
@@ -8023,8 +9185,8 @@ class UploadExcelViewRoche(View):
         🔹 تم إضافة كاش على مستوى الدالة لتسريع التحميل لأول مرة
         """
         try:
-            excel_path = self.get_uploaded_file_path(request)
-            if not excel_path or not os.path.exists(excel_path):
+            excel_path = self.resolve_excel_file_path(request)
+            if not excel_path:
                 return {
                     "detail_html": "<p class='text-danger text-center'>⚠️ Excel file not found for display.</p>",
                     "chart_data": [],
@@ -8044,7 +9206,8 @@ class UploadExcelViewRoche(View):
                 else ""
             )
             _full_flag = "1" if _excel_full_data_requested(request) else "0"
-            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_month_part}_{_months_list}_{_full_flag}"
+            # v2: chart_data includes outbound POD charts for All-in-One overview
+            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_month_part}_{_months_list}_{_full_flag}_v2"
             cached_result = cache.get(_cache_key)
             if cached_result is not None:
                 return cached_result
@@ -8058,7 +9221,7 @@ class UploadExcelViewRoche(View):
 
             if selected_month:
                 raw_month = str(selected_month).strip()
-                parsed = pd.to_datetime(raw_month, errors="coerce")
+                parsed = _excel_dates_to_datetime(raw_month, errors="coerce")
                 if pd.isna(parsed):
                     selected_month_norm = raw_month[:3].capitalize()
                 else:
@@ -8107,17 +9270,17 @@ class UploadExcelViewRoche(View):
                     "miss reason",
                 ]
                 if all(col in df.columns for col in required_cols):
-                    df["year"] = pd.to_datetime(df["month"], errors="coerce").dt.year
+                    df["year"] = _excel_dates_to_datetime(df["month"], errors="coerce").dt.year
                     df = df[df["year"] == 2025]
 
                     if "month" in df.columns:
                         # نحاول تحويل القيم في عمود Month إلى تاريخ، ثم استخراج اسم الشهر المختصر
-                        df["month"] = pd.to_datetime(
+                        df["month"] = _excel_dates_to_datetime(
                             df["month"], errors="coerce"
                         ).dt.strftime("%b")
                     else:
                         # fallback لو مفيش عمود Month
-                        df["month"] = pd.to_datetime(
+                        df["month"] = _excel_dates_to_datetime(
                             df["ob distribution date"], errors="coerce"
                         ).dt.strftime("%b")
 
@@ -8582,6 +9745,13 @@ class UploadExcelViewRoche(View):
                 f"✅ Total Lead Time Performance - Final chart_data: {len(chart_data)} datasets"
             )
 
+            # All-in-One / overview: append POD column charts (B2B/BTQ POD %) after main outbound charts
+            if outbound_result:
+                _pods_ch = outbound_result.get("chart_data_pods") or []
+                if _pods_ch:
+                    chart_data = list(chart_data or [])
+                    chart_data.extend(_pods_ch)
+
             return {
                 "detail_html": html,
                 "chart_data": chart_data,
@@ -8773,7 +9943,10 @@ class UploadExcelViewRoche(View):
 
                 target_pct = target_manual.get(tab_lower, 100)
                 color_class = "bg-success" if hit_pct_val >= target_pct else "bg-danger"
-                chart_data = res.get("chart_data", []) or []
+                chart_data = list(res.get("chart_data", []) or [])
+                _pods_extra = res.get("chart_data_pods")
+                if isinstance(_pods_extra, list) and _pods_extra:
+                    chart_data.extend(_pods_extra)
                 chart_type = res.get("chart_type", "bar") or "bar"
 
                 progress_html = f"""

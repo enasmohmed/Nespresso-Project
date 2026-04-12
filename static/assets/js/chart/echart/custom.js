@@ -4328,7 +4328,7 @@
 
   require([
     "echarts",
-    "/crocs/crocsapp/static/assets/js/chart/echart/data/Michelson-Morley.json",
+    "/project/static/assets/js/chart/echart/data/Michelson-Morley.json",
   ], function (echarts, rawData) {
     var env = echarts.env;
 
@@ -4507,7 +4507,7 @@
     function initControlPanel(env) {
       if (!env.browser.ie || env.browser.ie.version > 8) {
         var scr = document.createElement("script");
-        scr.src = "/crocs/crocsapp/static/assets/js/chart/echart/lib/dat.gui.min.js";
+        scr.src = "/project/static/assets/js/chart/echart/lib/dat.gui.min.js";
         scr.onload = function () {
           var gui = new dat.GUI();
           var config = {

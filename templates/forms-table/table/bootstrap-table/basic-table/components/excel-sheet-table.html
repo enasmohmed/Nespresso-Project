@@ -1156,13 +1156,24 @@
     </style>
     <div class="row mt-4">
       <div class="col-12">
-        <div class="card">
+        <div class="card b2b-outbound-card">
           <div class="card-header pb-0 card-no-border text-center">
             <h4 class="mb-2 text-dark">{{ tab.raw_excel_table.title }}</h4>
           </div>
           <div class="card-body text-center">
+            {% if tab.raw_excel_table.month_filter_options %}
+            <div class="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3 px-2">
+              <label class="small text-muted mb-0 fw-semibold" for="b2b-raw-month-filter" style="color: #81613E;">Month</label>
+              <select id="b2b-raw-month-filter" class="form-select form-select-sm b2b-raw-month-filter" style="max-width: 220px; border-color: #C3B091;">
+                <option value="">All months</option>
+                {% for m in tab.raw_excel_table.month_filter_options %}
+                <option value="{{ m }}" {% if selected_month and selected_month|lower == m|lower %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% endif %}
             <div class="table-responsive custom-scrollbar b2b-raw-sheet-table">
-              <table class="table table-bordered table-sm mb-0 b2b-raw-excel">
+              <table id="b2b-outbound-raw-sheet-table" class="table table-bordered table-sm mb-0 b2b-raw-excel">
                 <thead>
                   <tr role="row">
                     {% for col_info in tab.raw_excel_table.columns %}
@@ -1172,7 +1183,7 @@
                 </thead>
                 <tbody>
                   {% for row in tab.raw_excel_table.data %}
-                  <tr>
+                  <tr data-b2b-raw-month="{{ row|get_item:'_filter_month'|default:'' }}">
                     {% for col_info in tab.raw_excel_table.columns %}
                     <td class="text-nowrap text-dark b2b-raw-td">{{ row|get_item:col_info.key|default:"" }}</td>
                     {% endfor %}
@@ -1611,8 +1622,19 @@
             <h4 class="mb-2 text-dark w-100 text-center">{{ tab.raw_excel_table.title }}</h4>
           </div>
           <div class="card-body text-center">
+            {% if tab.raw_excel_table.month_filter_options %}
+            <div class="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3 px-2">
+              <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-month-filter" style="color: #81613E;">Month</label>
+              <select id="b2c-raw-month-filter" class="form-select form-select-sm b2c-raw-month-filter" style="max-width: 220px; border-color: #C3B091;">
+                <option value="">All months</option>
+                {% for m in tab.raw_excel_table.month_filter_options %}
+                <option value="{{ m }}" {% if selected_month and selected_month|lower == m|lower %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% endif %}
             <div class="table-responsive custom-scrollbar b2c-raw-sheet-table">
-              <table class="table table-bordered table-sm mb-0 b2c-raw-excel">
+              <table id="b2c-outbound-raw-sheet-table" class="table table-bordered table-sm mb-0 b2c-raw-excel">
                 <thead>
                   <tr role="row">
                     {% for col_info in tab.raw_excel_table.columns %}
@@ -1622,7 +1644,7 @@
                 </thead>
                 <tbody>
                   {% for row in tab.raw_excel_table.data %}
-                  <tr>
+                  <tr data-b2c-raw-month="{{ row|get_item:'_filter_month'|default:'' }}">
                     {% for col_info in tab.raw_excel_table.columns %}
                     <td class="text-nowrap text-dark b2c-raw-td">{{ row|get_item:col_info.key|default:"" }}</td>
                     {% endfor %}
@@ -2180,5 +2202,45 @@
         for (var i = 0; i < filters.length; i++) {
           filters[i].addEventListener('change', applyCapacityExpiryFilters);
         }
+      })();
+
+      (function() {
+        var table = document.getElementById('b2c-outbound-raw-sheet-table');
+        if (!table) return;
+        var card = table.closest('.b2c-outbound-card') || table.closest('.card');
+        var sel = card ? card.querySelector('#b2c-raw-month-filter') : null;
+        var tbody = table.querySelector('tbody');
+        if (!sel || !tbody) return;
+        function applyB2cRawMonthFilter() {
+          var month = (sel.value || '').trim();
+          var rows = tbody.querySelectorAll('tr[data-b2c-raw-month]');
+          rows.forEach(function(tr) {
+            var m = (tr.getAttribute('data-b2c-raw-month') || '').trim();
+            var show = !month || m === month;
+            tr.style.display = show ? '' : 'none';
+          });
+        }
+        sel.addEventListener('change', applyB2cRawMonthFilter);
+        applyB2cRawMonthFilter();
+      })();
+
+      (function() {
+        var table = document.getElementById('b2b-outbound-raw-sheet-table');
+        if (!table) return;
+        var card = table.closest('.b2b-outbound-card') || table.closest('.card');
+        var sel = card ? card.querySelector('#b2b-raw-month-filter') : null;
+        var tbody = table.querySelector('tbody');
+        if (!sel || !tbody) return;
+        function applyB2bRawMonthFilter() {
+          var month = (sel.value || '').trim();
+          var rows = tbody.querySelectorAll('tr[data-b2b-raw-month]');
+          rows.forEach(function(tr) {
+            var m = (tr.getAttribute('data-b2b-raw-month') || '').trim();
+            var show = !month || m === month;
+            tr.style.display = show ? '' : 'none';
+          });
+        }
+        sel.addEventListener('change', applyB2bRawMonthFilter);
+        applyB2bRawMonthFilter();
       })();
 </script>

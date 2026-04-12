@@ -180,7 +180,7 @@
     });
     $("#advance-8").DataTable({
       language: {
-        url: "/crocs/crocsapp/static/assets/json/German.json",
+        url: "/project/static/assets/json/German.json",
       },
     });
     $("#advance-9").DataTable({
@@ -278,7 +278,7 @@
     // Data sources tables
     $("#data-source-1").DataTable();
     $("#data-source-2").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/arrays.txt",
+      ajax: "/project/static/assets/ajax/arrays.txt",
     });
     var dataSet = [
       [
@@ -576,7 +576,7 @@
           visible: false,
         },
       ],
-      ajax: "/crocs/crocsapp/static/assets/json/server-side.json",
+      ajax: "/project/static/assets/json/server-side.json",
     });
 
     // API Data Tables
@@ -664,7 +664,7 @@
     }
     //chield row multiple data table start here
     var ct = $("#API-chield-row").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/api.txt",
+      ajax: "/project/static/assets/ajax/api.txt",
       columns: [
         {
           className: "details-control",
@@ -772,12 +772,12 @@
     //seach API regular expression start
     //Ajax Data Source (Arrays) start
     $("#ajax-data-array").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/arrays.txt",
+      ajax: "/project/static/assets/ajax/arrays.txt",
     });
     //Ajax Data Source (Arrays) start
     //Ajax Data Source (object) start
     $("#ajax-data-object").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/object.txt",
+      ajax: "/project/static/assets/ajax/object.txt",
       columns: [
         {
           data: "name",
@@ -803,7 +803,7 @@
     //Ajax nested object data start
     $("#ajax-data-nested-object").DataTable({
       processing: true,
-      ajax: "/crocs/crocsapp/static/assets/ajax/object_nested.txt",
+      ajax: "/project/static/assets/ajax/object_nested.txt",
       columns: [
         {
           data: "name",
@@ -828,7 +828,7 @@
     //Ajax nested object data start
     //Ajax orthogonal data start here
     $("#orthogonal-data").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/orthogonal.txt",
+      ajax: "/project/static/assets/ajax/orthogonal.txt",
       columns: [
         {
           data: "name",
@@ -856,7 +856,7 @@
     //Ajax orthogonal data end here
     // Ajax Generated content for a column start
     var generatetable = $("#auto-generate-content").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/arrays.txt",
+      ajax: "/project/static/assets/ajax/arrays.txt",
       columnDefs: [
         {
           targets: -1,
@@ -872,7 +872,7 @@
     // Ajax Generated content for a column end
     //Ajax render start here
     $("#render-datatable").DataTable({
-      ajax: "/crocs/crocsapp/static/assets/ajax/arrays.txt",
+      ajax: "/project/static/assets/ajax/arrays.txt",
       deferRender: true,
     });
     //Ajax render end here
@@ -880,14 +880,14 @@
     $("#server-side-datatable").DataTable({
       processing: true,
       serverSide: true,
-      ajax: "/crocs/crocsapp/static/assets/ajax/server-processing.php",
+      ajax: "/project/static/assets/ajax/server-processing.php",
     });
     //http server side datatable start
     $("#datatable-http").DataTable({
       processing: true,
       serverSide: true,
       ajax: {
-        url: "/crocs/crocsapp/static/assets/ajax/server-processing.php",
+        url: "/project/static/assets/ajax/server-processing.php",
         data: function (d) {
           d.myKey = "myValue";
         },
@@ -919,7 +919,7 @@
       processing: true,
       serverSide: true,
       ajax: {
-        url: "/crocs/crocsapp/static/assets/ajax/post.php",
+        url: "/project/static/assets/ajax/post.php",
         type: "post",
       },
       columns: [

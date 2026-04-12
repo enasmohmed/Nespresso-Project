@@ -1,8 +1,9 @@
 {% load static %}
 <div class="filter-buttons mb-4 text-center">
   <button
+    type="button"
     class="btn btn-secondary mx-1 {% if status_filter == 'all' or not status_filter %}active{% endif %}"
-    onclick="loadMeetingPoints('all', this)"
+    data-meeting-filter="all"
     style="
       font-weight: 600;
       background-color: #9fc0e4 !important;
@@ -13,8 +14,9 @@
     All
   </button>
   <button
+    type="button"
     class="btn btn-warning mx-1 {% if status_filter == 'pending' %}active{% endif %}"
-    onclick="loadMeetingPoints('pending', this)"
+    data-meeting-filter="pending"
     style="
       font-weight: 600;
       background-color: #b8b8b8 !important;
@@ -25,8 +27,9 @@
     In Progress
   </button>
   <button
+    type="button"
     class="btn btn-success mx-1 {% if status_filter == 'done' %}active{% endif %}"
-    onclick="loadMeetingPoints('done', this)"
+    data-meeting-filter="done"
     style="
       font-weight: 600;
       background-color: #9fc0e4 !important;

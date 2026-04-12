@@ -309,6 +309,16 @@
                         placeholder="****"
                         required
                       />
+                      <div class="form-check mt-3 text-start">
+                        <input
+                          class="form-check-input js-replace-workbook-full"
+                          type="checkbox"
+                          id="replace_workbook_initial"
+                        />
+                        <label class="form-check-label small" for="replace_workbook_initial">
+                          Replace the workbook entirely (do not merge with the previous file). Use this when the new upload is a full snapshot or only the latest month—so charts and filters reflect the new file only.
+                        </label>
+                      </div>
                     </div>
                     <div class="modal-footer">
                       <button type="submit" class="btn btn-primary">
@@ -393,6 +403,16 @@
                         placeholder="****"
                         required
                       />
+                      <div class="form-check mt-3 text-start">
+                        <input
+                          class="form-check-input js-replace-workbook-full"
+                          type="checkbox"
+                          id="replace_workbook_logged"
+                        />
+                        <label class="form-check-label small" for="replace_workbook_logged">
+                          Replace the workbook entirely (do not merge with the previous file).
+                        </label>
+                      </div>
                     </div>
                     <div class="modal-footer">
                       <button type="submit" class="btn btn-primary">
@@ -415,12 +435,13 @@
             id="dashboard-tabs"
             role="tablist"
           >
-            <li class="nav-item" role="presentation">
-              <button class="nav-link active" data-tab="all">All-in-One</button>
-            </li>
             {% for tab in excel_tabs %} {% if tab.display|lower != "all" %}
             <li class="nav-item" role="presentation">
-              <button class="nav-link" data-tab="{{ tab.original }}">
+              <button
+                type="button"
+                class="nav-link {% if tab.original|lower == active_tab|lower %}active{% endif %}"
+                data-tab="{{ tab.original }}"
+              >
                 {{ tab.display }}
               </button>
             </li>
@@ -479,28 +500,151 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-  window.INITIAL_TAB = "{{ active_tab|default:'all' }}";
+  /**
+   * Meeting Points filters (All-in-One) — يجب أن تكون على window حتى تعمل بعد حقن HTML بالـ AJAX
+   * (سكربتات داخل detail_html لا تُنفَّذ تلقائياً إلا عبر reinitializeScripts).
+   */
+  window.loadMeetingPoints = function (status, buttonElement) {
+    var st = status || "all";
+    console.log("🔄 Meeting filter:", st);
+
+    document.querySelectorAll("#meeting-section-container .filter-buttons button").forEach(
+      function (btn) {
+        btn.classList.remove("active");
+      },
+    );
+    if (buttonElement) buttonElement.classList.add("active");
+
+    var container = document.querySelector("#meeting-section-container");
+    var tableContainer = container
+      ? container.querySelector(".table-responsive")
+      : null;
+    var buttonsContainer = container
+      ? container.querySelector(".filter-buttons")
+      : null;
+
+    if (tableContainer) {
+      tableContainer.innerHTML =
+        '<div class="text-center p-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    }
+
+    var u = new URL(window.location.href);
+    u.searchParams.set("meeting_points_only", "1");
+    u.searchParams.set("status", st);
+
+    fetch(u.toString(), {
+      method: "GET",
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        Accept: "application/json",
+      },
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        if (data.meeting_section_html && container) {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(data.meeting_section_html, "text/html");
+          var newButtons = doc.querySelector(".filter-buttons");
+          if (newButtons && buttonsContainer) {
+            buttonsContainer.innerHTML = newButtons.innerHTML;
+          }
+          var newTable = doc.querySelector(".table-responsive");
+          if (newTable && tableContainer) {
+            tableContainer.innerHTML = newTable.innerHTML;
+          }
+        } else if (data.error && tableContainer) {
+          tableContainer.innerHTML =
+            '<div class="alert alert-warning text-center">⚠️ ' +
+            data.error +
+            "</div>";
+        } else if (tableContainer) {
+          tableContainer.innerHTML =
+            '<div class="alert alert-warning text-center">⚠️ No data received. Please refresh.</div>';
+        }
+      })
+      .catch(function (err) {
+        console.error("❌ loadMeetingPoints:", err);
+        if (tableContainer) {
+          tableContainer.innerHTML =
+            '<div class="alert alert-danger text-center">Could not load meeting points.</div>';
+        }
+      });
+  };
+
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var btn =
+      t && typeof t.closest === "function"
+        ? t.closest("[data-meeting-filter]")
+        : null;
+    if (!btn) return;
+    var wrap = document.getElementById("meeting-section-container");
+    if (!wrap || !wrap.contains(btn)) return;
+    e.preventDefault();
+    var fv = btn.getAttribute("data-meeting-filter");
+    if (fv && window.loadMeetingPoints) window.loadMeetingPoints(fv, btn);
+  });
+
+  window.INITIAL_TAB = "{{ active_tab|default:'dashboard' }}";
   $(document).ready(function () {
     const uploadBtn = $('#uploadBtn');
     const uploadInput = $('#uploadExcelInput');
-    const codeModalEl = document.getElementById('codeModal');
-    const codeModal = new bootstrap.Modal(codeModalEl);
+    // صفحة «أول رفع» (data_is_uploaded=False): الملف داخل #uploadForm وليس #uploadExcelInput، والمودال #codeModalInitial وليس #codeModal
+    const fileInputInitial = $('#uploadForm').find('input[type="file"]').first();
 
-    // ✅ لما يضغط المستخدم على زر الرفع
-    uploadBtn.on('click', function () {
-      uploadInput.click();
-    });
-
-    // ✅ لما يختار ملف
-    uploadInput.on('change', function () {
-      if (this.files.length > 0) {
-        codeModal.show();
+    function getExcelFileFromUI() {
+      if (uploadInput.length && uploadInput[0].files && uploadInput[0].files.length) {
+        return uploadInput[0].files[0];
       }
-    });
+      if (fileInputInitial.length && fileInputInitial[0].files && fileInputInitial[0].files.length) {
+        return fileInputInitial[0].files[0];
+      }
+      return null;
+    }
 
-    // ✅ عند تأكيد كود الرفع
-    $('#codeForm').on('submit', function (e) {
-      e.preventDefault(); // منع إعادة تحميل الصفحة
+    function hideAnyCodeModal() {
+      ['codeModal', 'codeModalInitial'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el || typeof bootstrap === 'undefined') return;
+        var inst = bootstrap.Modal.getInstance(el);
+        if (inst) inst.hide();
+      });
+    }
+
+    const codeModalEl = document.getElementById('codeModal');
+    var codeModal = null;
+    if (codeModalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+      codeModal = bootstrap.Modal.getOrCreateInstance(codeModalEl);
+    }
+
+    if (uploadBtn.length && uploadInput.length) {
+      uploadBtn.on('click', function () {
+        uploadInput.trigger('click');
+      });
+      uploadInput.on('change', function () {
+        if (this.files.length > 0 && codeModal) {
+          codeModal.show();
+        }
+      });
+    }
+
+    // بعد اختيار ملف في أول صفحة رفع: افتح مودال الكود (بدل الاعتماد على زر فقط)
+    if (fileInputInitial.length) {
+      fileInputInitial.on('change', function () {
+        if (!this.files || !this.files.length) return;
+        var initialEl = document.getElementById('codeModalInitial');
+        if (initialEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+          bootstrap.Modal.getOrCreateInstance(initialEl).show();
+        }
+      });
+    }
+
+    $(document).on('submit', '#codeForm', function (e) {
+      e.preventDefault();
       const code = $('#upload_code').val().trim();
 
       if (!code) {
@@ -508,28 +652,29 @@
         return;
       }
 
-      // ✅ أغلق المودال بعد إدخال الكود
-      codeModal.hide();
+      hideAnyCodeModal();
 
-      // ✅ استرجاع الملف المختار
-      const file = uploadInput[0].files[0];
+      const file = getExcelFileFromUI();
       if (!file) {
         alert('⚠️ No file selected');
         return;
       }
 
-      // ✅ عرض في الكونسول للتجربة
       console.log('📁 Selected file:', file.name);
       console.log('🔑 Entered code:', code);
 
-      // ✅ مثال لرفع الملف عبر AJAX
       const formData = new FormData();
       formData.append('excel_file', file);
       formData.append('upload_code', code);
+      var replaceEl = e.target && e.target.querySelector
+        ? e.target.querySelector('.js-replace-workbook-full')
+        : null;
+      formData.append('replace_workbook', replaceEl && replaceEl.checked ? '1' : '0');
 
       fetch('{% url 'dashboard:upload_excel' %}', {
         method: 'POST',
         body: formData,
+        credentials: 'same-origin',
         headers: {
           'X-Requested-With': 'XMLHttpRequest'
         }
@@ -546,8 +691,20 @@
             alert(data.error);
           } else {
             alert(data.message || '✅ File uploaded successfully!');
-            // Reload the page to show the new data
-            window.location.reload();
+            if (data.redirect_url) {
+              window.location.replace(data.redirect_url);
+            } else {
+              const next = new URL(window.location.origin + '{% url "dashboard:upload_excel" %}');
+              const cur = new URL(window.location.href);
+              next.searchParams.set('tab', 'dashboard');
+              next.searchParams.set('full_data', cur.searchParams.get('full_data') || '0');
+              const m = cur.searchParams.get('month');
+              if (m) next.searchParams.set('month', m);
+              const q = cur.searchParams.get('quarter');
+              if (q) next.searchParams.set('quarter', q);
+              next.searchParams.set('_upload', String(Date.now()));
+              window.location.replace(next.pathname + next.search);
+            }
           }
         })
         .catch(err => {
@@ -565,18 +722,36 @@
     const csrftoken = document.querySelector(
       "[name=csrfmiddlewaretoken]",
     ).value;
-    let selectedTab = (typeof window.INITIAL_TAB !== "undefined" && window.INITIAL_TAB) ? window.INITIAL_TAB : "all";
+    let selectedTab = (typeof window.INITIAL_TAB !== "undefined" && window.INITIAL_TAB) ? window.INITIAL_TAB : "dashboard";
     let selectedQuarter = "";
 
     const TAB_CACHE_PREFIX = "dashboard_tab_cache";
-    const TAB_CACHE_VERSION = "v11_no_pick_peak_filters";
-    const TAB_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+    // v12: مفتاح الكاش يتضمن توقيع الملف — عند وجود كاش صالح لا نعيد طلب السيرفر (تنقل أسرع بين التابات)
+    const TAB_CACHE_VERSION = "v14_per_tab_months";
+    const TAB_CACHE_TTL_MS = 45 * 60 * 1000; // 45 دقيقة لنفس الملف ثم إعادة جلب
 
-    function buildTabCacheKey(tab, month, quarter) {
-      const safeTab = (tab || "all").toLowerCase();
+    window.EXCEL_WORKBOOK_CACHE_SIG = "{{ excel_workbook_cache_sig|default:'' }}";
+
+    function getWorkbookCacheBust() {
+      try {
+        var q = new URLSearchParams(window.location.search || "").get("_upload");
+        if (q && String(q).trim()) return String(q).trim();
+      } catch (e) {}
+      if (
+        typeof window.EXCEL_WORKBOOK_CACHE_SIG === "string" &&
+        window.EXCEL_WORKBOOK_CACHE_SIG.trim()
+      ) {
+        return window.EXCEL_WORKBOOK_CACHE_SIG.trim();
+      }
+      return "0";
+    }
+
+    function buildTabCacheKey(tab, month, quarter, bust) {
+      const safeTab = (tab || "dashboard").toLowerCase();
       const safeMonth = month && month !== "" ? month : "all";
       const safeQuarter = quarter && quarter !== "" ? quarter : "all";
-      return `${TAB_CACHE_PREFIX}:${TAB_CACHE_VERSION}:${safeTab}:${safeMonth}:${safeQuarter}`;
+      const b = bust && String(bust).trim() ? String(bust).trim() : "0";
+      return `${TAB_CACHE_PREFIX}:${TAB_CACHE_VERSION}:${safeTab}:${safeMonth}:${safeQuarter}:${b}`;
     }
 
     function readTabCache(key) {
@@ -612,10 +787,18 @@
     }
 
     $("#dashboard-tabs button").removeClass("active");
-    var tabLower = (selectedTab || "all").toLowerCase();
-    $("#dashboard-tabs button[data-tab]").filter(function() {
+    var tabLower = (selectedTab || "dashboard").toLowerCase();
+    var $tabBtn = $("#dashboard-tabs button[data-tab]").filter(function() {
       return ($(this).data("tab") || "").toLowerCase() === tabLower;
-    }).addClass("active");
+    });
+    if (!$tabBtn.length) {
+      selectedTab = "dashboard";
+      tabLower = "dashboard";
+      $tabBtn = $("#dashboard-tabs button[data-tab]").filter(function() {
+        return ($(this).data("tab") || "").toLowerCase() === "dashboard";
+      });
+    }
+    $tabBtn.addClass("active");
     if (tabLower === "all") {
       $("#cards-section").show();
     } else {
@@ -870,15 +1053,44 @@
       return $("#month-select").val() || "";
     };
 
+    function applyAvailableMonthsToSelect(data) {
+      const sel = document.getElementById("month-select");
+      if (!sel || !data || !Array.isArray(data.available_months)) return;
+      const prev = (sel.value || "").trim();
+      sel.innerHTML = "";
+      const allOpt = document.createElement("option");
+      allOpt.value = "";
+      allOpt.textContent = "-- All Months --";
+      sel.appendChild(allOpt);
+      data.available_months.forEach(function (m) {
+        if (!m) return;
+        const o = document.createElement("option");
+        o.value = m;
+        o.textContent = m;
+        sel.appendChild(o);
+      });
+      const allowed = new Set(
+        (data.available_months || []).map(function (x) {
+          return String(x || "").trim();
+        }),
+      );
+      if (prev && allowed.has(prev)) sel.value = prev;
+      else sel.value = "";
+    }
+
     function loadTabData() {
       const month = $("#month-select").val() || "";
       const quarter = selectedQuarter || "";
-      const cacheKey = buildTabCacheKey(selectedTab, month, quarter);
+      const bust = getWorkbookCacheBust();
+      const cacheKey = buildTabCacheKey(selectedTab, month, quarter, bust);
       const cachedPayload = readTabCache(cacheKey);
-      const skipLoader = !!cachedPayload;
 
       if (cachedPayload) {
+        applyAvailableMonthsToSelect(cachedPayload);
         handleTabResponse(cachedPayload, { fromCache: true });
+        $("#quarter-loader").hide();
+        // نفس ملف الإكسل + نفس التاب/الشهر: لا نعيد طلب السيرفر — التنقل بين التابات يصير فوري
+        return;
       }
 
       $.ajax({
@@ -892,7 +1104,6 @@
           full_data: 0,
         },
         beforeSend: function () {
-          if (skipLoader) return;
           if (quarter) {
             $("#quarter-loader").show();
           }
@@ -901,6 +1112,7 @@
           );
         },
         success: function (data) {
+          applyAvailableMonthsToSelect(data);
           writeTabCache(cacheKey, data);
           handleTabResponse(data);
         },
@@ -1168,7 +1380,7 @@
         $("#quarter-select").val("");
       }
       // نجيب اسم التاب الحالي
-      selectedTab = $(".nav-link.active").data("tab") || "overview";
+      selectedTab = $(".nav-link.active").data("tab") || "dashboard";
       loadTabData();
     });
 

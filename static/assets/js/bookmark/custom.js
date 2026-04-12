@@ -10,7 +10,7 @@ function submitBookMark() {
 
     var bmColData =
       '<div class="col-xl-3 col-md-4 xl-50">\
-	      <div class="card card-with-border bookmark-card o-hidden"><div class="details-website"><img class="img-fluid" src="/crocs/crocsapp/static/assets/images/lightgallry/07.jpg" alt="" data-original-title="" title="">\
+	      <div class="card card-with-border bookmark-card o-hidden"><div class="details-website"><img class="img-fluid" src="/project/static/assets/images/lightgallry/07.jpg" alt="" data-original-title="" title="">\
 	        <div class="favourite-icon favourite_' +
       index_var +
       '"><a href="#" onclick="setFavourite(' +
@@ -117,7 +117,7 @@ function setFavourite(index_var) {
       '<div class="col-xl-3 col-md-4 xl-50 favourite_card_' +
       index_var +
       '">\
-			  <div class="card card-with-border bookmark-card o-hidden"><div class="details-website"><img class="img-fluid" src="/crocs/crocsapp/static/assets/images/lightgallry/07.jpg" alt="" data-original-title="" title="">\
+			  <div class="card card-with-border bookmark-card o-hidden"><div class="details-website"><img class="img-fluid" src="/project/static/assets/images/lightgallry/07.jpg" alt="" data-original-title="" title="">\
 				<div class="favourite-icon favourite" ><a href="#" class="favourite_' +
       index_var +
       '" onclick="setFavourite(' +

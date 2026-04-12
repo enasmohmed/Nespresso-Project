@@ -104,9 +104,7 @@
 <div class="container py-4">
   <!--  <h3 class="text-center fw-bold mb-4">📊 All Tabs Overview</h3>-->
   <div class="row">
-    {% for tab in tabs %} 
-    {% with counter_str=forloop.counter|stringformat:"s" %} 
-    {% with canvas_id="chart_"|add:counter_str %}
+    {% for tab in tabs %}
     <div class="col-md-6 mb-4">
       <div class="card shadow-sm border-0">
         <div
@@ -122,31 +120,32 @@
             | <strong>Target:</strong> {{ tab.target_pct }}%
             {% endif %}
           </p>
-          <div
-            class="chart-container position-relative"
-            style="height: 320px; width: 100%; margin: auto"
-          >
-            <!-- Loader -->
-            <div
-              id="loader-{{ canvas_id }}"
-              class="position-absolute top-50 start-50 translate-middle bg-white"
-              style="display: none; z-index: 10"
-            >
+          {% if tab.chart_data %}
+            {% for series in tab.chart_data %}
+            <div class="mb-4 text-center border-top pt-3{% if not forloop.first %} mt-2{% endif %}">
+              {% if series.name %}
+              <div class="small fw-semibold text-secondary mb-2">{{ series.name }}</div>
+              {% endif %}
               <div
-                class="spinner-border text-primary"
-                role="status"
-                style="width: 2.5rem; height: 2.5rem"
+                class="chart-container position-relative"
+                style="height: 280px; width: 100%; margin: auto"
               >
-                <span class="visually-hidden">Loading...</span>
+                <canvas
+                  class="overview-chart-canvas"
+                  id="ov_chart_{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}"
+                  data-tab-index="{{ forloop.parentloop.counter0 }}"
+                  data-series-index="{{ forloop.counter0 }}"
+                  data-tab-label="{{ tab.name|escape }}"
+                ></canvas>
               </div>
             </div>
-            <canvas id="{{ canvas_id }}"></canvas>
-          </div>
+            {% endfor %}
+          {% else %}
+            <div class="text-muted small py-4">No chart data for this tab.</div>
+          {% endif %}
         </div>
       </div>
     </div>
-    {% endwith %} 
-    {% endwith %} 
     {% endfor %}
     <!-- ✅ قسم Meeting Points & Actions - يظهر دائمًا -->
     <div
@@ -161,8 +160,9 @@
       </div>
       <div class="filter-buttons mb-4 text-center">
         <button
+          type="button"
           class="btn btn-secondary mx-1 {% if status_filter == 'all' or not status_filter %}active{% endif %}"
-          onclick="loadMeetingPoints('all', this)"
+          data-meeting-filter="all"
           style="
             font-weight: 600;
             background-color: #9fc0e4 !important;
@@ -173,8 +173,9 @@
           All
         </button>
         <button
+          type="button"
           class="btn btn-warning mx-1 {% if status_filter == 'pending' %}active{% endif %}"
-          onclick="loadMeetingPoints('pending', this)"
+          data-meeting-filter="pending"
           style="
             font-weight: 600;
             background-color: #b8b8b8 !important;
@@ -185,8 +186,9 @@
           In Progress
         </button>
         <button
+          type="button"
           class="btn btn-success mx-1 {% if status_filter == 'done' %}active{% endif %}"
-          onclick="loadMeetingPoints('done', this)"
+          data-meeting-filter="done"
           style="
             font-weight: 600;
             background-color: #9fc0e4 !important;
@@ -295,6 +297,15 @@
       return typeof ChartDataLabels !== "undefined" ? [ChartDataLabels] : [];
     }
 
+    /** Chart.js 4: parsed قد يكون رقمًا (pie) أو {x,y} (bar) */
+    function parsedChartValue(parsed) {
+      if (parsed == null) return NaN;
+      if (typeof parsed === "number") return parsed;
+      if (typeof parsed === "object" && typeof parsed.y === "number")
+        return parsed.y;
+      return Number(parsed);
+    }
+
     window.chartInstances = window.chartInstances || {};
 
     window.initOverviewCharts = function (rootSelector) {
@@ -305,216 +316,254 @@
         "#9F8170", "#A0785A", "#81613E", "#C3B091", "#EDC9AF", "#E3DAC9",
       ];
 
-      $scope.find("[id^='chart_']").each(function () {
-        const canvasId = $(this).attr("id");
-        const loaderId = "loader-" + canvasId;
-        const canvas = document.getElementById(canvasId);
-        const loader = document.getElementById(loaderId);
-        const tabName = $(this)
-          .closest(".card")
-          .find(".card-header")
-          .text()
-          .trim();
-        const currentQuarter =
-          (window.getSelectedQuarter && window.getSelectedQuarter()) || "";
-        const currentMonth =
-          (window.getSelectedMonth && window.getSelectedMonth()) || "";
+      const currentQuarter =
+        (window.getSelectedQuarter && window.getSelectedQuarter()) || "";
+      const currentMonth =
+        (window.getSelectedMonth && window.getSelectedMonth()) || "";
 
-        if (!canvas) {
-          console.warn("⚠️ Canvas element not found:", canvasId);
+      const tabsData = window.overviewTabsData || [];
+      window._overviewTabAjaxCache = window._overviewTabAjaxCache || {};
+      window._overviewTabAjaxPending = window._overviewTabAjaxPending || {};
+
+      function drawOneSeriesOnCanvas(canvas, tabLabel, seriesIndex, res) {
+        const canvasId = canvas.id;
+        const $wrap = $(canvas).parent();
+        $wrap.find(".overview-chart-empty").remove();
+        if (!res || !res.chart_data || !res.chart_data.length) {
+          $wrap.append(
+            "<div class='overview-chart-empty text-center text-muted mt-2 small'>No data</div>"
+          );
           return;
         }
+        const chart_info = res.chart_data[0];
+        const chartType = (chart_info.type || "bar").toLowerCase();
+        const labels = (chart_info.dataPoints || []).map((dp) => dp.label);
+        const values = (chart_info.dataPoints || []).map((dp) => Number(dp.y));
 
-        $(canvas).css("height", "350px");
+        const targetDataset = res.chart_data.find((ds) =>
+          ds.name?.toLowerCase().includes("target")
+        );
+        let targetValue = null;
+        if (targetDataset && targetDataset.dataPoints.length) {
+          const validValues = targetDataset.dataPoints
+            .map((dp) => Number(dp.y))
+            .filter((v) => !isNaN(v));
+          if (validValues.length) {
+            targetValue =
+              validValues.reduce((a, b) => a + b, 0) / validValues.length;
+          }
+        }
+        if (isNaN(targetValue) || targetValue === null) targetValue = 0;
+
+        const showTarget = false;
+        const tl = (tabLabel || "").toLowerCase();
+        const multiColor =
+          tl.includes("rejection") ||
+          tl.includes("refusal") ||
+          tl.includes("return");
+
+        let chartConfig = {};
+        if (chartType === "pie" || chartType === "doughnut") {
+          chartConfig = {
+            type: "doughnut",
+            data: {
+              labels: labels,
+              datasets: [
+                {
+                  data: values,
+                  backgroundColor: chartColors.slice(0, values.length),
+                  borderWidth: 2,
+                  hoverOffset: 10,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              layout: { padding: { top: 50 } },
+              cutout: "60%",
+              plugins: {
+                legend: { position: "bottom" },
+                tooltip: {
+                  callbacks: {
+                    label: (ctx) =>
+                      `${ctx.label}: ${Math.round(parsedChartValue(ctx.parsed))}%`,
+                  },
+                },
+                datalabels: {
+                  color: "#81613E",
+                  font: { weight: "bold" },
+                  formatter: (v) => `${Math.round(Number(v))}%`,
+                },
+              },
+            },
+            plugins: getChartPlugins(),
+          };
+        } else {
+          chartConfig = {
+            type: "bar",
+            data: {
+              labels: labels,
+              datasets: [
+                {
+                  label: chart_info.name || "Performance %",
+                  data: values,
+                  backgroundColor: multiColor
+                    ? chartColors
+                    : chartColors[seriesIndex % chartColors.length],
+                  borderRadius: 10,
+                  barThickness: 28,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              layout: { padding: { top: 40 } },
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: (ctx) =>
+                      `${ctx.label}: ${Math.round(parsedChartValue(ctx.parsed))}%`,
+                  },
+                },
+                datalabels: {
+                  color: "#81613E",
+                  anchor: "end",
+                  align: "center",
+                  offset: 10,
+                  backgroundColor: "rgba(227, 218, 201, 0.95)",
+                  borderColor: "#C3B091",
+                  borderWidth: 1,
+                  borderRadius: 6,
+                  font: { weight: "bold", size: 11 },
+                  padding: 4,
+                  formatter: (v) => `${Math.round(Number(v))}%`,
+                },
+                annotation: showTarget
+                  ? {
+                      annotations: {
+                        targetLine: {
+                          type: "line",
+                          yMin: targetValue,
+                          yMax: targetValue,
+                          borderColor: "red",
+                          borderWidth: 2.5,
+                          borderDash: [6, 6],
+                          label: {
+                            display: true,
+                            content: `🎯 Target ${Math.round(
+                              targetValue ?? 0
+                            )}%`,
+                            enabled: true,
+                            position: "end",
+                            backgroundColor: "rgba(255,255,255,0.9)",
+                            color: "red",
+                            font: { weight: "bold", size: 13 },
+                            padding: 5,
+                            yAdjust: -10,
+                          },
+                        },
+                      },
+                    }
+                  : {},
+              },
+              scales: {
+                x: { grid: { display: false }, ticks: { color: "#81613E" } },
+                y: {
+                  beginAtZero: true,
+                  grid: { color: "rgba(0,0,0,0.05)" },
+                  ticks: {
+                    color: "#81613E",
+                    callback: (value) =>
+                      Number.isFinite(value) ? Math.round(value) : value,
+                  },
+                },
+              },
+            },
+            plugins: getChartPlugins(),
+          };
+        }
 
         const ctx = canvas.getContext("2d");
-
-        function drawChartFromRes(res) {
-          if (loader) $(loader).fadeOut(200);
-          if (!res.chart_data || !res.chart_data.length) {
-            $(canvas)
-              .parent()
-              .append(
-                "<div class='text-center text-muted mt-3'>⚠️ No data available.</div>"
-              );
-            return;
-          }
-
-          const chart_info = res.chart_data[0];
-            const chartType = (chart_info.type || "bar").toLowerCase();
-            const labels = chart_info.dataPoints.map((dp) => dp.label);
-            const values = chart_info.dataPoints.map((dp) => Number(dp.y));
-
-            const targetDataset = res.chart_data.find((ds) =>
-              ds.name?.toLowerCase().includes("target")
-            );
-            let targetValue = null;
-            if (targetDataset && targetDataset.dataPoints.length) {
-              const validValues = targetDataset.dataPoints
-                .map((dp) => Number(dp.y))
-                .filter((v) => !isNaN(v));
-              if (validValues.length) {
-                targetValue =
-                  validValues.reduce((a, b) => a + b, 0) / validValues.length;
-              }
-            }
-            if (isNaN(targetValue) || targetValue === null) targetValue = 0;
-
-            const showTarget = false;
-            let chartConfig = {};
-
-            if (chartType === "pie" || chartType === "doughnut") {
-              chartConfig = {
-                type: "doughnut",
-                data: {
-                  labels: labels,
-                  datasets: [
-                    {
-                      data: values,
-                      backgroundColor: chartColors.slice(0, values.length),
-                      borderWidth: 2,
-                      hoverOffset: 10,
-                    },
-                  ],
-                },
-                options: {
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  layout: { padding: { top: 50 } },
-                  cutout: "60%",
-                  plugins: {
-                    legend: { position: "bottom" },
-                    tooltip: {
-                      callbacks: {
-                        label: (ctx) =>
-                          `${ctx.label}: ${ctx.parsed.toFixed(1)}%`,
-                      },
-                    },
-                    datalabels: {
-                      color: "#81613E",
-                      font: { weight: "bold" },
-                      formatter: (v) => `${v.toFixed(1)}%`,
-                    },
-                  },
-                },
-                plugins: getChartPlugins(),
-              };
-            } else {
-              chartConfig = {
-                type: "bar",
-                data: {
-                  labels: labels,
-                  datasets: [
-                    {
-                      label: "Performance %",
-                      data: values,
-                      backgroundColor: tabName
-                        .toLowerCase()
-                        .includes("rejections")
-                        ? chartColors
-                        : "#9F8170",
-                      borderRadius: 10,
-                      barThickness: 30,
-                    },
-                  ],
-                },
-                options: {
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  layout: { padding: { top: 40 } },
-                  plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                      callbacks: {
-                        label: (ctx) =>
-                          `${ctx.label}: ${ctx.parsed.toFixed(1)}%`,
-                      },
-                    },
-                    datalabels: {
-                      color: "#81613E",
-                      anchor: "end",
-                      align: "center",
-                      offset: 10,
-                      backgroundColor: "rgba(227, 218, 201, 0.95)",
-                      borderColor: "#C3B091",
-                      borderWidth: 1,
-                      borderRadius: 6,
-                      font: { weight: "bold", size: 11 },
-                      padding: 4,
-                      formatter: (v) => `${v.toFixed(1)}%`,
-                    },
-                    annotation: showTarget
-                      ? {
-                          annotations: {
-                            targetLine: {
-                              type: "line",
-                              yMin: targetValue,
-                              yMax: targetValue,
-                              borderColor: "red",
-                              borderWidth: 2.5,
-                              borderDash: [6, 6],
-                              label: {
-                                display: true,
-                                content: `🎯 Target ${(
-                                  targetValue ?? 0
-                                ).toFixed(1)}%`,
-                                enabled: true,
-                                position: "end",
-                                backgroundColor: "rgba(255,255,255,0.9)",
-                                color: "red",
-                                font: { weight: "bold", size: 13 },
-                                padding: 5,
-                                yAdjust: -10,
-                              },
-                            },
-                          },
-                        }
-                      : {},
-                  },
-                  scales: {
-                    x: { grid: { display: false }, ticks: { color: "#81613E" } },
-                    y: {
-                      beginAtZero: true,
-                      grid: { color: "rgba(0,0,0,0.05)" },
-                      ticks: { color: "#81613E" },
-                    },
-                  },
-                },
-                plugins: getChartPlugins(),
-              };
-            }
-
-            if (window.chartInstances[canvasId])
-              window.chartInstances[canvasId].destroy();
-            const chartInstance = new Chart(ctx, chartConfig);
-            window.chartInstances[canvasId] = chartInstance;
+        if (window.chartInstances[canvasId]) {
+          window.chartInstances[canvasId].destroy();
         }
+        window.chartInstances[canvasId] = new Chart(ctx, chartConfig);
+      }
 
-        if (loader) $(loader).fadeIn(200);
-        var preloaded = (window.overviewTabsData || []).find(function (t) {
-          return (t.name || "").trim() === (tabName || "").trim();
-        });
-        if (preloaded && preloaded.chart_data && preloaded.chart_data.length) {
-          drawChartFromRes(preloaded);
+      function fetchTabChartsOnce(tabName, callback) {
+        const key = (tabName || "").trim();
+        if (!key) {
+          callback(null, null);
           return;
         }
-        $.ajax({
+        if (window._overviewTabAjaxCache[key]) {
+          callback(null, window._overviewTabAjaxCache[key]);
+          return;
+        }
+        if (window._overviewTabAjaxPending[key]) {
+          window._overviewTabAjaxPending[key].done(function (res) {
+            callback(null, res);
+          });
+          return;
+        }
+        const jq = $.ajax({
           url: "{% url 'dashboard:upload_excel' %}",
           method: "GET",
-          data: { tab: tabName, quarter: currentQuarter, month: currentMonth },
+          data: { tab: key, quarter: currentQuarter, month: currentMonth },
           headers: { "X-Requested-With": "XMLHttpRequest" },
-          success: function (res) {
-            drawChartFromRes(res);
-          },
-          error: function (err) {
-            if (loader) $(loader).fadeOut(200);
-            console.error("❌ Error while loading data:", err);
-            $(canvas)
-              .parent()
-              .append(
-                "<div class='text-center text-muted mt-3'>⚠️ No data available.</div>"
-              );
-          },
+        })
+          .done(function (res) {
+            window._overviewTabAjaxCache[key] = res;
+          })
+          .fail(function (err) {
+            console.error("❌ Overview chart AJAX:", key, err);
+          })
+          .always(function () {
+            delete window._overviewTabAjaxPending[key];
+          });
+        window._overviewTabAjaxPending[key] = jq;
+        jq.done(function (res) {
+          callback(null, res);
+        });
+      }
+
+      $scope.find("canvas.overview-chart-canvas").each(function () {
+        const canvas = this;
+        const $c = $(canvas);
+        const tabIdx = Number($c.data("tab-index"));
+        const seriesIdx = Number($c.data("series-index")) || 0;
+        const tabLabel = ($c.data("tab-label") || "").trim();
+        const tabRow = tabsData[tabIdx];
+        const tabName = (tabRow && tabRow.name) || tabLabel;
+
+        $c.css("height", "260px");
+
+        if (
+          tabRow &&
+          tabRow.chart_data &&
+          tabRow.chart_data.length > seriesIdx
+        ) {
+          drawOneSeriesOnCanvas(canvas, tabName, seriesIdx, {
+            chart_data: [tabRow.chart_data[seriesIdx]],
+          });
+          return;
+        }
+
+        fetchTabChartsOnce(tabName, function (_err, res) {
+          if (
+            res &&
+            res.chart_data &&
+            res.chart_data.length > seriesIdx
+          ) {
+            drawOneSeriesOnCanvas(canvas, tabName, seriesIdx, {
+              chart_data: [res.chart_data[seriesIdx]],
+            });
+          } else {
+            drawOneSeriesOnCanvas(canvas, tabName, seriesIdx, null);
+          }
         });
       });
     };
@@ -523,95 +572,4 @@
       window.initOverviewCharts(document);
     });
   })();
-</script>
-<script>
-  function loadMeetingPoints(status, buttonElement) {
-    console.log("🔄 Changing filter to:", status);
-
-    // ✅ تحديث حالة الأزرار
-    document.querySelectorAll(".filter-buttons button").forEach((btn) => {
-      btn.classList.remove("active");
-    });
-    if (buttonElement) {
-      buttonElement.classList.add("active");
-    }
-
-    // ✅ إظهار loader
-    const container = document.querySelector("#meeting-section-container");
-    const tableContainer = container
-      ? container.querySelector(".table-responsive")
-      : null;
-    const buttonsContainer = container
-      ? container.querySelector(".filter-buttons")
-      : null;
-
-    if (tableContainer) {
-      const originalContent = tableContainer.innerHTML;
-      tableContainer.innerHTML =
-        '<div class="text-center p-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>';
-    }
-
-    // ✅ استخدام endpoint منفصل للحصول على قسم Meeting Points فقط
-    const params = new URLSearchParams();
-    params.set("status", status);
-
-    fetch(`?${params.toString()}`, {
-      headers: { "X-Requested-With": "XMLHttpRequest" },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        console.log("✅ Response received:", data);
-
-        if (data.meeting_section_html && container) {
-          // ✅ استبدال محتوى الأزرار والجدول
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(
-            data.meeting_section_html,
-            "text/html"
-          );
-
-          // ✅ تحديث الأزرار
-          const newButtons = doc.querySelector(".filter-buttons");
-          if (newButtons && buttonsContainer) {
-            buttonsContainer.innerHTML = newButtons.innerHTML;
-            // ✅ إعادة ربط event handlers للأزرار الجديدة
-            buttonsContainer.querySelectorAll("button").forEach((btn) => {
-              const onclickAttr = btn.getAttribute("onclick");
-              if (onclickAttr) {
-                btn.setAttribute("onclick", onclickAttr);
-              }
-            });
-          }
-
-          // ✅ تحديث الجدول
-          const newTable = doc.querySelector(".table-responsive");
-          if (newTable && tableContainer) {
-            tableContainer.innerHTML = newTable.innerHTML;
-          }
-
-          console.log("✅ Meeting section content updated successfully");
-        } else if (data.error) {
-          console.warn("⚠️ Error in response:", data.error);
-          if (tableContainer) {
-            tableContainer.innerHTML =
-              '<div class="alert alert-warning text-center">⚠️ ' +
-              data.error +
-              "</div>";
-          }
-        } else {
-          console.warn("⚠️ Response does not contain meeting_section_html");
-          if (tableContainer) {
-            tableContainer.innerHTML =
-              '<div class="alert alert-warning text-center">⚠️ No data received. Please refresh the page.</div>';
-          }
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Error updating meeting points:", err);
-        if (tableContainer) {
-          tableContainer.innerHTML =
-            '<div class="alert alert-danger text-center">❌ An error occurred while loading meeting points. Please refresh the page.</div>';
-        }
-      });
-  }
 </script>

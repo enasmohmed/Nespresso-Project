@@ -54,7 +54,7 @@
         }
     }
     if (!ecDistPath) {
-        ecDistPath = '/crocs/crocsapp/static/dist/echarts';
+        ecDistPath = '/project/static/dist/echarts';
     }
 
     if (typeof require !== 'undefined') {

@@ -1,6 +1,7 @@
 # views.py
 import datetime
 import time
+import threading
 import hashlib
 import shutil
 import os
@@ -34,6 +35,32 @@ from django.utils.decorators import method_decorator
 from django.utils.text import slugify
 
 from .models import MeetingPoint, ExcelSheetCache
+
+# يُزاد عند تغيير منطق Inbound (HTML، GRN، شارت الشهور، إلخ) حتى لا تُعاد استجابات قديمة من كاش التاب.
+INBOUND_AJAX_CACHE_VERSION = "grn-month-chart-v3"
+
+
+def _tab_cache_disabled():
+    return bool(getattr(settings, "EXCEL_DISABLE_TAB_CACHE", False))
+
+
+def _tab_cache_get(cache_key):
+    if _tab_cache_disabled():
+        return None
+    try:
+        return cache.get(cache_key)
+    except Exception:
+        return None
+
+
+def _tab_cache_set(cache_key, value, timeout):
+    if _tab_cache_disabled():
+        return
+    try:
+        cache.set(cache_key, value, timeout)
+    except Exception:
+        pass
+
 
 try:
     from dateutil import parser as _dateutil_parser
@@ -483,8 +510,9 @@ def _merge_clean_excel_workbook(target_path, previous_path=None):
                 snk = str(sn)
                 if snk in new_name_set:
                     try:
+                        # إعادة استخدام ExcelFile المفتوح — أسرع من فتح الملف من القرص لكل شيت
                         new_df = pd.read_excel(
-                            target_path, sheet_name=sn, engine="openpyxl", header=0
+                            new_xls, sheet_name=sn, engine="openpyxl", header=0
                         )
                         new_df.columns = new_df.columns.astype(str).str.strip()
                     except Exception as re:
@@ -563,14 +591,23 @@ def _read_excel_nrows_kw(max_rows):
 
 
 def _get_sheet_dataframe(
-    excel_path, sheet_name, use_cache=True, max_rows=None, request=None, force_full=False
+    excel_path,
+    sheet_name,
+    use_cache=True,
+    max_rows=None,
+    request=None,
+    force_full=False,
+    header=0,
 ):
     """
     يرجع DataFrame للشيت مع كاش Django لتقليل قراءات الديسك.
     max_rows صريح يتجاوز الطلب؛ وإلا يُستخدم full_data / معاينة من request.
+    header: 0 للرؤوس في الصف الأول، أو None لقراءة خام (مسار اكتشاف رؤوس Inbound).
     """
     if not excel_path or not os.path.exists(excel_path):
         return None
+    if _tab_cache_disabled():
+        use_cache = False
     if max_rows is None:
         if request is not None:
             max_rows = _excel_max_rows_for_request(request, force_full=force_full)
@@ -584,8 +621,10 @@ def _get_sheet_dataframe(
         import hashlib as _hashlib
 
         _path_hash = _hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+        _fsig = _excel_cache_sig_suffix(excel_path)
         _nkey = "all" if max_rows is None else int(max_rows)
-        cache_key = f"excel_df::{_path_hash}::{sheet_name}::n{_nkey}"
+        _hkey = "none" if header is None else str(header)
+        cache_key = f"excel_df::{_path_hash}::{_fsig}::{sheet_name}::n{_nkey}::h{_hkey}"
         if use_cache:
             try:
                 cached_df = _dj_cache.get(cache_key)
@@ -594,10 +633,11 @@ def _get_sheet_dataframe(
             except Exception as e:
                 print(f"⚠️ [Cache-MEM] قراءة الشيت من الكاش فشلت '{sheet_name}': {e}")
 
-        read_kw = {"engine": "openpyxl", "header": 0}
+        read_kw = {"engine": "openpyxl", "header": header}
         read_kw.update(_read_excel_nrows_kw(max_rows))
         df = pd.read_excel(excel_path, sheet_name=sheet_name, **read_kw)
-        df.columns = [str(c).strip() for c in df.columns]
+        if header is not None:
+            df.columns = [str(c).strip() for c in df.columns]
 
         if use_cache:
             try:
@@ -652,6 +692,37 @@ def _excel_file_signature(excel_path):
         return "0_0"
 
 
+def _excel_cache_sig_suffix(excel_path):
+    """لإلحاقه بمفاتيح كاش الإكسل — يتغيّر عند استبدال latest.xlsx بنفس المسار."""
+    sig = _excel_file_signature(excel_path) if excel_path else "0_0"
+    return str(sig).replace(" ", "_")[:48]
+
+
+def _warm_excel_sheet_names_and_months_async(*excel_paths):
+    """
+    بعد الرفع: تسخين كاش أسماء الشيتات والشهور في خيط خلفي
+    (لا يعطّل ردّ POST؛ أول GET للتابات يجد الكاش جاهزاً غالباً).
+    """
+    paths = [os.path.abspath(p) for p in excel_paths if p and os.path.isfile(p)]
+    if not paths:
+        return
+
+    def _run():
+        for p in paths:
+            try:
+                wn = _get_excel_sheet_names_cached(p)
+                _extract_months_from_excel_cached(p, wn or [])
+            except Exception:
+                pass
+
+    try:
+        threading.Thread(
+            target=_run, daemon=True, name="excel_cache_warmup"
+        ).start()
+    except Exception:
+        pass
+
+
 def _list_excel_sheet_names_openpyxl(excel_path):
     """أسماء الشيتات فقط: read_only يقرأ بنية الملف بسرعة دون تحميل كل الخلايا."""
     from openpyxl import load_workbook
@@ -670,7 +741,7 @@ def _get_excel_sheet_names_cached(excel_path):
     sig = _excel_file_signature(excel_path)
     path_key = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
     cache_key = f"excel_sheet_names::{path_key}::{sig}"
-    cached = cache.get(cache_key)
+    cached = _tab_cache_get(cache_key)
     if cached is not None:
         return list(cached)
     try:
@@ -681,10 +752,7 @@ def _get_excel_sheet_names_cached(excel_path):
             names = [str(s).strip() for s in xls.sheet_names]
         except Exception:
             names = []
-    try:
-        cache.set(cache_key, names, 86400)
-    except Exception:
-        pass
+    _tab_cache_set(cache_key, names, 86400)
     return names
 
 
@@ -695,7 +763,7 @@ def _extract_months_from_excel_cached(excel_path, sheet_names):
     sig = _excel_file_signature(excel_path)
     path_key = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
     cache_key = f"excel_months::{path_key}::{sig}"
-    cached = cache.get(cache_key)
+    cached = _tab_cache_get(cache_key)
     if cached is not None:
         return list(cached)
 
@@ -742,10 +810,7 @@ def _extract_months_from_excel_cached(excel_path, sheet_names):
         print("⚠️ [ERROR] أثناء استخراج الشهور:", e)
         all_months = []
 
-    try:
-        cache.set(cache_key, all_months, 86400)
-    except Exception:
-        pass
+    _tab_cache_set(cache_key, all_months, 86400)
     return all_months
 
 
@@ -803,6 +868,9 @@ def _inbound_sheet_name_for_months(excel_path):
             return re.sub(r"[^a-z0-9]", "", (str(s) or "").strip().lower())
 
         for s in xls.sheet_names:
+            if str(s).strip().lower() == "inbound":
+                return s
+        for s in xls.sheet_names:
             if _n(s) == "inboundtab":
                 return s
         for s in xls.sheet_names:
@@ -814,6 +882,520 @@ def _inbound_sheet_name_for_months(excel_path):
     except Exception:
         pass
     return None
+
+
+def _inbound_series_percent_to_float(series):
+    """تحويل Rec. Acc % وغيرها من نصوص مثل 100% أو 99,5 إلى أرقام."""
+
+    def _cell(v):
+        if v is None:
+            return None
+        try:
+            if isinstance(v, float) and pd.isna(v):
+                return None
+        except (TypeError, ValueError):
+            pass
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+        s = str(v).strip().replace("\u00a0", " ")
+        if not s or s.lower() in ("nan", "none", "-", "n/a", "#n/a"):
+            return None
+        s = s.replace("%", "").strip()
+        s = s.replace(",", "")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    return series.map(_cell)
+
+
+def _inbound_match_nespresso_kpi_columns(columns):
+    """أعمدة شيت Nespresso Inbound (GRN KPI، Putaway LT، …) — أسماء مرنة."""
+    cols = [str(c).strip() for c in columns if str(c).strip()]
+
+    def _t(c):
+        return str(c).strip().lower().replace("_", " ").replace(".", "")
+
+    out = {
+        "grn_kpi": None,
+        "putaway_lt": None,
+        "rec_acc_pct": None,
+        "lpns_putaway": None,
+        "lpns_ship": None,
+        "month": None,
+    }
+    for c in cols:
+        t = _t(c)
+        if "grn" in t and "kpi" in t:
+            out["grn_kpi"] = out["grn_kpi"] or c
+        if "putaway" in t and ("lt" in t or "lead" in t):
+            out["putaway_lt"] = out["putaway_lt"] or c
+        if ("rec" in t and "acc" in t) or "receivingaccuracy" in t.replace(" ", ""):
+            out["rec_acc_pct"] = out["rec_acc_pct"] or c
+        if "lpn" in t and "putaway" in t:
+            out["lpns_putaway"] = out["lpns_putaway"] or c
+        elif t == "lpns":
+            out["lpns_ship"] = out["lpns_ship"] or c
+        if t in ("month", "calendar month", "mth", "period"):
+            out["month"] = out["month"] or c
+        elif "month" in t and "quarter" not in t and "year" not in t:
+            out["month"] = out["month"] or c
+    return out
+
+
+def _inbound_kpi_cell_is_hit(val):
+    """Hit / Yes / 1 … — قيم شائعة في أعمدة KPI في الإكسل."""
+    if val is None:
+        return False
+    try:
+        if isinstance(val, (float, int)) and not isinstance(val, bool):
+            if isinstance(val, float) and pd.isna(val):
+                return False
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip().lower()
+    if not s or s in ("nan", "none", "<na>", "nat"):
+        return False
+    if s in ("hit", "yes", "y", "1", "true", "pass", "ok", "√", "✓"):
+        return True
+    if s.startswith("hit"):
+        return True
+    return False
+
+
+def _inbound_grn_kpi_cell_nonempty(val):
+    """هل خلية GRN KPI فيها قيمة فعلية (Hit/Miss/رقم/نص) — الفاضي لا يُحسب في شارت الشهور."""
+    if val is None:
+        return False
+    try:
+        if isinstance(val, (float, int)) and not isinstance(val, bool):
+            if isinstance(val, float) and pd.isna(val):
+                return False
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", "<na>", "nat", "—", "-"):
+        return False
+    return True
+
+
+_INBOUND_MONTH_ABBR_TO_NUM = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+_INBOUND_MONTH_FULL_EN_TO_NUM = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+
+def _inbound_month_label_sort_index(label):
+    """1–12 للترتيب الزمني (اختصار أو اسم شهر إنجليزي)."""
+    if label is None:
+        return 99
+    s = str(label).strip().lower()
+    if not s or s in ("nan", "none", "—", "-", "<na>"):
+        return 99
+    if s in _INBOUND_MONTH_FULL_EN_TO_NUM:
+        return _INBOUND_MONTH_FULL_EN_TO_NUM[s]
+    abb = s[:3]
+    return _INBOUND_MONTH_ABBR_TO_NUM.get(abb, 99)
+
+
+def _nespresso_grn_mini_shipments_payload(df, fac_col, ship_col, month_col, grn_col, limit=500):
+    """صفوف JSON للفلترة في الواجهة (Facility → Shipment → GRN Hit/Miss)."""
+    out = []
+    if df is None or getattr(df, "empty", True) or not grn_col or grn_col not in df.columns:
+        return out
+    d = df.head(int(limit)).copy()
+    for _, row in d.iterrows():
+        fac = (
+            str(row.get(fac_col, "") if fac_col and fac_col in d.columns else "")
+            .strip()
+        )
+        ship = (
+            str(row.get(ship_col, "") if ship_col and ship_col in d.columns else "")
+            .strip()
+        )
+        mth = (
+            str(row.get(month_col, "") if month_col and month_col in d.columns else "")
+            .strip()
+        )
+        grn_raw = row.get(grn_col) if grn_col in d.columns else None
+        gh = bool(_inbound_kpi_cell_is_hit(grn_raw))
+        out.append(
+            {
+                "facility": fac,
+                "shipment": ship,
+                "month": mth,
+                "grn_hit": gh,
+                "grn_defined": _inbound_grn_kpi_cell_nonempty(grn_raw),
+            }
+        )
+    return out
+
+
+def _nespresso_grn_by_facility_from_payload(rows_payload):
+    """يجمع Hit/Miss/% لكل Facility من قائمة صفوف الشحنات."""
+    from collections import defaultdict
+
+    agg = defaultdict(lambda: {"hit": 0, "miss": 0})
+    for r in rows_payload or []:
+        f = (r.get("facility") or "").strip() or "—"
+        if r.get("grn_hit"):
+            agg[f]["hit"] += 1
+        else:
+            agg[f]["miss"] += 1
+    out = []
+    for fac in sorted(agg.keys(), key=lambda x: str(x).lower()):
+        h, ms = agg[fac]["hit"], agg[fac]["miss"]
+        tot = h + ms
+        pct = int(round(100.0 * h / tot, 0)) if tot else 0
+        out.append({"facility": fac, "hit": h, "miss": ms, "total": tot, "hit_pct": pct})
+    total_hit = sum(x["hit"] for x in agg.values())
+    total_miss = sum(x["miss"] for x in agg.values())
+    total_n = total_hit + total_miss
+    total_pct = int(round(100.0 * total_hit / total_n, 0)) if total_n else 0
+    total_row = {
+        "facility": "TOTAL",
+        "hit": total_hit,
+        "miss": total_miss,
+        "total": total_n,
+        "hit_pct": total_pct,
+    }
+    return out, total_row
+
+
+def _nespresso_grn_by_month_from_payload(rows_payload):
+    """نقاط شارت: شهر → Hit % (أشهر بلا صفوف شحنات لا تُدرج)."""
+    from collections import defaultdict
+
+    agg = defaultdict(lambda: {"hit": 0, "miss": 0})
+    for r in rows_payload or []:
+        if r.get("grn_defined") is False:
+            continue
+        m = (r.get("month") or "").strip() or "—"
+        if r.get("grn_hit"):
+            agg[m]["hit"] += 1
+        else:
+            agg[m]["miss"] += 1
+    _skip_month_label = {"", "—", "-", "<na>", "nan", "none", "nat"}
+    pts = []
+    for m in sorted(agg.keys(), key=_inbound_month_label_sort_index):
+        h, ms = agg[m]["hit"], agg[m]["miss"]
+        tot = h + ms
+        if tot <= 0:
+            continue
+        m_disp = str(m).strip()
+        if not m_disp or m_disp.lower() in _skip_month_label:
+            continue
+        pct = int(round(100.0 * h / tot, 0)) if tot else 0
+        pts.append({"month": m_disp, "hit_pct": pct, "hit": h, "miss": ms})
+    return pts
+
+
+def _try_inbound_nespresso_layout_response(df, sheet_name, selected_month=None, selected_months=None):
+    """
+    مسار Inbound بدون أعمدة ARAMCO (Shipment / Create / Last LPN): يعرض كروت Nespresso + جدول الشيت.
+    يرجع dict مثل filter_inbound الناجح أو None.
+    """
+    from django.template.loader import render_to_string
+
+    if df is None or getattr(df, "empty", True):
+        return None
+    km = _inbound_match_nespresso_kpi_columns(df.columns)
+    if not any(
+        [
+            km["grn_kpi"],
+            km["putaway_lt"],
+            km["rec_acc_pct"],
+            km["lpns_putaway"],
+            km.get("lpns_ship"),
+        ]
+    ):
+        return None
+
+    total_shipments_hit = 0
+    grn_hit_rate = putaway_hit_rate = receiving_accuracy = 0.0
+    total_lpns_processed = 0
+    grn_row_count = 0
+
+    if km["grn_kpi"]:
+        s_hit = df[km["grn_kpi"]].map(_inbound_kpi_cell_is_hit)
+        total_shipments_hit = int(s_hit.sum())
+        n = int(s_hit.shape[0])
+        grn_row_count = n
+        grn_hit_rate = round((total_shipments_hit * 100.0 / n), 2) if n else 0.0
+    if km["putaway_lt"]:
+        s2 = df[km["putaway_lt"]].map(_inbound_kpi_cell_is_hit)
+        ph = int(s2.sum())
+        n2 = int(s2.shape[0])
+        putaway_hit_rate = round((ph * 100.0 / n2), 2) if n2 else 0.0
+    if km["rec_acc_pct"]:
+        rec_vals = _inbound_series_percent_to_float(df[km["rec_acc_pct"]])
+        if not rec_vals.dropna().empty:
+            receiving_accuracy = round(float(rec_vals.dropna().mean()), 2)
+    if km.get("lpns_ship"):
+        lpns_vals = pd.to_numeric(df[km["lpns_ship"]], errors="coerce")
+        total_lpns_processed = int(lpns_vals.fillna(0).sum())
+    elif km["lpns_putaway"]:
+        lpns_vals = pd.to_numeric(df[km["lpns_putaway"]], errors="coerce")
+        total_lpns_processed = int(lpns_vals.fillna(0).sum())
+
+    overall_total = int(len(df))
+    overall_hits = total_shipments_hit if km["grn_kpi"] else 0
+    overall_miss = max(0, overall_total - overall_hits) if km["grn_kpi"] else 0
+    overall_hit_pct = float(grn_hit_rate) if km["grn_kpi"] else 0.0
+
+    raw_columns = [str(c) for c in df.columns if str(c).strip() and not str(c).startswith("_")]
+    if len(raw_columns) > 60:
+        raw_columns = raw_columns[:60]
+    raw_df = df[[c for c in df.columns if str(c) in set(raw_columns)]].copy()
+
+    def _to_blank(val):
+        if val is None or (isinstance(val, float) and (pd.isna(val) or val != val)):
+            return ""
+        s = str(val).strip()
+        if s.lower() in ("nan", "nat", "none", "<nat>"):
+            return ""
+        return s
+
+    for col in raw_df.columns:
+        try:
+            if pd.api.types.is_datetime64_any_dtype(raw_df[col].dtype):
+                raw_df[col] = raw_df[col].apply(
+                    lambda x: x.strftime("%Y-%m-%d %H:%M") if pd.notna(x) else ""
+                )
+        except (TypeError, ValueError):
+            continue
+
+    def _first_col(df0, names):
+        for n in names:
+            if n in df0.columns:
+                return n
+        return None
+
+    fac_col = _first_col(raw_df, ("Facility", "Facility Code", "Region"))
+    ship_col = _first_col(
+        raw_df,
+        (
+            "Shipment Nbr",
+            "Shipment_nbr",
+            "Shipment NBR",
+            "Shipment Number",
+            "Shipment_ID",
+            "Shipment ID",
+        ),
+    )
+    type_col = _first_col(
+        raw_df,
+        (
+            "Type",
+            "Shipment Type",
+            "Shipment_Type",
+            "Order Type",
+            "Order_Type",
+            "Channel",
+            "Mode",
+        ),
+    )
+    month_col = None
+    if km.get("month") and km["month"] in raw_df.columns:
+        month_col = km["month"]
+    elif "Month" in raw_df.columns:
+        month_col = "Month"
+    if not month_col:
+        _mabbr = {
+            "jan", "feb", "mar", "apr", "may", "jun",
+            "jul", "aug", "sep", "oct", "nov", "dec",
+        }
+        for cand in raw_df.columns:
+            cn = str(cand).strip().lower()
+            if len(cn) == 3 and cn in _mabbr:
+                month_col = str(cand).strip()
+                break
+
+    facility_codes = []
+    if fac_col:
+        facility_codes = sorted(
+            {
+                str(x).strip()
+                for x in raw_df[fac_col].dropna().unique().tolist()
+                if str(x).strip()
+            }
+        )[:200]
+
+    put_col = km.get("putaway_lt")
+    grn_col = km.get("grn_kpi")
+    lpn_col = km.get("lpns_ship") or km.get("lpns_putaway")
+    if month_col and month_col in raw_df.columns:
+        try:
+            _sdf = raw_df.copy()
+            _sdf["_inbound_msort"] = _sdf[month_col].map(_inbound_month_label_sort_index)
+            _sort_cols = ["_inbound_msort"]
+            if ship_col and ship_col in _sdf.columns:
+                _sort_cols.append(ship_col)
+            raw_df = _sdf.sort_values(_sort_cols, na_position="last").drop(
+                columns=["_inbound_msort"], errors="ignore"
+            )
+        except Exception:
+            pass
+
+    detail_rows = []
+    for row in raw_df.head(500).to_dict(orient="records"):
+        r = {k: _to_blank(v) for k, v in row.items()}
+        if put_col:
+            r["_putaway_hit"] = "1" if _inbound_kpi_cell_is_hit(row.get(put_col)) else "0"
+        if grn_col:
+            r["_grn_hit"] = "1" if _inbound_kpi_cell_is_hit(row.get(grn_col)) else "0"
+        if lpn_col:
+            try:
+                _lpn_num = pd.to_numeric(row.get(lpn_col), errors="coerce")
+                r["_lpns_value"] = 0 if pd.isna(_lpn_num) else float(_lpn_num)
+            except Exception:
+                r["_lpns_value"] = 0
+        if km.get("rec_acc_pct"):
+            try:
+                _rv = _inbound_series_percent_to_float(pd.Series([row.get(km["rec_acc_pct"])]))
+                _rnum = _rv.iloc[0] if not _rv.empty else None
+                r["_rec_acc_value"] = "" if pd.isna(_rnum) else float(_rnum)
+            except Exception:
+                r["_rec_acc_value"] = ""
+        detail_rows.append(r)
+
+    month_options = []
+    if month_col and month_col in raw_df.columns:
+        try:
+            month_options = sorted(
+                {
+                    str(x).strip()
+                    for x in raw_df[month_col].dropna().unique().tolist()
+                    if str(x).strip()
+                },
+                key=_inbound_month_label_sort_index,
+            )[:50]
+        except Exception:
+            month_options = []
+
+    type_options = []
+    if type_col and type_col in raw_df.columns:
+        try:
+            type_options = sorted(
+                {
+                    str(x).strip()
+                    for x in raw_df[type_col].dropna().unique().tolist()
+                    if str(x).strip()
+                }
+            )[:100]
+        except Exception:
+            type_options = []
+
+    _mabbr_hdr = {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec",
+    }
+    column_header_labels = {}
+    if month_col:
+        column_header_labels[str(month_col).strip()] = "Month"
+    for _c in raw_columns:
+        _cs = str(_c).strip()
+        _cl = _cs.lower()
+        if _cl in ("month", "calendar month", "mth", "period"):
+            column_header_labels[_cs] = "Month"
+        elif len(_cl) == 3 and _cl in _mabbr_hdr:
+            column_header_labels[_cs] = "Month"
+
+    detail_table = {
+        "id": "sub-table-inbound-detail",
+        "title": "Inbound — Excel Sheet",
+        "columns": raw_columns,
+        "data": detail_rows,
+        "chart_data": [],
+        "full_width": True,
+        "column_header_labels": column_header_labels,
+        "filter_options": {
+            "inbound_nespresso": True,
+            "facility_codes": facility_codes,
+            "months": month_options,
+            "fac_col": fac_col or "",
+            "ship_col": ship_col or "",
+            "type_col": type_col or "",
+            "shipment_types": type_options,
+            "month_col": month_col or "",
+            "has_grn_kpi": bool(grn_col),
+            "has_putaway_lt": bool(put_col),
+            "has_lpns": bool(lpn_col),
+            "lpn_col": lpn_col or "",
+        },
+    }
+
+    grn_mini = None
+    if grn_col and fac_col:
+        mini_payload = _nespresso_grn_mini_shipments_payload(
+            raw_df, fac_col, ship_col, month_col, grn_col, 500
+        )
+        fac_tbl, tot_row = _nespresso_grn_by_facility_from_payload(mini_payload)
+        month_pts = _nespresso_grn_by_month_from_payload(mini_payload)
+        grn_mini = {
+            "by_facility": fac_tbl,
+            "total_row": tot_row,
+            "by_month_chart": month_pts,
+        }
+
+    inbound_tab = {
+        "name": "Inbound",
+        "stats": {
+            "total": overall_total,
+            "hit": overall_hits,
+            "miss": overall_miss,
+            "hit_pct": overall_hit_pct,
+            "total_shipments_hit": total_shipments_hit,
+            "grn_kpi_rows": grn_row_count,
+            "grn_kpi_hit_rate": grn_hit_rate,
+            "putaway_lt_hit_rate": putaway_hit_rate,
+            "receiving_accuracy_pct": receiving_accuracy,
+            "total_lpns_processed": total_lpns_processed,
+        },
+        "sub_tables": [detail_table],
+        "grn_mini": grn_mini,
+    }
+
+    html = render_to_string(
+        "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",
+        {
+            "tab": inbound_tab,
+            "selected_month": selected_month,
+            "selected_months": selected_months,
+        },
+    )
+    return {
+        "detail_html": html,
+        "sub_tables": [detail_table],
+        "chart_data": [],
+        "stats": inbound_tab["stats"],
+        "regions_by_month": [],
+    }
 
 
 def _total_lead_time_sheet_for_months(excel_path):
@@ -3086,95 +3668,99 @@ class UploadExcelViewRoche(View):
                 return JsonResponse({"error": "⚠️ Please select a tab first."})
 
         # ====================== الطلب العادي ======================
-        # تبويبات الشيتات: openpyxl read_only + كاش (أسرع بكثير من pd.ExcelFile لكل GET)
-        all_sheets = []
-        try:
-            all_sheets = _get_excel_sheet_names_cached(excel_path)
-            if not all_sheets:
-                raise ValueError("empty sheet list")
-
-            MERGE_SHEETS = ["Urgent orders details", "Outbound details"]
-            REJECTION_SHEETS = ["Rejection", "Rejection breakdown"]
-            AIRPORT_SHEETS = ["Airport Clearance - Roche", "Airport Clearance - 3PL"]
-            SEAPORT_SHEETS = ["Seaport clearance - 3pl", "Seaport clearance - Roche"]
-            TOTAL_LEADTIME_SHEETS = [
-                "Total lead time preformance",
-                "Total lead time preformance -R",
-            ]
-            DOCK_TO_STOCK_SHEETS = ["Dock to stock", "Dock to stock - Roche"]
-            # التابات اللي تحب تاخدها من الداشبورد: عدّل هنا (أسماء كما في الإكسل)
-            EXCLUDE_SHEETS_BASE = ["Sheet2"]
-            # لو حابب تحذف تابات إضافية: زود أسمائهم هنا (بالضبط كما في الإكسل)
-            EXCLUDE_SHEETS_EXTRA = getattr(
-                self.__class__, "EXCLUDE_TABS", []
-            )  # أو عدّل EXCLUDE_TABS في أول الكلاس
-            EXCLUDE_SHEETS = list(EXCLUDE_SHEETS_BASE) + list(EXCLUDE_SHEETS_EXTRA)
-
-            include_only = getattr(self.__class__, "INCLUDE_ONLY_TABS", None)
-            if include_only:
-                # عرض التابات المذكورة فقط (الاسم كما في الإكسل)
-                include_set = {s.strip() for s in include_only}
-                filtered_tabs = [t for t in all_sheets if t in include_set]
-            else:
-                filtered_tabs = [
-                    t
-                    for t in all_sheets
-                    if t not in MERGE_SHEETS
-                    and t not in REJECTION_SHEETS
-                    and t not in AIRPORT_SHEETS
-                    and t not in SEAPORT_SHEETS
-                    and t not in TOTAL_LEADTIME_SHEETS
-                    and t not in DOCK_TO_STOCK_SHEETS
-                    and t not in EXCLUDE_SHEETS
-                ]
-
-            virtual_tabs = [
-                self.DASHBOARD_TAB_NAME,
-                "Inbound",
-                "B2B Outbound",
-                "B2C Outbound",
-                "Capacity + Expiry",
-                "Return & Refusal",
-                "Safety KPI",
-                "Traceability KPI",
-                "Meeting Points & Action",
-            ]
-            if include_only:
-                include_set_v = {s.strip() for s in include_only}
-                filtered_tabs += [v for v in virtual_tabs if v in include_set_v]
-            else:
-                filtered_tabs += virtual_tabs
-
-            ordered_tabs = [
-                self.DASHBOARD_TAB_NAME,
-                "Inbound",
-                "B2B Outbound",
-                "B2C Outbound",
-                "Capacity + Expiry",
-                "Return & Refusal",
-                "Safety KPI",
-                "Traceability KPI",
-                "Meeting Points & Action",
-            ]
-
-            filtered_tabs = [tab for tab in ordered_tabs if tab in filtered_tabs]
-            excel_tabs = [{"original": name, "display": name} for name in filtered_tabs]
-
-        except Exception as e:
-            print(f"⚠️ [ERROR] تعذر قراءة الشيتات من الملف: {e}")
-            excel_tabs = []
-            all_sheets = []
-
-        all_months = _extract_months_from_excel_cached(excel_path, all_sheets)
-        months_for_select = self._available_months_for_tab(
-            request, (selected_tab or "dashboard").strip().lower()
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        selected_tab_norm = (selected_tab or "").strip().lower()
+        fast_initial_page = bool(getattr(settings, "EXCEL_FAST_INITIAL_PAGE", True))
+        is_fast_dashboard_boot = (
+            fast_initial_page
+            and (not is_ajax)
+            and selected_tab_norm == "dashboard"
+            and not selected_month
+            and not selected_quarter
         )
-        if not months_for_select:
-            months_for_select = all_months
 
-        meeting_points = MeetingPoint.objects.all().order_by("is_done", "-created_at")
-        done_count = meeting_points.filter(is_done=True).count()
-        total_count = meeting_points.count()
+        ordered_tabs = [
+            self.DASHBOARD_TAB_NAME,
+            "Inbound",
+            "B2B Outbound",
+            "B2C Outbound",
+            "Capacity + Expiry",
+            "Return & Refusal",
+            "Safety KPI",
+            "Traceability KPI",
+            "Meeting Points & Action",
+        ]
+
+        all_sheets = []
+        months_for_select = []
+        if is_fast_dashboard_boot:
+            # أول فتح للصفحة: لا نقرأ شيتات/شهور من الإكسل لتقليل زمن GET.
+            excel_tabs = [{"original": name, "display": name} for name in ordered_tabs]
+            meeting_points = []
+            done_count = 0
+            total_count = 0
+            print("⚡ [GET] Fast initial dashboard bootstrap enabled")
+        else:
+            # تبويبات الشيتات: openpyxl read_only + كاش (أسرع بكثير من pd.ExcelFile لكل GET)
+            try:
+                all_sheets = _get_excel_sheet_names_cached(excel_path)
+                if not all_sheets:
+                    raise ValueError("empty sheet list")
+
+                MERGE_SHEETS = ["Urgent orders details", "Outbound details"]
+                REJECTION_SHEETS = ["Rejection", "Rejection breakdown"]
+                AIRPORT_SHEETS = ["Airport Clearance - Roche", "Airport Clearance - 3PL"]
+                SEAPORT_SHEETS = ["Seaport clearance - 3pl", "Seaport clearance - Roche"]
+                TOTAL_LEADTIME_SHEETS = [
+                    "Total lead time preformance",
+                    "Total lead time preformance -R",
+                ]
+                DOCK_TO_STOCK_SHEETS = ["Dock to stock", "Dock to stock - Roche"]
+                EXCLUDE_SHEETS_BASE = ["Sheet2"]
+                EXCLUDE_SHEETS_EXTRA = getattr(self.__class__, "EXCLUDE_TABS", [])
+                EXCLUDE_SHEETS = list(EXCLUDE_SHEETS_BASE) + list(EXCLUDE_SHEETS_EXTRA)
+
+                include_only = getattr(self.__class__, "INCLUDE_ONLY_TABS", None)
+                if include_only:
+                    include_set = {s.strip() for s in include_only}
+                    filtered_tabs = [t for t in all_sheets if t in include_set]
+                else:
+                    filtered_tabs = [
+                        t
+                        for t in all_sheets
+                        if t not in MERGE_SHEETS
+                        and t not in REJECTION_SHEETS
+                        and t not in AIRPORT_SHEETS
+                        and t not in SEAPORT_SHEETS
+                        and t not in TOTAL_LEADTIME_SHEETS
+                        and t not in DOCK_TO_STOCK_SHEETS
+                        and t not in EXCLUDE_SHEETS
+                    ]
+
+                if include_only:
+                    include_set_v = {s.strip() for s in include_only}
+                    filtered_tabs += [v for v in ordered_tabs if v in include_set_v]
+                else:
+                    filtered_tabs += ordered_tabs
+
+                filtered_tabs = [tab for tab in ordered_tabs if tab in filtered_tabs]
+                excel_tabs = [{"original": name, "display": name} for name in filtered_tabs]
+
+            except Exception as e:
+                print(f"⚠️ [ERROR] تعذر قراءة الشيتات من الملف: {e}")
+                excel_tabs = [{"original": name, "display": name} for name in ordered_tabs]
+                all_sheets = []
+
+            all_months = _extract_months_from_excel_cached(excel_path, all_sheets)
+            months_for_select = self._available_months_for_tab(
+                request, (selected_tab or "dashboard").strip().lower()
+            )
+            if not months_for_select:
+                months_for_select = all_months
+
+            meeting_points = MeetingPoint.objects.all().order_by("is_done", "-created_at")
+            done_count = meeting_points.filter(is_done=True).count()
+            total_count = meeting_points.count()
 
         # ✅ تحميل سريع: لا نحمّل الـ Overview على السيرفر (يُحمّل لاحقاً عبر AJAX)
         _overview_placeholder = (
@@ -3203,7 +3789,6 @@ class UploadExcelViewRoche(View):
             "excel_workbook_cache_sig": _excel_file_signature(excel_path),
         }
         # تحميل سريع: لا نحمّل بيانات الداشبورد على أول طلب GET (تُحمّل لاحقاً عبر AJAX عند فتح تاب Dashboard)
-        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         if is_ajax and (selected_tab or "").lower() == "dashboard":
             try:
                 dashboard_ctx = self._get_dashboard_include_context(request)
@@ -3264,9 +3849,15 @@ class UploadExcelViewRoche(View):
         _try_remove_libreoffice_lock_files(folder_path)
         file_name = getattr(excel_file, "name", "") or ""
         is_dashboard_file = _is_dashboard_excel_filename(file_name)
-        # رفع الملف الرئيسي: الافتراضي دمج مع النسخة السابقة؛ replace_workbook=1 يستبدل بالكامل بدون دمج
-        _rw = (request.POST.get("replace_workbook") or "").strip().lower()
-        replace_workbook = _rw in ("1", "true", "yes", "on")
+        # replace_workbook=1: استبدال كامل بدون دمج (الافتراضي في الواجهة — أسرع بكثير).
+        # replace_workbook=0: دمج مع نسخة سابقة من latest (ثقيل على الملفات الكبيرة).
+        _rw_raw = request.POST.get("replace_workbook")
+        # إذا لم يُرسل الحقل (رفع بدون الواجهة الحالية) نفضّل الاستبدال السريع بدون دمج
+        if _rw_raw is None:
+            replace_workbook = True
+        else:
+            _rw = str(_rw_raw).strip().lower()
+            replace_workbook = _rw in ("1", "true", "yes", "on")
 
         if is_dashboard_file:
             # ✅ ملف الداشبورد (شيت تاني): Aramco_Tamer3PL_KPI_Dashboard.xlsx — للتاب Dashboard فقط
@@ -3286,10 +3877,12 @@ class UploadExcelViewRoche(View):
                 if is_dashboard_file
                 else _existing_main_workbook_before_upload(folder_path)
             )
+            # دمج فقط عندما يطلب المستخدم عدم الاستبدال الكامل (replace_workbook=0).
+            # ملف الداشبورد والرئيسي: نفس القاعدة — الدمج يقرأ ملفين كاملين ويعيد كتابة كل الشيتات.
             _do_merge_prev = (
                 _prev_src
                 and os.path.isfile(_prev_src)
-                and (is_dashboard_file or not replace_workbook)
+                and not replace_workbook
             )
             if _do_merge_prev:
                 try:
@@ -3301,9 +3894,9 @@ class UploadExcelViewRoche(View):
                 except Exception as _cp:
                     print(f"⚠️ [Excel merge/clean] نسخ الملف السابق: {_cp}")
                     merge_prev_copy = None
-            elif not is_dashboard_file and replace_workbook:
+            elif replace_workbook:
                 print(
-                    "📄 [upload] replace_workbook: تخطي دمج الملف السابق — الملف المرفوع يصبح المصدر الوحيد لـ latest"
+                    "📄 [upload] replace_workbook: تخطي دمج الملف السابق — الملف المرفوع يصبح المصدر الوحيد"
                 )
 
             if not is_dashboard_file:
@@ -3354,23 +3947,32 @@ class UploadExcelViewRoche(View):
 
             print(f"✅ [DEBUG] تم حفظ الملف بنجاح في: {file_path}")
 
-            # ✅ الملف الرئيسي فقط: تحويل إلى latest.xlsx بكل الشيتات وتحديث كاش الداتا في DB
+            # ✅ الملف الرئيسي فقط:
+            # افتراضيًا نترك الامتداد كما هو (xlsx/xlsm) لتسريع الرفع.
+            # يمكن إعادة السلوك القديم (توحيد إلى latest.xlsx) من settings.
             if not is_dashboard_file:
-                file_path = _normalize_upload_to_latest_xlsx_and_update_cache(
-                    file_path, folder_path
-                )
-                # دائماً اجعل النسخة المرجعية على القرص = latest.xlsx (مسار الجلسة والـ GET يعتمدان عليه)
-                canonical_latest = os.path.abspath(
-                    os.path.join(folder_path, "latest.xlsx")
-                )
-                fp_abs = os.path.abspath(file_path)
-                if os.path.isfile(fp_abs) and fp_abs != canonical_latest:
-                    try:
-                        shutil.copy2(fp_abs, canonical_latest)
-                        file_path = canonical_latest
-                        print(f"✅ [upload] تم توحيد الملف إلى latest.xlsx ({canonical_latest})")
-                    except OSError as e:
-                        print(f"⚠️ [upload] تعذر النسخ إلى latest.xlsx: {e}")
+                if getattr(settings, "EXCEL_UPLOAD_FORCE_CANONICAL_XLSX", False):
+                    file_path = _normalize_upload_to_latest_xlsx_and_update_cache(
+                        file_path, folder_path
+                    )
+                    # عند التفعيل: اجعل النسخة المرجعية على القرص = latest.xlsx
+                    canonical_latest = os.path.abspath(
+                        os.path.join(folder_path, "latest.xlsx")
+                    )
+                    fp_abs = os.path.abspath(file_path)
+                    if os.path.isfile(fp_abs) and fp_abs != canonical_latest:
+                        try:
+                            shutil.copy2(fp_abs, canonical_latest)
+                            file_path = canonical_latest
+                            print(
+                                f"✅ [upload] تم توحيد الملف إلى latest.xlsx ({canonical_latest})"
+                            )
+                        except OSError as e:
+                            print(f"⚠️ [upload] تعذر النسخ إلى latest.xlsx: {e}")
+                else:
+                    print(
+                        "⚡ [upload] Fast mode: تم تخطي توحيد latest.xlsx للحفاظ على سرعة الرفع"
+                    )
 
             file_path = os.path.abspath(file_path)
             if not os.path.isfile(file_path) or os.path.getsize(file_path) < 64:
@@ -3397,25 +3999,26 @@ class UploadExcelViewRoche(View):
                 print(f"💾 [DEBUG] تم حفظ مسار الملف الرئيسي في الجلسة: {file_path}")
             request.session.save()
 
-            # ✅ مسح الكاش بعد رفع ملف جديد (Django cache + كاش الشيتات في DB)
-            try:
-                cache.clear()
-                print(f"🗑️ [DEBUG] تم مسح الكاش")
-            except Exception as cache_error:
-                print(f"⚠️ [DEBUG] تحذير: لا يمكن مسح الكاش: {cache_error}")
-            if not is_dashboard_file:
+            # مسح كاش Django بالكامل اختياري (بطيء جداً مع FileBasedCache). مفاتيح كاش الإكسل تتضمن توقيع الملف.
+            if getattr(settings, "EXCEL_UPLOAD_CLEAR_ALL_CACHE", False):
+                try:
+                    cache.clear()
+                    print("🗑️ [upload] تم مسح كاش Django بالكامل (EXCEL_UPLOAD_CLEAR_ALL_CACHE)")
+                except Exception as cache_error:
+                    print(f"⚠️ [upload] مسح الكاش: {cache_error}")
+            if not is_dashboard_file and getattr(
+                settings, "EXCEL_UPLOAD_PURGE_DB_SHEET_CACHE", False
+            ):
                 try:
                     n, _ = ExcelSheetCache.objects.all().delete()
-                    print(f"🗑️ [DEBUG] تم مسح كاش الشيتات ({n} سجلات) — التابات ستقرأ من الملف الجديد عند الفتح")
+                    print(
+                        f"🗑️ [DEBUG] تم مسح كاش الشيتات ({n} سجلات) — التابات ستقرأ من الملف الجديد عند الفتح"
+                    )
                 except Exception as e:
                     print(f"⚠️ [DEBUG] مسح كاش الشيتات: {e}")
-                # تسخين خفيف مرة واحدة بعد الرفع (أسماء الشيتات + الشهور) لتسريع أول GET والتابات التالية على السيرفر
-                try:
-                    _wn = _get_excel_sheet_names_cached(file_path)
-                    _extract_months_from_excel_cached(file_path, _wn or [])
-                    print("✅ [upload] تم تسخين كاش أسماء الشيتات والشهور على السيرفر")
-                except Exception as _warm_err:
-                    print(f"⚠️ [upload] تسخين الكاش: {_warm_err}")
+            # تسخين كاش أسماء الشيتات والشهور في الخلفية (لا يعطّل الرد؛ أول فتح تاب أسرع)
+            if getattr(settings, "EXCEL_UPLOAD_ASYNC_WARMUP", True):
+                _warm_excel_sheet_names_and_months_async(file_path)
 
             # ✅ إرجاع response
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
@@ -3991,11 +4594,13 @@ class UploadExcelViewRoche(View):
             # ✅ تخزين مؤقت لنتيجة الـ overview (10 دقائق) — أول فتح لتاب All-in-One بيكون أثقل، الباقي من الكاش
             import hashlib
             _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+            _fsig = _excel_cache_sig_suffix(excel_path)
             _month = (selected_month or "") + "_" + (str(selected_months) if selected_months else "")
             _full_flag = "1" if request and _excel_full_data_requested(request) else "0"
             # v2: per-tab multiple chart series + merged chart_data_pods in overview_tab
-            _cache_key = f"tlp_overview_{_path_hash}_{_month}_{status_filter}_{_full_flag}_v2"
-            overview_data = cache.get(_cache_key)
+            # v3: توقيع الملف — استبدال latest.xlsx دون cache.clear() البطيء
+            _cache_key = f"tlp_overview_{_path_hash}_{_fsig}_{_month}_{status_filter}_{_full_flag}_v3"
+            overview_data = _tab_cache_get(_cache_key)
             if overview_data is None:
                 overview_data = self.overview_tab(
                     request=request,
@@ -4003,7 +4608,7 @@ class UploadExcelViewRoche(View):
                     selected_months=selected_months,
                     from_all_in_one=True,
                 )
-                cache.set(_cache_key, overview_data, 600)
+                _tab_cache_set(_cache_key, overview_data, 600)
 
             if not overview_data or "tab_cards" not in overview_data:
                 html = render_to_string(
@@ -5437,13 +6042,16 @@ class UploadExcelViewRoche(View):
 
             _b2c_max_rows = _excel_max_rows_for_request(request, force_full=True)
             _b2c_mode = "full" if _b2c_max_rows is None else str(_b2c_max_rows)
+            _fsig = _excel_cache_sig_suffix(excel_path)
             _b2c_key = (
                 "b2c_outbound_"
                 + hashlib.md5((excel_path or "").encode()).hexdigest()[:16]
                 + "_"
+                + _fsig
+                + "_"
                 + _b2c_mode
             )
-            _b2c_cached = cache.get(_b2c_key)
+            _b2c_cached = _tab_cache_get(_b2c_key)
             if _b2c_cached is not None:
                 return _b2c_cached
 
@@ -6365,7 +6973,7 @@ class UploadExcelViewRoche(View):
                     "target": 99,
                 },
             }
-            cache.set(_b2c_key, result, 120)
+            _tab_cache_set(_b2c_key, result, 120)
             return result
 
         except Exception as e:
@@ -7037,7 +7645,7 @@ class UploadExcelViewRoche(View):
 
     def filter_inbound(self, request, selected_month=None, selected_months=None):
         """
-        تاب Inbound: يقرأ من ملف all_sheet_nespresso.xlsx، شيت "inbound_tab".
+        تاب Inbound: يقرأ من ملف الإكسل الرئيسي؛ أولوية الشيت: **Inbound** ثم **inbound_tab**.
         - الشيت الجديد بدون مناطق: KPI واحد + شارت (Hit/Miss بالشهر)، ثم جدول تفاصيل شيت الإكسل تحته.
         - من Create Timestamp إلى Last LPN Rcv TS: يوم أو أقل = Hit، أكثر = Miss.
         - أعمدة مضافة في جدول التفاصيل: Days (رقم صحيح)، HIT or MISS، Within 24h.
@@ -7054,48 +7662,65 @@ class UploadExcelViewRoche(View):
                     "chart_data": [],
                 }
 
-            xls = pd.ExcelFile(excel_path, engine="openpyxl")
+            all_sheet_names = _get_excel_sheet_names_cached(excel_path)
+            if not all_sheet_names:
+                return {
+                    "detail_html": (
+                        "<p class='text-danger'>⚠️ تعذر قراءة أسماء الشيتات من ملف الإكسل.</p>"
+                    ),
+                    "sub_tables": [],
+                    "chart_data": [],
+                }
+
             sheet_name = None
 
             def _norm(s):
                 return (str(s).strip().lower().replace(" ", "").replace("_", "") if s else "")
 
-            # أولوية: شيت inbound_tab (يقبل "inbound_tab" أو "inbound tab" أو "Inbound Tab")
-            for s in xls.sheet_names:
-                if _norm(s) == "inboundtab":
+            # أولوية: شيت Inbound (اسم الشيت بالظبط Inbound — قبل inbound_tab)
+            for s in all_sheet_names:
+                if str(s).strip().lower() == "inbound":
                     sheet_name = s
                     break
 
+            # ثم inbound_tab (يقبل "inbound_tab" أو "inbound tab" أو "Inbound Tab")
+            if not sheet_name:
+                for s in all_sheet_names:
+                    if _norm(s) == "inboundtab":
+                        sheet_name = s
+                        break
+
             # ثم شيت ARAMCO Inbound Report القديم إن وجد
             if not sheet_name:
-                for s in xls.sheet_names:
+                for s in all_sheet_names:
                     if "ARAMCO Inbound Report" in (s or "").strip():
                         sheet_name = s
                         break
 
             # وأخيراً أي شيت يحتوي على كلمة inbound (للتوافق)
             if not sheet_name:
-                sheet_name = next((s for s in xls.sheet_names if "inbound" in (s or "").lower()), None)
+                sheet_name = next(
+                    (s for s in all_sheet_names if "inbound" in (s or "").lower()), None
+                )
             if not sheet_name:
-                available = ", ".join(str(s) for s in (xls.sheet_names or [])[:20])
-                if len(xls.sheet_names or []) > 20:
+                available = ", ".join(str(s) for s in (all_sheet_names or [])[:20])
+                if len(all_sheet_names or []) > 20:
                     available += ", …"
                 return {
                     "detail_html": (
-                        "<p class='text-warning'>⚠️ الشيت <strong>inbound_tab</strong> غير موجود داخل الملف.</p>"
-                        "<p class='text-muted small'>المفروض: الملف = <strong>all_sheet_nespresso.xlsx</strong>، والشيت جواه = <strong>inbound_tab</strong>.</p>"
-                        "<p class='text-muted small'>تأكد أن الملف اللي بيُقرأ هو all_sheet_nespresso.xlsx (رفعه أو ضعه في مجلد الرفع)، وأن بداخله شيت اسمه بالظبط <strong>inbound_tab</strong>.</p>"
+                        "<p class='text-warning'>⚠️ لم يُعثر على شيت <strong>Inbound</strong> أو <strong>inbound_tab</strong> داخل الملف.</p>"
+                        "<p class='text-muted small'>المفروض وجود شيت اسمه <strong>Inbound</strong> (أولوية) أو <strong>inbound_tab</strong> داخل ملف الإكسل الرئيسي.</p>"
+                        "<p class='text-muted small'>تأكد أن الملف مرفوع/موجود في مجلد الرفع وأن أحد هذين الاسمين موجوداً بالشيتات.</p>"
                         f"<p class='text-muted small'>الشيتات الموجودة حالياً في الملف: {available}</p>"
                     ),
                     "sub_tables": [],
                     "chart_data": [],
                 }
 
-            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
-            df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+            df = _get_sheet_dataframe(
+                excel_path, sheet_name, use_cache=True, request=request, header=0
             )
-            if df.empty:
+            if df is None or df.empty:
                 return {
                     "detail_html": "<p class='text-warning'>⚠️ Inbound sheet is empty.</p>",
                     "sub_tables": [],
@@ -7104,33 +7729,57 @@ class UploadExcelViewRoche(View):
 
             df.columns = df.columns.astype(str).str.strip()
 
-            # إذا الصف الأول عنوان (مثل "ARAMCO Inbound Report") والرؤوس في صف تالي، نكتشف صف الرؤوس
+            # إذا الصف الأول عنوان (داشبورد / ARAMCO) والرؤوس في صف لاحق، نكتشف صف الرؤوس
             first_col = str(df.columns[0]).strip() if len(df.columns) else ""
+            _cols_joined_early = " ".join(str(c).strip().lower() for c in df.columns[:8] if c is not None)
+            _looks_like_dashboard_row_as_header = (
+                "inbound" in _cols_joined_early
+                and ("kpi" in _cols_joined_early or "dashboard" in _cols_joined_early)
+            )
             if (
                 first_col.startswith("Unnamed:")
                 or first_col == "ARAMCO Inbound Report"
                 or (first_col and "inbound report" in first_col.lower())
+                or _looks_like_dashboard_row_as_header
             ):
-                raw = pd.read_excel(
+                raw = _get_sheet_dataframe(
                     excel_path,
-                    sheet_name=sheet_name,
-                    engine="openpyxl",
+                    sheet_name,
+                    use_cache=True,
+                    request=request,
                     header=None,
-                    **_nr_kw,
                 )
-                if raw.empty or raw.shape[0] < 2:
+                if raw is None or raw.empty:
+                    pass  # نكمل بـ df من قراءة header=0
+                elif raw.shape[0] < 2:
                     raw.columns = raw.columns.astype(str).str.strip()
                 else:
                     header_row_idx = None
-                    for idx in range(min(10, raw.shape[0])):
+                    # الداشبورد قد يشغل عشرات الصفوف؛ جدول Nespresso "SHIPMENT DETAIL" غالباً بعدها
+                    _max_header_scan = min(80, raw.shape[0])
+                    for idx in range(_max_header_scan):
                         row = raw.iloc[idx]
                         cells = " ".join(str(c).strip().lower() for c in row.dropna().astype(str))
-                        if (
+                        # تنسيق ARAMCO / WMS: Facility + Shipment + Create/Creation + Received/LPN
+                        aramco_header = (
                             "facility" in cells
                             and ("shipment" in cells or "shipment_nbr" in cells)
                             and ("create" in cells or "creation" in cells)
                             and ("received" in cells or "lpn" in cells)
-                        ):
+                        )
+                        # تنسيق Nespresso شيت Inbound: Month, Facility, Shipment Nbr, … بدون أعمدة Create/Last LPN
+                        nespresso_shipment_header = (
+                            "facility" in cells
+                            and "shipment" in cells
+                            and ("received" in cells or "shipped" in cells)
+                            and (
+                                "month" in cells
+                                or "grn" in cells
+                                or "putaway" in cells
+                                or "rec" in cells
+                            )
+                        )
+                        if aramco_header or nespresso_shipment_header:
                             header_row_idx = idx
                             break
                     if header_row_idx is not None:
@@ -7217,6 +7866,12 @@ class UploadExcelViewRoche(View):
                 col_received = find_column_containing("received", "lpn") or find_column_containing("lpn", "rcv") or find_column_containing("lpn", "receive") or find_column_containing("last", "lpn")
 
             if not col_shipment or not col_create or not col_received:
+                # شيت Nespresso: أعمدة GRN KPI / Putaway LT / … من غير مسار ARAMCO ≤24h
+                nespresso_resp = _try_inbound_nespresso_layout_response(
+                    df, sheet_name, selected_month, selected_months
+                )
+                if nespresso_resp is not None:
+                    return nespresso_resp
                 missing = []
                 if not col_shipment:
                     missing.append("Shipment Nbr")
@@ -7231,6 +7886,7 @@ class UploadExcelViewRoche(View):
                     "detail_html": (
                         f"<p class='text-danger'>⚠️ Missing required columns: {', '.join(missing)}</p>"
                         f"<p class='text-muted small mt-2'>الأعمدة الموجودة في الشيت: {actual_cols}</p>"
+                        "<p class='text-muted small'>لو شيتك بتنسيق Nespresso (GRN KPI، Putaway LT، …) تأكد أن أسماء الأعمدة تحتوي على هذه الكلمات.</p>"
                     ),
                     "sub_tables": [],
                     "chart_data": [],
@@ -7366,6 +8022,67 @@ class UploadExcelViewRoche(View):
             overall_hits = hits
             overall_miss = misses
             overall_hit_pct = round((overall_hits / overall_total) * 100, 2) if overall_total else 0
+
+            # 🔹 Nespresso-specific inbound KPI cards from the raw sheet (Inbound / inbound_tab)
+            # الأعمدة المتوقعة:
+            # - "GRN KPI": قيم Hit / Miss لكل شحنة
+            # - "Putaway LT": قيم Hit / Miss لوقت الـ Putaway
+            # - "Rec. Acc %": نسبة الدقة في الاستلام (٪) لكل صف
+            # - "LPNs Putaway": عدد الـ LPNs التي تم Putaway لكل صف
+            def _find_col(df_cols, *names):
+                names_norm = {str(n).strip().lower() for n in names if n}
+                for c in df_cols:
+                    if str(c).strip().lower() in names_norm:
+                        return c
+                return None
+
+            grn_col = _find_col(df.columns, "GRN KPI", "GRN_KPI", "GRN Kpi")
+            putaway_col = _find_col(df.columns, "Putaway LT", "Putaway_LT", "Putaway Lead Time")
+            rec_acc_col = _find_col(df.columns, "Rec. Acc %", "Rec Acc %", "Receiving Accuracy", "Rec.Acc%")
+            lpns_ship_col = _find_col(df.columns, "LPNs")
+            lpns_col = _find_col(df.columns, "LPNs Putaway", "LPNs_Putaway", "LPNs Processed")
+
+            total_shipments_hit = 0
+            grn_hit_rate = 0.0
+            putaway_hit_rate = 0.0
+            receiving_accuracy = 0.0
+            total_lpns_processed = 0
+            grn_row_count = 0
+
+            if grn_col:
+                s_hit_mask = df[grn_col].map(_inbound_kpi_cell_is_hit)
+                total_shipments_hit = int(s_hit_mask.sum())
+                total_grn_rows = int(s_hit_mask.shape[0])
+                grn_row_count = total_grn_rows
+                grn_hit_rate = round(
+                    (total_shipments_hit * 100.0) / total_grn_rows, 2
+                ) if total_grn_rows else 0.0
+
+            if putaway_col:
+                s_pa_hit = df[putaway_col].map(_inbound_kpi_cell_is_hit)
+                putaway_hits = int(s_pa_hit.sum())
+                total_pa_rows = int(s_pa_hit.shape[0])
+                putaway_hit_rate = round(
+                    (putaway_hits * 100.0) / total_pa_rows, 2
+                ) if total_pa_rows else 0.0
+
+            if rec_acc_col:
+                rec_vals = _inbound_series_percent_to_float(df[rec_acc_col])
+                if not rec_vals.dropna().empty:
+                    receiving_accuracy = round(
+                        float(rec_vals.dropna().mean()), 2
+                    )
+
+            if lpns_ship_col:
+                lpns_vals = pd.to_numeric(
+                    df[lpns_ship_col], errors="coerce"
+                )
+                total_lpns_processed = int(lpns_vals.fillna(0).sum())
+            elif lpns_col:
+                lpns_vals = pd.to_numeric(
+                    df[lpns_col], errors="coerce"
+                )
+                total_lpns_processed = int(lpns_vals.fillna(0).sum())
 
             # جدول KPI واحد (بالشهور + 2025) مع الشارت
             pivot_cols = ["KPI"] + ordered_months + ["2025"]
@@ -7660,10 +8377,23 @@ class UploadExcelViewRoche(View):
             inbound_tab = {
                 "name": "Inbound",
                 "stats": {
+                    # الحقول الأصلية (للتوافق مع الـ overview والشارتات)
                     "total": overall_total,
                     "hit": overall_hits,
                     "miss": overall_miss,
                     "hit_pct": overall_hit_pct,
+                    # الحقول الخاصة بكروت Nespresso Inbound
+                    # 1) Total Shipments (عدد شحنات الـ Hit من GRN KPI)
+                    "total_shipments_hit": total_shipments_hit,
+                    "grn_kpi_rows": grn_row_count,
+                    # 2) GRN KPI Hit Rate (%) من عمود GRN KPI
+                    "grn_kpi_hit_rate": grn_hit_rate,
+                    # 3) Putaway Lead Time Hit Rate (%) من عمود Putaway LT
+                    "putaway_lt_hit_rate": putaway_hit_rate,
+                    # 4) Receiving Accuracy (%) من متوسط عمود Rec. Acc %
+                    "receiving_accuracy_pct": receiving_accuracy,
+                    # 5) Total LPNs Processed من مجموع عمود LPNs Putaway
+                    "total_lpns_processed": total_lpns_processed,
                 },
                 "sub_tables": sub_tables,
             }
@@ -9197,6 +9927,7 @@ class UploadExcelViewRoche(View):
             import hashlib
 
             _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+            _fsig = _excel_cache_sig_suffix(excel_path)
             _month_part = (
                 str(selected_month).strip() if selected_month is not None else ""
             )
@@ -9207,8 +9938,9 @@ class UploadExcelViewRoche(View):
             )
             _full_flag = "1" if _excel_full_data_requested(request) else "0"
             # v2: chart_data includes outbound POD charts for All-in-One overview
-            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_month_part}_{_months_list}_{_full_flag}_v2"
-            cached_result = cache.get(_cache_key)
+            # v3: توقيع الملف لنفس مسار latest.xlsx بعد رفع جديد
+            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_fsig}_{_month_part}_{_months_list}_{_full_flag}_v3"
+            cached_result = _tab_cache_get(_cache_key)
             if cached_result is not None:
                 return cached_result
 
@@ -9313,7 +10045,7 @@ class UploadExcelViewRoche(View):
                                 "count": 0,
                                 "hit_pct": 0,
                             }
-                            cache.set(_cache_key, result, 300)
+                            _tab_cache_set(_cache_key, result, 300)
                             return result
                         existing_months = [selected_month_norm]
                     elif selected_months_norm:
@@ -9333,7 +10065,7 @@ class UploadExcelViewRoche(View):
                                 "count": 0,
                                 "hit_pct": 0,
                             }
-                            cache.set(_cache_key, result, 300)
+                            _tab_cache_set(_cache_key, result, 300)
                             return result
                         existing_months = selected_months_norm
                     else:
@@ -9787,19 +10519,25 @@ class UploadExcelViewRoche(View):
         # Key for caching based on source file and filters
         excel_path = _get_excel_path_for_request(request)
         _path_hash = hashlib.md5((excel_path or "").encode()).hexdigest()[:12]
+        _fsig = _excel_cache_sig_suffix(excel_path)
         _month_part = str(selected_month).strip() if selected_month is not None else ""
         _months_list = (
             ",".join(map(str, selected_months)) if selected_months is not None else ""
         )
-        _cache_key = f"tlp_dock_to_stock_fast_{_path_hash}_{_month_part}_{_months_list}"
+        _cache_key = f"tlp_dock_to_stock_fast_{_path_hash}_{_fsig}_{_month_part}_{_months_list}"
 
         # Try cache very first (fast/minimal or full depending on mode)
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         requested_tab = (request.GET.get("tab") or "").strip().lower()
         wants_full = is_ajax and ("inbound" in requested_tab) and (not from_all_in_one)
 
-        cache_key = _cache_key + ("::full" if wants_full else "::mini")
-        cached = cache.get(cache_key)
+        cache_key = (
+            _cache_key
+            + ("::full" if wants_full else "::mini")
+            + "::"
+            + INBOUND_AJAX_CACHE_VERSION
+        )
+        cached = _tab_cache_get(cache_key)
         if cached is not None:
             return cached
 
@@ -9810,7 +10548,7 @@ class UploadExcelViewRoche(View):
                     request, selected_month=selected_month, selected_months=selected_months
                 )
                 # Cache full payload longer (details are heavier)
-                cache.set(cache_key, _sanitize_for_json(full_res), 300)
+                _tab_cache_set(cache_key, _sanitize_for_json(full_res), 1800)
                 return full_res
             except Exception as e:
                 import traceback
@@ -9848,7 +10586,7 @@ class UploadExcelViewRoche(View):
                 },
             }
             # Put the fast minimal response in cache (short)
-            cache.set(cache_key, _sanitize_for_json(result), 60)
+            _tab_cache_set(cache_key, _sanitize_for_json(result), 180)
         except Exception as e:
             import traceback
             print(traceback.format_exc())
@@ -10160,6 +10898,14 @@ class UploadExcelViewRoche(View):
         نفس فكرة rejection: نرجع detail_html + chart_data + chart_title عشان الشارتات تبقى دينامك.
         """
         try:
+            d_excel = _get_dashboard_excel_path(request)
+            _dph = hashlib.md5((d_excel or "").encode()).hexdigest()[:12]
+            _dfsig = _excel_cache_sig_suffix(d_excel or "")
+            _dash_ck = f"ajax_dashboard_tab_{_dph}_{_dfsig}_v1"
+            _cached_dash = _tab_cache_get(_dash_ck)
+            if _cached_dash is not None:
+                return _cached_dash
+
             context = self._get_dashboard_include_context(request)
             html = render_to_string(
                 "container-fluid-dashboard.html",
@@ -10178,7 +10924,7 @@ class UploadExcelViewRoche(View):
                         "name": "POD Compliance",
                         "dataPoints": [{"label": c, "y": float(s)} for c, s in zip(categories, series)],
                     })
-            return {
+            result = {
                 "detail_html": html,
                 "chart_data": chart_data,
                 "chart_title": "Dashboard – POD Compliance",
@@ -10188,6 +10934,11 @@ class UploadExcelViewRoche(View):
                     "inventory": context.get("inventory_capacity_data"),
                 },
             }
+            try:
+                _tab_cache_set(_dash_ck, _sanitize_for_json(result), 900)
+            except Exception:
+                pass
+            return result
         except Exception as e:
             import traceback
 

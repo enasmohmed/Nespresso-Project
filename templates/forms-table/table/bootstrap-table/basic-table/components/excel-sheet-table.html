@@ -20,6 +20,20 @@
     flex: 1;
   }
 
+  /* Inbound Nespresso: sticky header while scrolling detail table */
+  .table-responsive.custom-scrollbar.inbound-sticky-thead-wrap {
+    max-height: min(75vh, 720px) !important;
+    overflow: auto;
+  }
+  #inbound-shipments-detail-table[data-dt-inbound-nespresso="1"] thead.table-primary th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background-color: var(--bs-table-bg, #cfe2ff);
+    color: var(--bs-table-color, #084298);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+  }
+
   .custom-scrollbar {
     max-height: 500px;
     overflow-y: auto;
@@ -144,106 +158,420 @@
   white-space: nowrap;
 }
 
+/* Inbound — mid section: space under KPI strip + lighter “breakout” panels */
+.inbound-mid-widgets {
+  margin-top: 2.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(129, 97, 62, 0.22);
+}
+.inbound-grn-breakout {
+  background: #fff;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(26, 47, 74, 0.12);
+  border-left: 4px solid #3a6ea5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+.inbound-grn-breakout .grn-breakout-head {
+  background: linear-gradient(90deg, #1a2f4a 0%, #2a4564 100%);
+  color: #fff;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  padding: 0.55rem 1rem;
+  font-weight: 600;
+}
+.inbound-mid-tile {
+  background: #f8fafc;
+  border: 1px solid rgba(26, 47, 74, 0.1);
+  border-radius: 0.375rem;
+  border-left: 3px solid rgba(59, 110, 165, 0.65);
+  padding: 0.85rem 1rem;
+  min-height: 5rem;
+}
+.inbound-mid-tile .tile-title {
+  font-weight: 600;
+  color: #1a2f4a;
+  font-size: 0.85rem;
+}
+.inbound-grn-facility-table thead.grn-mini-subhead th.grn-th-fac {
+  background: #3a6ea5;
+  color: #fff;
+  font-weight: 600;
+}
+.inbound-grn-facility-table thead.grn-mini-subhead th.grn-th-pct {
+  background: #7bc87b;
+  color: #fff;
+  font-weight: 600;
+}
+.inbound-grn-facility-table td.grn-hit-cell {
+  color: #198754;
+  font-weight: 600;
+}
+.inbound-grn-facility-table td.grn-miss-cell {
+  color: #dc3545;
+  font-weight: 600;
+}
+.inbound-grn-facility-table td.grn-pct-cell {
+  background: #e6f4ea;
+  font-weight: 600;
+}
+
 </style>
 
 
 {% if not tab.outbound_html and not tab.inbound_html and tab.name|lower != 'return & refusal' and tab.name|lower != 'expiry' and tab.name|lower != 'outbound shipments' and tab.name|lower != 'b2b outbound' and tab.name|lower != 'b2c outbound' and tab.name|lower != 'capacity + expiry' and tab.name|lower != 'safety kpi' and tab.name|lower != 'traceability kpi' %}
 {% if tab.name|lower == 'inbound' %}
-{# كروت Inbound من tab.stats (الـ view بيمرّرها مع tab_data) #}
 <div class="container-fluid px-0 inbound-kpi-cards">
+  {% if tab.sub_tables and tab.sub_tables.0.filter_options and tab.sub_tables.0.filter_options.inbound_nespresso %}
+  {% with f=tab.sub_tables.0.filter_options %}
+  <div class="card border-0 shadow-sm mb-3" data-inbound-global-filters="1">
+    <div class="card-body py-2 px-3">
+      <div class="row g-3 align-items-end filter-row">
+        <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+          <label class="form-label small fw-semibold mb-1">Month</label>
+          <select class="form-select w-100" data-global-filter="month">
+            <option value="">All</option>
+            {% for opt in f.months %}
+            <option value="{{ opt }}">{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+          <label class="form-label small fw-semibold mb-1">Facility</label>
+          <select class="form-select w-100" data-global-filter="facility">
+            <option value="">All</option>
+            {% for opt in f.facility_codes %}
+            <option value="{{ opt }}">{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+          <label class="form-label small fw-semibold mb-1">Shipment Nbr</label>
+          <input type="text" class="form-control" data-global-filter="shipment-nbr" placeholder="Search / contains" autocomplete="off" />
+        </div>
+        <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+          <label class="form-label small fw-semibold mb-1">Type</label>
+          <select class="form-select w-100" data-global-filter="shipment-type">
+            <option value="">All</option>
+            {% for opt in f.shipment_types %}
+            <option value="{{ opt }}">{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+          <label class="form-label small fw-semibold mb-1">GRN KPI</label>
+          <select class="form-select w-100" data-global-filter="grn-kpi">
+            <option value="">All</option>
+            <option value="__HIT__">Hit</option>
+            <option value="__MISS__">Miss</option>
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+          <label class="form-label small fw-semibold mb-1">Putaway LT</label>
+          <select class="form-select w-100" data-global-filter="putaway-lt">
+            <option value="">All</option>
+            <option value="__HIT__">Hit</option>
+            <option value="__MISS__">Miss</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endwith %}
+  {% endif %}
   <div class="row g-4 mx-0">
-    <div class="col-12 col-md-6 col-lg-3">
+    <div class="col-12 col-md-6 col-lg-2">
       <div class="kpi-card text-center">
         <div class="kpi-icon text-primary"><i class="bi bi-truck"></i></div>
         <div class="kpi-title">Total Shipments</div>
-        <div class="kpi-value">{% if tab.stats %}{{ tab.stats.total|default:0 }}{% else %}0{% endif %}</div>
+        <div class="kpi-value" id="inbound-kpi-total-shipments">
+          {% if tab.stats %}
+            {{ tab.stats.total|default:0 }}
+          {% else %}
+            0
+          {% endif %}
+        </div>
+        {% if tab.stats and tab.stats.grn_kpi_rows %}
+        <small class="text-muted d-block mt-1" id="inbound-kpi-grn-summary">GRN Hit {{ tab.stats.total_shipments_hit|default:0 }}/{{ tab.stats.grn_kpi_rows }}</small>
+        {% endif %}
       </div>
     </div>
-    <div class="col-12 col-md-6 col-lg-3">
+
+    <div class="col-12 col-md-6 col-lg-2">
       <div class="kpi-card text-center success">
         <div class="kpi-icon text-success"><i class="bi bi-check-circle-fill"></i></div>
-        <div class="kpi-title">Successful Shipments</div>
-        <div class="kpi-value">{% if tab.stats %}{{ tab.stats.hit_pct|default:0|floatformat:0 }}{% else %}0{% endif %}%</div>
-        <small class="text-success">Target 99%</small>
-      </div>
-    </div>
-    <div class="col-12 col-md-6 col-lg-3">
-      <div class="kpi-card text-center danger">
-        <div class="kpi-icon text-danger"><i class="bi bi-x-circle-fill"></i></div>
-        <div class="kpi-title">Failed Shipments</div>
-        <div class="kpi-value">{% if tab.stats %}{{ tab.stats.miss|default:0 }}{% else %}0{% endif %}</div>
-      </div>
-    </div>
-    <div class="col-12 col-md-6 col-lg-3">
-      <div class="kpi-card text-center">
-        <div class="kpi-icon text-secondary"><i class="bi bi-bullseye"></i></div>
-        <div class="kpi-title">Target</div>
-        <div class="kpi-value">≥ 99%</div>
-      </div>
-    </div>
-  </div>
-</div>
-{% else %}
-{% with kpi_table=tab.sub_tables.0.data %}
-<div class="container-fluid px-0 inbound-kpi-cards">
-  <div class="row g-4 mx-0">
-
-    {# Total Shipments #}
-    {% for row in kpi_table %}
-    {% if row.KPI == 'Total Shipments' %}
-    <div class="col-12 col-md-6 col-lg-3">
-      <div class="kpi-card text-center">
-        <div class="kpi-icon text-primary">
-          <i class="bi bi-truck"></i>
+        <div class="kpi-title">GRN KPI Hit Rate</div>
+        <div class="kpi-value" id="inbound-kpi-grn-hit-rate">
+          {% if tab.stats %}
+            {{ tab.stats.grn_kpi_hit_rate|default:0|floatformat:0 }}%
+          {% else %}
+            0%
+          {% endif %}
         </div>
-        <div class="kpi-title">Total Shipments</div>
-        <div class="kpi-value">{{ row.2025|default:0 }}</div>
       </div>
     </div>
-    {% endif %}
-    {% endfor %}
 
-    {# Hit % #}
-    {% for row in kpi_table %}
-    {% if row.KPI == 'Hit %' %}
-    <div class="col-12 col-md-6 col-lg-3">
+    <div class="col-12 col-md-6 col-lg-2">
       <div class="kpi-card text-center success">
-        <div class="kpi-icon text-success">
-          <i class="bi bi-check-circle-fill"></i>
+        <div class="kpi-icon text-success"><i class="bi bi-box-arrow-in-down"></i></div>
+        <div class="kpi-title">Putaway LT Hit Rate</div>
+        <div class="kpi-value" id="inbound-kpi-putaway-hit-rate">
+          {% if tab.stats %}
+            {{ tab.stats.putaway_lt_hit_rate|default:0|floatformat:0 }}%
+          {% else %}
+            0%
+          {% endif %}
         </div>
-        <div class="kpi-title">Successful Shipments</div>
-        <div class="kpi-value">{{ row.2025|floatformat:0 }}%</div>
-        <small class="text-success">Target 99%</small>
-      </div>
-    </div>
-    {% endif %}
-    {% endfor %}
-
-    {# Failed Shipments — دائمًا تظهر، وقيمتها من Miss أو Miss (>24h) أو 0 #}
-    <div class="col-12 col-md-6 col-lg-3">
-      <div class="kpi-card text-center danger">
-        <div class="kpi-icon text-danger">
-          <i class="bi bi-x-circle-fill"></i>
-        </div>
-        <div class="kpi-title">Failed Shipments</div>
-        <div class="kpi-value">{{ kpi_table|get_failed_shipments_count }}</div>
       </div>
     </div>
 
-    {# Target — مع التلاتة في نفس الصف #}
     <div class="col-12 col-md-6 col-lg-3">
       <div class="kpi-card text-center">
-        <div class="kpi-icon text-secondary">
-          <i class="bi bi-bullseye"></i>
+        <div class="kpi-icon text-secondary"><i class="bi bi-clipboard-check"></i></div>
+        <div class="kpi-title">Receiving Accuracy</div>
+        <div class="kpi-value" id="inbound-kpi-rec-acc-rate">
+          {% if tab.stats %}
+            {{ tab.stats.receiving_accuracy_pct|default:0|floatformat:0 }}%
+          {% else %}
+            0%
+          {% endif %}
         </div>
-        <div class="kpi-title">Target</div>
-        <div class="kpi-value">≥ 99%</div>
       </div>
     </div>
 
+    <div class="col-12 col-md-6 col-lg-3">
+      <div class="kpi-card text-center">
+        <div class="kpi-icon text-primary"><i class="bi bi-box-seam"></i></div>
+        <div class="kpi-title">Total LPNs Processed</div>
+        <div class="kpi-value" id="inbound-kpi-total-lpns">
+          {% if tab.stats %}
+            {{ tab.stats.total_lpns_processed|default:0 }}
+          {% else %}
+            0
+          {% endif %}
+        </div>
+      </div>
+    </div>
   </div>
 </div>
-{% endwith %}
+{% if tab.grn_mini %}
+<div class="container-fluid px-0 inbound-mid-widgets mb-3">
+  <div class="inbound-grn-breakout mb-3">
+    <div class="grn-breakout-head">GRN KPI BY FACILITY</div>
+    <div class="p-3">
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="table-responsive">
+            <table class="table table-bordered text-center align-middle mb-0 inbound-grn-facility-table">
+              <thead>
+                <tr class="grn-mini-subhead">
+                  <th class="grn-th-fac">Facility</th>
+                  <th class="grn-th-fac">HIT</th>
+                  <th class="grn-th-fac">MISS</th>
+                  <th class="grn-th-pct">Hit %</th>
+                </tr>
+              </thead>
+              <tbody id="inbound-grn-facility-body">
+                <tr>
+                  <td colspan="4" class="text-muted">No filtered rows.</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr class="fw-bold table-light">
+                  <td class="text-start">TOTAL</td>
+                  <td class="grn-hit-cell" id="inbound-grn-total-hit">0</td>
+                  <td class="grn-miss-cell" id="inbound-grn-total-miss">0</td>
+                  <td class="grn-pct-cell" id="inbound-grn-total-pct">0%</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <p class="small text-muted text-center mb-1">Hit % by month</p>
+          <div style="min-height: 220px;">
+            <canvas id="chart-inbound-grn-by-month" height="220"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{ tab.grn_mini.by_month_chart|json_script:"inbound-grn-month-chart-json" }}
+  <div class="row g-2 mx-0">
+    <div class="col-12 col-md-4">
+      <div class="inbound-mid-tile h-100">
+        <div class="grn-breakout-head mb-2">PUTAWAY PERFORMANCE</div>
+        <div class="small text-muted mb-2">
+          Based on current filters: Month → Facility → Shipment Nbr → Putaway LT.
+        </div>
+        <div class="table-responsive mb-2" style="max-height: 190px;">
+          <table class="table table-sm table-bordered text-center align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th class="text-start">Facility</th>
+                <th>Hit</th>
+                <th>Miss</th>
+                <th>Hit %</th>
+              </tr>
+            </thead>
+            <tbody id="inbound-putaway-performance-body">
+              <tr>
+                <td colspan="4" class="text-muted">No filtered rows.</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="fw-bold table-light">
+                <td class="text-start">TOTAL</td>
+                <td class="text-success" id="inbound-putaway-total-hit">0</td>
+                <td class="text-danger" id="inbound-putaway-total-miss">0</td>
+                <td id="inbound-putaway-total-pct">0%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div style="min-height: 170px;">
+          <canvas id="chart-inbound-putaway-performance" height="170"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="inbound-mid-tile h-100">
+        <div class="grn-breakout-head mb-2">SHIPMENT TYPE MIX</div>
+        <div class="small text-muted mb-2">
+          Based on current filters: Month → Facility → Shipment Nbr → Type.
+        </div>
+        <div class="table-responsive mb-2" style="max-height: 190px;">
+          <table class="table table-sm table-bordered text-center align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th class="text-start">Type</th>
+                <th>Count</th>
+                <th>%</th>
+              </tr>
+            </thead>
+            <tbody id="inbound-shipment-type-mix-body">
+              <tr>
+                <td colspan="3" class="text-muted">No filtered rows.</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="fw-bold table-light">
+                <td class="text-start">TOTAL</td>
+                <td id="inbound-shipment-type-total-count">0</td>
+                <td id="inbound-shipment-type-total-pct">100%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div style="min-height: 170px;">
+          <canvas id="chart-inbound-shipment-type-mix" height="170"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="inbound-mid-tile h-100">
+        <div class="grn-breakout-head mb-2">LPN VOLUME</div>
+        <div class="small text-muted mb-2">
+          Based on current filters: Month → Facility → Shipment Nbr.
+        </div>
+        <div class="table-responsive mb-2" style="max-height: 190px;">
+          <table class="table table-sm table-bordered text-center align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th class="text-start">Facility</th>
+                <th>LPNs</th>
+                <th>%</th>
+              </tr>
+            </thead>
+            <tbody id="inbound-lpn-volume-body">
+              <tr>
+                <td colspan="3" class="text-muted">No filtered rows.</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="fw-bold table-light">
+                <td class="text-start">TOTAL</td>
+                <td id="inbound-lpn-total-value">0</td>
+                <td id="inbound-lpn-total-pct">100%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div style="min-height: 170px;">
+          <canvas id="chart-inbound-lpn-volume" height="170"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var dataEl = document.getElementById("inbound-grn-month-chart-json");
+  if (!dataEl || typeof Chart === "undefined") return;
+  var pts;
+  try {
+    pts = JSON.parse(dataEl.textContent || "[]");
+  } catch (e) {
+    return;
+  }
+  if (!pts || !pts.length) return;
+  pts = pts.filter(function (p) {
+    var h = parseInt(p.hit, 10) || 0,
+      ms = parseInt(p.miss, 10) || 0;
+    if (h + ms <= 0) return false;
+    var mo = p.month != null ? String(p.month).trim() : "";
+    if (!mo || mo === "—" || mo === "-") return false;
+    var rawPct = p.hit_pct;
+    if (rawPct === null || rawPct === undefined || rawPct === "") return false;
+    var pn = typeof rawPct === "number" ? rawPct : parseFloat(rawPct);
+    if (!Number.isFinite(pn)) return false;
+    return true;
+  });
+  if (!pts.length) return;
+  var labels = pts.map(function (p) {
+    return p.month != null ? String(p.month) : "—";
+  });
+  var pcts = pts.map(function (p) {
+    var rawPct = p.hit_pct;
+    var pn = typeof rawPct === "number" ? rawPct : parseFloat(rawPct);
+    return Number.isFinite(pn) ? pn : 0;
+  });
+  var canvas = document.getElementById("chart-inbound-grn-by-month");
+  if (!canvas) return;
+  window.chartInstances = window.chartInstances || {};
+  var cid = "chart-inbound-grn-by-month";
+  if (window.chartInstances[cid]) {
+    try {
+      window.chartInstances[cid].destroy();
+    } catch (e2) {}
+  }
+  window.chartInstances[cid] = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: "Hit %",
+          data: pcts,
+          backgroundColor: "rgba(159, 129, 112, 0.85)",
+          borderColor: "rgba(129, 97, 62, 1)",
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { beginAtZero: true, max: 100, title: { display: true, text: "%" } },
+        x: { title: { display: true, text: "Month" } },
+      },
+      plugins: { legend: { display: false } },
+    },
+  });
+})();
+</script>
+{% endif %}
 {% endif %}
 {% endif %}
 
@@ -680,11 +1008,25 @@
           <div class="card-header pb-0 card-no-border text-center">
             <h4 class="mb-2">{{ sub.title }}</h4>
           </div>
-          {% if sub.filter_options and sub.filter_options.facility_codes %}
-          <div class="card border-0 shadow-sm mb-2 mx-3">
+          {% if sub.filter_options and sub.filter_options.inbound_nespresso %}
+          <div
+            class="card border-0 shadow-sm mb-2 mx-3"
+            data-inbound-nespresso-filters="1"
+            data-has-grn="{% if sub.filter_options.has_grn_kpi %}1{% else %}0{% endif %}"
+            data-has-putaway="{% if sub.filter_options.has_putaway_lt %}1{% else %}0{% endif %}"
+          >
             <div class="card-body py-2 px-3">
-              <div class="row g-3 align-items-end filter-row">
-                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+              <div class="row g-3 align-items-end filter-row" dir="ltr" style="direction: ltr;">
+                <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+                  <label class="form-label small fw-semibold mb-1">Month</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="month">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.months %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12 col-sm-6 col-md-4 col-lg-2">
                   <label class="form-label small fw-semibold mb-1">Facility</label>
                   <select class="form-select inbound-detail-filter w-100" data-filter="facility">
                     <option value="">All</option>
@@ -693,6 +1035,40 @@
                     {% endfor %}
                   </select>
                 </div>
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Shipment Nbr</label>
+                  <input
+                    type="text"
+                    class="form-control inbound-detail-filter"
+                    data-filter="shipment-nbr"
+                    placeholder="Search / contains"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+                  <label class="form-label small fw-semibold mb-1">Type</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="shipment-type">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.shipment_types %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Putaway LT (Hit or Miss)</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="putaway-lt">
+                    <option value="">—</option>
+                    <option value="__HIT__">Hit</option>
+                    <option value="__MISS__">Miss</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% elif sub.filter_options and sub.filter_options.facility_codes %}
+          <div class="card border-0 shadow-sm mb-2 mx-3">
+            <div class="card-body py-2 px-3">
+              <div class="row g-3 align-items-end filter-row" dir="ltr" style="direction: ltr;">
                 {% if sub.filter_options.months %}
                 <div class="col-12 col-sm-6 col-md-4 col-lg-3">
                   <label class="form-label small fw-semibold mb-1">Month</label>
@@ -704,6 +1080,15 @@
                   </select>
                 </div>
                 {% endif %}
+                <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                  <label class="form-label small fw-semibold mb-1">Facility</label>
+                  <select class="form-select inbound-detail-filter w-100" data-filter="facility">
+                    <option value="">All</option>
+                    {% for opt in sub.filter_options.facility_codes %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
                 <div class="col-12 col-sm-6 col-md-4 col-lg-3">
                   <label class="form-label small fw-semibold mb-1">Order Nbr</label>
                   <input
@@ -718,18 +1103,42 @@
           </div>
           {% endif %}
           <div class="card-body text-center">
-            <div class="table-responsive custom-scrollbar">
-              <table class="table table-bordered" id="inbound-shipments-detail-table">
+            {% if sub.filter_options and sub.filter_options.inbound_nespresso %}
+            <p class="text-start fw-semibold mb-2 px-2 small" id="inbound-filter-rowcount-above" dir="auto" aria-live="polite"></p>
+            {% endif %}
+            <div class="table-responsive custom-scrollbar {% if sub.filter_options and sub.filter_options.inbound_nespresso %}inbound-sticky-thead-wrap{% endif %}">
+              <table class="table table-bordered" id="inbound-shipments-detail-table" {% if sub.filter_options and sub.filter_options.inbound_nespresso %}data-dt-inbound-nespresso="1"{% endif %}>
                 <thead class="table-primary">
                   <tr role="row">
                     {% for col in sub.columns %}
-                    <th class="text-nowrap fw-semibold">{{ col }}</th>
+                    <th class="text-nowrap fw-semibold">
+                      {% if sub.column_header_labels %}
+                        {% with hdr=sub.column_header_labels|get_item:col %}
+                          {% if hdr %}{{ hdr }}{% else %}{{ col }}{% endif %}
+                        {% endwith %}
+                      {% else %}
+                        {{ col }}
+                      {% endif %}
+                    </th>
                     {% endfor %}
                   </tr>
                 </thead>
                 <tbody>
                   {% for row in sub.data %}
-                  <tr role="row" {% if sub.filter_options %}data-facility="{{ row|get_item:'Facility Code'|default:'' }}" data-month="{{ row|get_item:'Month'|default:'' }}" data-order-nbr="{{ row|get_item:'Order Nbr'|default:'' }}"{% endif %}>
+                  <tr role="row"
+                    {% if sub.filter_options and sub.filter_options.inbound_nespresso %}
+                    data-inbound-row="1"
+                    data-facility="{% if sub.filter_options.fac_col %}{{ row|get_item:sub.filter_options.fac_col|default:'' }}{% endif %}"
+                    data-month="{% if sub.filter_options.month_col %}{{ row|get_item:sub.filter_options.month_col|default:'' }}{% endif %}"
+                    data-shipment-nbr="{% if sub.filter_options.ship_col %}{{ row|get_item:sub.filter_options.ship_col|default:'' }}{% endif %}"
+                    data-shipment-type="{% if sub.filter_options.type_col %}{{ row|get_item:sub.filter_options.type_col|default:'' }}{% endif %}"
+                    data-lpns="{{ row|get_item:'_lpns_value'|default:'0' }}"
+                    data-rec-acc="{{ row|get_item:'_rec_acc_value'|default:'' }}"
+                    data-putaway-hit="{{ row|get_item:'_putaway_hit'|default:'0' }}"
+                    data-grn-hit="{{ row|get_item:'_grn_hit'|default:'0' }}"
+                    {% elif sub.filter_options %}
+                    data-facility="{{ row|get_item:'Facility Code'|default:'' }}" data-month="{{ row|get_item:'Month'|default:'' }}" data-order-nbr="{{ row|get_item:'Order Nbr'|default:'' }}"
+                    {% endif %}>
                     {% for col in sub.columns %}
                     {% with value=row|get_item:col %}
                     {% if sub.id == 'sub-table-inbound-detail' %}
@@ -1885,7 +2294,15 @@
                 <thead class="table-primary">
                   <tr role="row">
                     {% for col in sub.columns %}
-                    <th class="text-nowrap fw-semibold">{{ col }}</th>
+                    <th class="text-nowrap fw-semibold">
+                      {% if sub.column_header_labels %}
+                        {% with hdr=sub.column_header_labels|get_item:col %}
+                          {% if hdr %}{{ hdr }}{% else %}{{ col }}{% endif %}
+                        {% endwith %}
+                      {% else %}
+                        {{ col }}
+                      {% endif %}
+                    </th>
                     {% endfor %}
                   </tr>
                 </thead>
@@ -2096,38 +2513,564 @@
         if (!table) return;
         var card = table.closest('.card');
         var tbody = table.querySelector('tbody');
-        var selects = card ? card.querySelectorAll('.inbound-detail-filter') : [];
-        function applyFilters() {
-          var facility = (card.querySelector('[data-filter="facility"]') || {}).value || '';
-          var facilityCode = (card.querySelector('[data-filter="facility-code"]') || {}).value || '';
-          var status = (card.querySelector('[data-filter="status"]') || {}).value || '';
-          var month = (card.querySelector('[data-filter="month"]') || {}).value || '';
-          var cityEl = card.querySelector('[data-filter="city"]');
-          var city = (cityEl && cityEl.value) ? cityEl.value : '';
-          var orderNbrInput = card.querySelector('[data-filter="order-nbr"]');
-          var orderNbr = (orderNbrInput && orderNbrInput.value) ? orderNbrInput.value.trim() : '';
-          var rows = tbody ? tbody.querySelectorAll('tr[data-facility]') : [];
-          rows.forEach(function(tr) {
-            var f = (tr.getAttribute('data-facility') || '').trim();
-            var fc = (tr.getAttribute('data-facility-code') || '').trim();
-            var s = (tr.getAttribute('data-status') || '').trim();
-            var m = (tr.getAttribute('data-month') || '').trim();
-            var c = (tr.getAttribute('data-city') || '').trim();
-            var on = (tr.getAttribute('data-order-nbr') || '').trim();
-            var show = (!facility || f === facility) &&
-                       (!facilityCode || fc === facilityCode) &&
-                       (!status || s === status) &&
-                       (!month || m === month) &&
-                       (!city || c === city) &&
-                       (!orderNbr || on.indexOf(orderNbr) !== -1);
-            tr.style.display = show ? '' : 'none';
+        var filterCard = card ? card.querySelector('[data-inbound-nespresso-filters="1"]') : null;
+        var globalFilterCard = document.querySelector('[data-inbound-global-filters="1"]');
+        var rowCountEl = card ? card.querySelector('#inbound-filter-rowcount-above') : null;
+        var isNespressoInbound = !!(filterCard && table.id === 'inbound-shipments-detail-table');
+
+        function num(v) {
+          var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '').trim());
+          return Number.isFinite(n) ? n : 0;
+        }
+        function escHtml(v) {
+          return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+        function fmt(v) {
+          var n = num(v);
+          if (Math.abs(n - Math.round(n)) < 0.000001) return String(Math.round(n));
+          return n.toFixed(2);
+        }
+        function getDataRows() {
+          var rows = tbody ? Array.prototype.slice.call(tbody.querySelectorAll('tr')) : [];
+          return rows.filter(function(tr) {
+            if (tr.querySelector('td[colspan]')) return false;
+            if (tr.getAttribute('data-inbound-row') !== '1' && isNespressoInbound) return false;
+            return true;
           });
         }
-        for (var i = 0; i < selects.length; i++) {
-          var el = selects[i];
-          var isInput = el.tagName && el.tagName.toLowerCase() === 'input';
-          el.addEventListener(isInput ? 'input' : 'change', applyFilters);
+        function normMonth(v) {
+          var s = String(v == null ? '' : v).trim();
+          if (!s) return '';
+          var m = s.toLowerCase();
+          var m3 = m.slice(0, 3);
+          var map = {jan: 'jan', feb: 'feb', mar: 'mar', apr: 'apr', may: 'may', jun: 'jun', jul: 'jul', aug: 'aug', sep: 'sep', oct: 'oct', nov: 'nov', dec: 'dec'};
+          if (map[m3]) return map[m3];
+          var dt = new Date(s);
+          if (!isNaN(dt.getTime())) {
+            var mm = dt.toLocaleString('en', { month: 'short' }).toLowerCase();
+            return map[mm] || mm;
+          }
+          return m;
         }
+        function readGlobalFilters() {
+          if (!globalFilterCard || !isNespressoInbound) return {};
+          return {
+            month: (globalFilterCard.querySelector('[data-global-filter="month"]') || {}).value || '',
+            facility: (globalFilterCard.querySelector('[data-global-filter="facility"]') || {}).value || '',
+            shipQ: ((globalFilterCard.querySelector('[data-global-filter="shipment-nbr"]') || {}).value || '').trim(),
+            shipmentType: (globalFilterCard.querySelector('[data-global-filter="shipment-type"]') || {}).value || '',
+            grnKpi: (globalFilterCard.querySelector('[data-global-filter="grn-kpi"]') || {}).value || '',
+            putawayLt: (globalFilterCard.querySelector('[data-global-filter="putaway-lt"]') || {}).value || ''
+          };
+        }
+        function readLocalFilters() {
+          return {
+            facility: (card.querySelector('[data-filter="facility"]') || {}).value || '',
+            facilityCode: (card.querySelector('[data-filter="facility-code"]') || {}).value || '',
+            status: (card.querySelector('[data-filter="status"]') || {}).value || '',
+            month: (card.querySelector('[data-filter="month"]') || {}).value || '',
+            city: ((card.querySelector('[data-filter="city"]') || {}).value || ''),
+            orderNbr: (((card.querySelector('[data-filter="order-nbr"]') || {}).value || '')).trim(),
+            shipQ: (((card.querySelector('[data-filter="shipment-nbr"]') || {}).value || '')).trim(),
+            shipmentType: (card.querySelector('[data-filter="shipment-type"]') || {}).value || '',
+            putawayLt: (card.querySelector('[data-filter="putaway-lt"]') || {}).value || '',
+            hitMiss: (card.querySelector('[data-filter="hit-miss"]') || {}).value || ''
+          };
+        }
+        function rowMatchesGlobal(tr, gf) {
+          if (!isNespressoInbound || !globalFilterCard) return true;
+          var f = (tr.getAttribute('data-facility') || '').trim();
+          var m = (tr.getAttribute('data-month') || '').trim();
+          var sn = (tr.getAttribute('data-shipment-nbr') || '').trim();
+          var st = (tr.getAttribute('data-shipment-type') || '').trim();
+          var grnHit = tr.getAttribute('data-grn-hit');
+          var putHit = tr.getAttribute('data-putaway-hit');
+          if (gf.facility && f !== gf.facility) return false;
+          if (gf.month && normMonth(m) !== normMonth(gf.month)) return false;
+          if (gf.shipQ && sn.indexOf(gf.shipQ) === -1) return false;
+          if (gf.shipmentType && st !== gf.shipmentType) return false;
+          if (gf.grnKpi === '__HIT__' && grnHit !== '1') return false;
+          if (gf.grnKpi === '__MISS__' && grnHit === '1') return false;
+          if (gf.putawayLt === '__HIT__' && putHit !== '1') return false;
+          if (gf.putawayLt === '__MISS__' && putHit === '1') return false;
+          return true;
+        }
+        function rowMatchesLocal(tr, lf) {
+          var f = (tr.getAttribute('data-facility') || '').trim();
+          var fc = (tr.getAttribute('data-facility-code') || '').trim();
+          var s = (tr.getAttribute('data-status') || '').trim();
+          var m = (tr.getAttribute('data-month') || '').trim();
+          var c = (tr.getAttribute('data-city') || '').trim();
+          var on = (tr.getAttribute('data-order-nbr') || '').trim();
+          var sn = (tr.getAttribute('data-shipment-nbr') || '').trim();
+          var st = (tr.getAttribute('data-shipment-type') || '').trim();
+          var putHit = tr.getAttribute('data-putaway-hit');
+          var hm = (tr.getAttribute('data-hit-miss') || '').trim();
+          var show = (!lf.facility || f === lf.facility) &&
+                     (!lf.facilityCode || fc === lf.facilityCode) &&
+                     (!lf.status || s === lf.status) &&
+                     (!lf.month || normMonth(m) === normMonth(lf.month)) &&
+                     (!lf.city || c === lf.city) &&
+                     (!lf.orderNbr || on.indexOf(lf.orderNbr) !== -1);
+          if (isNespressoInbound) {
+            if (lf.shipQ && sn.indexOf(lf.shipQ) === -1) show = false;
+            if (lf.shipmentType && st !== lf.shipmentType) show = false;
+            if (lf.putawayLt === '__HIT__' && putHit !== '1') show = false;
+            if (lf.putawayLt === '__MISS__' && putHit === '1') show = false;
+          }
+          if (lf.hitMiss && hm !== lf.hitMiss) show = false;
+          return show;
+        }
+
+        function updateInboundSummary(visibleRows) {
+          if (!rowCountEl || !filterCard) return;
+          var hasGrn = filterCard.getAttribute('data-has-grn') === '1';
+          var hasPut = filterCard.getAttribute('data-has-putaway') === '1';
+          var n = 0, gh = 0, ph = 0;
+          visibleRows.forEach(function(tr) {
+            n += 1;
+            if (hasGrn && tr.getAttribute('data-grn-hit') === '1') gh += 1;
+            if (hasPut && tr.getAttribute('data-putaway-hit') === '1') ph += 1;
+          });
+          var shipSet = {};
+          visibleRows.forEach(function(tr) {
+            var sn = (tr.getAttribute('data-shipment-nbr') || '').trim();
+            if (sn) shipSet[sn] = true;
+          });
+          var shipN = Object.keys(shipSet).length;
+          if (shipN === 0) shipN = n;
+          var parts = [
+            'Rows visible after filter: ' + n,
+            'Shipments: ' + shipN,
+          ];
+          if (hasGrn) {
+            parts.push('GRN Hit: ' + gh);
+            parts.push('GRN Miss: ' + (n - gh));
+          }
+          if (hasPut) {
+            parts.push('Putaway Hit: ' + ph);
+            parts.push('Putaway Miss: ' + (n - ph));
+          }
+          rowCountEl.textContent = parts.join(' · ');
+        }
+
+        function updateInboundKpiCards(globalRows) {
+          var kTotal = document.getElementById('inbound-kpi-total-shipments');
+          var kGrnSum = document.getElementById('inbound-kpi-grn-summary');
+          var kGrnPct = document.getElementById('inbound-kpi-grn-hit-rate');
+          var kPutPct = document.getElementById('inbound-kpi-putaway-hit-rate');
+          var kRecPct = document.getElementById('inbound-kpi-rec-acc-rate');
+          var kLpns = document.getElementById('inbound-kpi-total-lpns');
+          if (!kTotal && !kGrnPct && !kPutPct && !kRecPct && !kLpns) return;
+
+          var n = globalRows.length;
+          var gh = 0, ph = 0, lpns = 0, recSum = 0, recN = 0;
+          globalRows.forEach(function(tr) {
+            if (tr.getAttribute('data-grn-hit') === '1') gh += 1;
+            if (tr.getAttribute('data-putaway-hit') === '1') ph += 1;
+            lpns += num(tr.getAttribute('data-lpns'));
+            var rv = num(tr.getAttribute('data-rec-acc'));
+            if (rv > 0) {
+              recSum += rv;
+              recN += 1;
+            }
+          });
+          var grnPct = n > 0 ? Math.round((gh * 100) / n) : 0;
+          var putPct = n > 0 ? Math.round((ph * 100) / n) : 0;
+          var recPct = recN > 0 ? Math.round(recSum / recN) : 0;
+          if (kTotal) kTotal.textContent = String(n);
+          if (kGrnSum) kGrnSum.textContent = 'GRN Hit ' + gh + '/' + n;
+          if (kGrnPct) kGrnPct.textContent = String(grnPct) + '%';
+          if (kPutPct) kPutPct.textContent = String(putPct) + '%';
+          if (kRecPct) kRecPct.textContent = String(recPct) + '%';
+          if (kLpns) kLpns.textContent = fmt(lpns);
+        }
+
+        function updateGrnBreakout(globalRows) {
+          var body = document.getElementById('inbound-grn-facility-body');
+          var totalHitEl = document.getElementById('inbound-grn-total-hit');
+          var totalMissEl = document.getElementById('inbound-grn-total-miss');
+          var totalPctEl = document.getElementById('inbound-grn-total-pct');
+          var chartCanvas = document.getElementById('chart-inbound-grn-by-month');
+          if (!body) return;
+
+          var facAgg = {};
+          var monthAgg = {};
+          globalRows.forEach(function(tr) {
+            var fac = (tr.getAttribute('data-facility') || '').trim() || '—';
+            var mo = (tr.getAttribute('data-month') || '').trim() || '—';
+            var isHit = tr.getAttribute('data-grn-hit') === '1';
+            if (!facAgg[fac]) facAgg[fac] = { hit: 0, miss: 0 };
+            if (!monthAgg[mo]) monthAgg[mo] = { hit: 0, miss: 0 };
+            if (isHit) {
+              facAgg[fac].hit += 1;
+              monthAgg[mo].hit += 1;
+            } else {
+              facAgg[fac].miss += 1;
+              monthAgg[mo].miss += 1;
+            }
+          });
+          var facilities = Object.keys(facAgg).sort(function(a, b) { return String(a).localeCompare(String(b)); });
+          if (!facilities.length) {
+            body.innerHTML = '<tr><td colspan="4" class="text-muted">No filtered rows.</td></tr>';
+            if (totalHitEl) totalHitEl.textContent = '0';
+            if (totalMissEl) totalMissEl.textContent = '0';
+            if (totalPctEl) totalPctEl.textContent = '0%';
+          } else {
+            var html = [];
+            var th = 0, tm = 0;
+            facilities.forEach(function(fac) {
+              var h = facAgg[fac].hit || 0;
+              var m = facAgg[fac].miss || 0;
+              var t = h + m;
+              var p = t > 0 ? Math.round((h * 100) / t) : 0;
+              th += h; tm += m;
+              html.push('<tr><td class="text-start">' + escHtml(fac) + '</td><td class="grn-hit-cell">' + h + '</td><td class="grn-miss-cell">' + m + '</td><td class="grn-pct-cell">' + p + '%</td></tr>');
+            });
+            body.innerHTML = html.join('');
+            var tt = th + tm;
+            var tp = tt > 0 ? Math.round((th * 100) / tt) : 0;
+            if (totalHitEl) totalHitEl.textContent = String(th);
+            if (totalMissEl) totalMissEl.textContent = String(tm);
+            if (totalPctEl) totalPctEl.textContent = String(tp) + '%';
+          }
+
+          if (!chartCanvas || typeof Chart === 'undefined') return;
+          var monthLabels = Object.keys(monthAgg).filter(function(m) {
+            var x = String(m || '').trim().toLowerCase();
+            return !!x && x !== '—' && x !== '-' && x !== 'nan' && x !== 'none';
+          });
+          monthLabels.sort();
+          var monthPct = monthLabels.map(function(m) {
+            var h = monthAgg[m].hit || 0;
+            var ms = monthAgg[m].miss || 0;
+            var t = h + ms;
+            return t > 0 ? Math.round((h * 100) / t) : 0;
+          });
+          window.chartInstances = window.chartInstances || {};
+          var cid = 'chart-inbound-grn-by-month';
+          if (window.chartInstances[cid]) {
+            try { window.chartInstances[cid].destroy(); } catch (e2) {}
+          }
+          if (!monthLabels.length) return;
+          window.chartInstances[cid] = new Chart(chartCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: monthLabels,
+              datasets: [{
+                label: 'Hit %',
+                data: monthPct,
+                backgroundColor: 'rgba(159, 129, 112, 0.85)',
+                borderColor: 'rgba(129, 97, 62, 1)',
+                borderWidth: 1
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                y: { beginAtZero: true, max: 100, title: { display: true, text: '%' } },
+                x: { title: { display: true, text: 'Month' } }
+              },
+              plugins: { legend: { display: false } }
+            }
+          });
+        }
+
+        function updatePutawayPerformanceWidget(globalRows) {
+          var perfBody = document.getElementById('inbound-putaway-performance-body');
+          var perfCanvas = document.getElementById('chart-inbound-putaway-performance');
+          var totalHitEl = document.getElementById('inbound-putaway-total-hit');
+          var totalMissEl = document.getElementById('inbound-putaway-total-miss');
+          var totalPctEl = document.getElementById('inbound-putaway-total-pct');
+          if (!perfBody || !perfCanvas) return;
+          var agg = {};
+          globalRows.forEach(function(tr) {
+            var fac = (tr.getAttribute('data-facility') || '').trim() || '—';
+            if (!agg[fac]) agg[fac] = { hit: 0, miss: 0 };
+            var putHit = tr.getAttribute('data-putaway-hit') === '1';
+            if (putHit) agg[fac].hit += 1;
+            else agg[fac].miss += 1;
+          });
+
+          var facilities = Object.keys(agg).sort(function(a, b) {
+            return String(a).localeCompare(String(b));
+          });
+          if (!facilities.length) {
+            perfBody.innerHTML = '<tr><td colspan="4" class="text-muted">No filtered rows.</td></tr>';
+            if (totalHitEl) totalHitEl.textContent = '0';
+            if (totalMissEl) totalMissEl.textContent = '0';
+            if (totalPctEl) totalPctEl.textContent = '0%';
+            window.chartInstances = window.chartInstances || {};
+            if (window.chartInstances['chart-inbound-putaway-performance']) {
+              try { window.chartInstances['chart-inbound-putaway-performance'].destroy(); } catch (e) {}
+              delete window.chartInstances['chart-inbound-putaway-performance'];
+            }
+            return;
+          }
+
+          var rowsHtml = [];
+          var labels = [];
+          var hitPct = [];
+          var totalHit = 0;
+          var totalMiss = 0;
+          facilities.forEach(function(fac) {
+            var h = agg[fac].hit || 0;
+            var m = agg[fac].miss || 0;
+            var t = h + m;
+            var pct = t > 0 ? Math.round((h * 100) / t) : 0;
+            totalHit += h;
+            totalMiss += m;
+            rowsHtml.push(
+              '<tr>' +
+                '<td class="text-start">' + escHtml(fac) + '</td>' +
+                '<td class="text-success fw-semibold">' + h + '</td>' +
+                '<td class="text-danger fw-semibold">' + m + '</td>' +
+                '<td class="fw-semibold">' + pct + '%</td>' +
+              '</tr>'
+            );
+            labels.push(fac);
+            hitPct.push(pct);
+          });
+          var totalShipments = totalHit + totalMiss;
+          var totalPct = totalShipments > 0 ? Math.round((totalHit * 100) / totalShipments) : 0;
+          if (totalHitEl) totalHitEl.textContent = String(totalHit);
+          if (totalMissEl) totalMissEl.textContent = String(totalMiss);
+          if (totalPctEl) totalPctEl.textContent = String(totalPct) + '%';
+          perfBody.innerHTML = rowsHtml.join('');
+
+          if (typeof Chart === 'undefined') return;
+          window.chartInstances = window.chartInstances || {};
+          var cid = 'chart-inbound-putaway-performance';
+          if (window.chartInstances[cid]) {
+            try { window.chartInstances[cid].destroy(); } catch (e2) {}
+          }
+          window.chartInstances[cid] = new Chart(perfCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: labels,
+              datasets: [{
+                label: 'Putaway Hit %',
+                data: hitPct,
+                backgroundColor: 'rgba(40, 167, 69, 0.78)',
+                borderColor: 'rgba(23, 120, 48, 1)',
+                borderWidth: 1
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                y: { beginAtZero: true, max: 100, title: { display: true, text: '%' } },
+                x: { title: { display: true, text: 'Facility' } }
+              },
+              plugins: { legend: { display: false } }
+            }
+          });
+        }
+
+        function updateShipmentTypeMixWidget(globalRows) {
+          var mixBody = document.getElementById('inbound-shipment-type-mix-body');
+          var mixCanvas = document.getElementById('chart-inbound-shipment-type-mix');
+          var totalCountEl = document.getElementById('inbound-shipment-type-total-count');
+          var totalPctEl = document.getElementById('inbound-shipment-type-total-pct');
+          if (!mixBody || !mixCanvas) return;
+          var agg = {};
+          var total = 0;
+          globalRows.forEach(function(tr) {
+            var t = (tr.getAttribute('data-shipment-type') || '').trim() || '—';
+            if (!agg[t]) agg[t] = 0;
+            agg[t] += 1;
+            total += 1;
+          });
+
+          var types = Object.keys(agg).sort(function(a, b) {
+            return String(a).localeCompare(String(b));
+          });
+          if (!types.length || total <= 0) {
+            mixBody.innerHTML = '<tr><td colspan="3" class="text-muted">No filtered rows.</td></tr>';
+            if (totalCountEl) totalCountEl.textContent = '0';
+            if (totalPctEl) totalPctEl.textContent = '100%';
+            window.chartInstances = window.chartInstances || {};
+            if (window.chartInstances['chart-inbound-shipment-type-mix']) {
+              try { window.chartInstances['chart-inbound-shipment-type-mix'].destroy(); } catch (e) {}
+              delete window.chartInstances['chart-inbound-shipment-type-mix'];
+            }
+            return;
+          }
+
+          var rowsHtml = [];
+          var labels = [];
+          var pctData = [];
+          types.forEach(function(t) {
+            var c = agg[t] || 0;
+            var pct = Math.round((c * 100) / total);
+            rowsHtml.push(
+              '<tr>' +
+                '<td class="text-start">' + escHtml(t) + '</td>' +
+                '<td class="fw-semibold">' + c + '</td>' +
+                '<td class="fw-semibold">' + pct + '%</td>' +
+              '</tr>'
+            );
+            labels.push(t);
+            pctData.push(pct);
+          });
+          mixBody.innerHTML = rowsHtml.join('');
+          if (totalCountEl) totalCountEl.textContent = String(total);
+          if (totalPctEl) totalPctEl.textContent = '100%';
+
+          if (typeof Chart === 'undefined') return;
+          window.chartInstances = window.chartInstances || {};
+          var cid = 'chart-inbound-shipment-type-mix';
+          if (window.chartInstances[cid]) {
+            try { window.chartInstances[cid].destroy(); } catch (e2) {}
+          }
+          window.chartInstances[cid] = new Chart(mixCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: labels,
+              datasets: [{
+                label: 'Type %',
+                data: pctData,
+                backgroundColor: 'rgba(87, 117, 144, 0.85)',
+                borderColor: 'rgba(64, 91, 116, 1)',
+                borderWidth: 1
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                y: { beginAtZero: true, max: 100, title: { display: true, text: '%' } },
+                x: { title: { display: true, text: 'Type' } }
+              },
+              plugins: { legend: { display: false } }
+            }
+          });
+        }
+
+        function updateLpnVolumeWidget(globalRows) {
+          var lpnBody = document.getElementById('inbound-lpn-volume-body');
+          var lpnCanvas = document.getElementById('chart-inbound-lpn-volume');
+          var lpnTotalValueEl = document.getElementById('inbound-lpn-total-value');
+          var lpnTotalPctEl = document.getElementById('inbound-lpn-total-pct');
+          if (!lpnBody || !lpnCanvas) return;
+          var agg = {};
+          var totalLpns = 0;
+          globalRows.forEach(function(tr) {
+            var fac = (tr.getAttribute('data-facility') || '').trim() || '—';
+            var lpnsVal = num(tr.getAttribute('data-lpns'));
+            if (!agg[fac]) agg[fac] = 0;
+            agg[fac] += lpnsVal;
+            totalLpns += lpnsVal;
+          });
+
+          var facilities = Object.keys(agg).sort(function(a, b) {
+            return String(a).localeCompare(String(b));
+          });
+          if (!facilities.length || totalLpns <= 0) {
+            lpnBody.innerHTML = '<tr><td colspan="3" class="text-muted">No filtered rows.</td></tr>';
+            if (lpnTotalValueEl) lpnTotalValueEl.textContent = '0';
+            if (lpnTotalPctEl) lpnTotalPctEl.textContent = '100%';
+            window.chartInstances = window.chartInstances || {};
+            if (window.chartInstances['chart-inbound-lpn-volume']) {
+              try { window.chartInstances['chart-inbound-lpn-volume'].destroy(); } catch (e) {}
+              delete window.chartInstances['chart-inbound-lpn-volume'];
+            }
+            return;
+          }
+
+          var rowsHtml = [];
+          var labels = [];
+          var pctData = [];
+          facilities.forEach(function(fac) {
+            var facLpns = agg[fac] || 0;
+            var pct = Math.round((facLpns * 100) / totalLpns);
+            rowsHtml.push(
+              '<tr>' +
+                '<td class="text-start">' + escHtml(fac) + '</td>' +
+                '<td class="fw-semibold">' + fmt(facLpns) + '</td>' +
+                '<td class="fw-semibold">' + pct + '%</td>' +
+              '</tr>'
+            );
+            labels.push(fac);
+            pctData.push(pct);
+          });
+          lpnBody.innerHTML = rowsHtml.join('');
+          if (lpnTotalValueEl) lpnTotalValueEl.textContent = fmt(totalLpns);
+          if (lpnTotalPctEl) lpnTotalPctEl.textContent = '100%';
+
+          if (typeof Chart === 'undefined') return;
+          window.chartInstances = window.chartInstances || {};
+          var cid = 'chart-inbound-lpn-volume';
+          if (window.chartInstances[cid]) {
+            try { window.chartInstances[cid].destroy(); } catch (e2) {}
+          }
+          window.chartInstances[cid] = new Chart(lpnCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: labels,
+              datasets: [{
+                label: 'LPN Volume %',
+                data: pctData,
+                backgroundColor: 'rgba(255, 159, 64, 0.82)',
+                borderColor: 'rgba(226, 123, 21, 1)',
+                borderWidth: 1
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                y: { beginAtZero: true, max: 100, title: { display: true, text: '%' } },
+                x: { title: { display: true, text: 'Facility' } }
+              },
+              plugins: { legend: { display: false } }
+            }
+          });
+        }
+
+        function applyFilters() {
+          var gf = readGlobalFilters();
+          var lf = readLocalFilters();
+          var gfEffective = Object.assign({}, gf);
+          // Month is the primary gate for top widgets/charts; if global month is empty,
+          // use the table month filter so all widgets/charts follow month selection.
+          if (!gfEffective.month && lf.month) gfEffective.month = lf.month;
+          var rows = getDataRows();
+          var globalRows = [];
+          var visibleRows = [];
+          rows.forEach(function(tr) {
+            var gOk = rowMatchesGlobal(tr, gfEffective);
+            if (gOk) globalRows.push(tr);
+            var lOk = rowMatchesLocal(tr, lf);
+            var show = gOk && lOk;
+            tr.style.display = show ? '' : 'none';
+            if (show) visibleRows.push(tr);
+          });
+          updateInboundSummary(visibleRows);
+          updateInboundKpiCards(globalRows);
+          updateGrnBreakout(globalRows);
+          updatePutawayPerformanceWidget(globalRows);
+          updateShipmentTypeMixWidget(globalRows);
+          updateLpnVolumeWidget(globalRows);
+        }
+
+        if (card) {
+          card.addEventListener('change', applyFilters);
+          card.addEventListener('input', applyFilters);
+        }
+        if (globalFilterCard) {
+          globalFilterCard.addEventListener('change', applyFilters);
+          globalFilterCard.addEventListener('input', applyFilters);
+        }
+        window.applyInboundShipmentsFilters = applyFilters;
+        applyFilters();
       })();
 
       (function() {

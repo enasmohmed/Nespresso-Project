@@ -314,9 +314,10 @@
                           class="form-check-input js-replace-workbook-full"
                           type="checkbox"
                           id="replace_workbook_initial"
+                          checked
                         />
                         <label class="form-check-label small" for="replace_workbook_initial">
-                          Replace the workbook entirely (do not merge with the previous file). Use this when the new upload is a full snapshot or only the latest month—so charts and filters reflect the new file only.
+                          Replace the workbook entirely (recommended — fastest upload). Uncheck only if you need to merge rows with the previous file on the server (much slower for large workbooks).
                         </label>
                       </div>
                     </div>
@@ -408,9 +409,10 @@
                           class="form-check-input js-replace-workbook-full"
                           type="checkbox"
                           id="replace_workbook_logged"
+                          checked
                         />
                         <label class="form-check-label small" for="replace_workbook_logged">
-                          Replace the workbook entirely (do not merge with the previous file).
+                          Replace the workbook entirely (recommended — fastest). Uncheck to merge with the previous workbook (slow).
                         </label>
                       </div>
                     </div>
@@ -914,7 +916,24 @@
       if (!table || !window.$ || !$.fn.DataTable) return;
       try {
         if (!$.fn.DataTable.isDataTable(table)) {
-          $(table).DataTable();
+          const isNespressoInbound =
+            table.getAttribute("data-dt-inbound-nespresso") === "1";
+          $(table).DataTable({
+            lengthChange: false,
+            info: false,
+            searching: !isNespressoInbound,
+            paging: !isNespressoInbound,
+            pageLength: 100,
+            dom: isNespressoInbound ? "t" : "frtp",
+          });
+        }
+        if (typeof window.applyInboundShipmentsFilters === "function") {
+          window.applyInboundShipmentsFilters();
+          setTimeout(function () {
+            if (typeof window.applyInboundShipmentsFilters === "function") {
+              window.applyInboundShipmentsFilters();
+            }
+          }, 50);
         }
       } catch (e) {
         console.warn("DataTable init:", e);

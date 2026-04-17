@@ -157,13 +157,46 @@ STATIC_ROOT = BASE_DIR / "static"
 # STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 SASS_PROCESSOR_ROOT = BASE_DIR / "static"
 
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
-        "LOCATION": _default_cache_dir,
-        "TIMEOUT": 3600,
+# إيقاف كاش Django بالكامل (اختياري). الافتراضي = يعمل كاش طبيعي.
+# غيّر المتغير إلى 1 لو أردت تعطيله كله مؤقتًا.
+DISABLE_DJANGO_CACHE = os.environ.get("DISABLE_DJANGO_CACHE", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+if DISABLE_DJANGO_CACHE:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+            "LOCATION": _default_cache_dir,
+            "TIMEOUT": 3600,
+        }
+    }
+
+# إيقاف كاش التابات فقط (Inbound/Outbound/...): التحديثات تظهر فورًا داخل التابات.
+# لا يؤثر على فتح الموقع لأول مرة.
+EXCEL_DISABLE_TAB_CACHE = os.environ.get("EXCEL_DISABLE_TAB_CACHE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+# تسريع أول GET على / (تاب Dashboard): لا نقرأ أسماء الشيتات/الشهور في أول تحميل.
+EXCEL_FAST_INITIAL_PAGE = os.environ.get("EXCEL_FAST_INITIAL_PAGE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # ─── إكسل: معاينة سريعة ثم تحميل كامل عند ?full_data=1 ───
 # أول تحميل للتاب (بدون full_data): يقرأ أول N صف فقط → أسرع على PythonAnywhere
@@ -173,6 +206,17 @@ EXCEL_PREVIEW_MAX_ROWS = 200
 EXCEL_FULL_MAX_ROWS = 50000
 # للتوافق مع كود قديم يشير لـ EXCEL_LOAD_MAX_ROWS
 EXCEL_LOAD_MAX_ROWS = 500
+
+# بعد الرفع: خيط خلفي يملأ كاش أسماء الشيتات والشهور (أسرع أول فتح تاب، بدون تأخير ردّ POST).
+EXCEL_UPLOAD_ASYNC_WARMUP = True
+# مسح كامل لكاش Django عند الرفع — بطيء جداً مع FileBasedCache؛ اتركيه False (مفاتيح كاش الإكسل تتضمن توقيع الملف).
+EXCEL_UPLOAD_CLEAR_ALL_CACHE = False
+# إجبار توحيد أي رفع إلى latest.xlsx (خصوصًا .xlsm) عبر إعادة كتابة كل الشيتات.
+# False = أسرع رفع (الملف يبقى بصيغته: latest.xlsx أو latest.xlsm).
+EXCEL_UPLOAD_FORCE_CANONICAL_XLSX = False
+# مسح جدول ExcelSheetCache عند الرفع. قد يكون بطيئًا جدًا لو الجدول كبير.
+# اتركيه False لأن هذا الجدول غير مطلوب في مسار الرفع الحالي.
+EXCEL_UPLOAD_PURGE_DB_SHEET_CACHE = False
 
 # CACHES = {
 #     'default': {

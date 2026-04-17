@@ -172,13 +172,15 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   overflow: hidden;
 }
-.inbound-grn-breakout .grn-breakout-head {
+.grn-breakout-head {
   background: linear-gradient(90deg, #1a2f4a 0%, #2a4564 100%);
   color: #fff;
   font-size: 0.9rem;
   letter-spacing: 0.04em;
   padding: 0.55rem 1rem;
   font-weight: 600;
+  border-radius: 0.25rem;
+  width: 100%;
 }
 .inbound-mid-tile {
   background: #f8fafc;
@@ -388,7 +390,7 @@
           </div>
         </div>
         <div class="col-lg-6">
-          <p class="small text-muted text-center mb-1">Hit % by month</p>
+          <p class="small text-muted text-center mb-1">Hit % by facility</p>
           <div style="min-height: 220px;">
             <canvas id="chart-inbound-grn-by-month" height="220"></canvas>
           </div>
@@ -2535,6 +2537,12 @@
           if (Math.abs(n - Math.round(n)) < 0.000001) return String(Math.round(n));
           return n.toFixed(2);
         }
+        function normMonth(v) {
+          var s = String(v == null ? '' : v).trim().toLowerCase();
+          if (!s) return '';
+          if (s.length >= 3) return s.slice(0, 3);
+          return s;
+        }
         function getDataRows() {
           var rows = tbody ? Array.prototype.slice.call(tbody.querySelectorAll('tr')) : [];
           return rows.filter(function(tr) {
@@ -2542,20 +2550,6 @@
             if (tr.getAttribute('data-inbound-row') !== '1' && isNespressoInbound) return false;
             return true;
           });
-        }
-        function normMonth(v) {
-          var s = String(v == null ? '' : v).trim();
-          if (!s) return '';
-          var m = s.toLowerCase();
-          var m3 = m.slice(0, 3);
-          var map = {jan: 'jan', feb: 'feb', mar: 'mar', apr: 'apr', may: 'may', jun: 'jun', jul: 'jul', aug: 'aug', sep: 'sep', oct: 'oct', nov: 'nov', dec: 'dec'};
-          if (map[m3]) return map[m3];
-          var dt = new Date(s);
-          if (!isNaN(dt.getTime())) {
-            var mm = dt.toLocaleString('en', { month: 'short' }).toLowerCase();
-            return map[mm] || mm;
-          }
-          return m;
         }
         function readGlobalFilters() {
           if (!globalFilterCard || !isNespressoInbound) return {};
@@ -2691,7 +2685,7 @@
           if (kLpns) kLpns.textContent = fmt(lpns);
         }
 
-        function updateGrnBreakout(globalRows) {
+        function updateGrnBreakout(globalRows, gfEffective) {
           var body = document.getElementById('inbound-grn-facility-body');
           var totalHitEl = document.getElementById('inbound-grn-total-hit');
           var totalMissEl = document.getElementById('inbound-grn-total-miss');
@@ -2700,22 +2694,39 @@
           if (!body) return;
 
           var facAgg = {};
-          var monthAgg = {};
           globalRows.forEach(function(tr) {
             var fac = (tr.getAttribute('data-facility') || '').trim() || '—';
-            var mo = (tr.getAttribute('data-month') || '').trim() || '—';
             var isHit = tr.getAttribute('data-grn-hit') === '1';
             if (!facAgg[fac]) facAgg[fac] = { hit: 0, miss: 0 };
-            if (!monthAgg[mo]) monthAgg[mo] = { hit: 0, miss: 0 };
             if (isHit) {
               facAgg[fac].hit += 1;
-              monthAgg[mo].hit += 1;
             } else {
               facAgg[fac].miss += 1;
-              monthAgg[mo].miss += 1;
             }
           });
-          var facilities = Object.keys(facAgg).sort(function(a, b) { return String(a).localeCompare(String(b)); });
+
+          var facilities = [];
+          var _gf = gfEffective || {};
+          if (_gf.month) {
+            // عند فلتر الشهر: حافظ على كل المناطق المتاحة تحت نفس الفلاتر
+            // (مع تجاهل الشهر فقط) حتى تظهر المناطق ذات القيمة 0 في الجدول والشارت.
+            var gfNoMonth = Object.assign({}, _gf, { month: '' });
+            var allRows = getDataRows();
+            var facSet = {};
+            allRows.forEach(function(tr) {
+              if (!rowMatchesGlobal(tr, gfNoMonth)) return;
+              var f = (tr.getAttribute('data-facility') || '').trim() || '—';
+              facSet[f] = true;
+            });
+            facilities = Object.keys(facSet).sort(function(a, b) {
+              return String(a).localeCompare(String(b));
+            });
+          } else {
+            facilities = Object.keys(facAgg).sort(function(a, b) {
+              return String(a).localeCompare(String(b));
+            });
+          }
+
           if (!facilities.length) {
             body.innerHTML = '<tr><td colspan="4" class="text-muted">No filtered rows.</td></tr>';
             if (totalHitEl) totalHitEl.textContent = '0';
@@ -2725,8 +2736,8 @@
             var html = [];
             var th = 0, tm = 0;
             facilities.forEach(function(fac) {
-              var h = facAgg[fac].hit || 0;
-              var m = facAgg[fac].miss || 0;
+              var h = (facAgg[fac] && facAgg[fac].hit) ? facAgg[fac].hit : 0;
+              var m = (facAgg[fac] && facAgg[fac].miss) ? facAgg[fac].miss : 0;
               var t = h + m;
               var p = t > 0 ? Math.round((h * 100) / t) : 0;
               th += h; tm += m;
@@ -2741,14 +2752,10 @@
           }
 
           if (!chartCanvas || typeof Chart === 'undefined') return;
-          var monthLabels = Object.keys(monthAgg).filter(function(m) {
-            var x = String(m || '').trim().toLowerCase();
-            return !!x && x !== '—' && x !== '-' && x !== 'nan' && x !== 'none';
-          });
-          monthLabels.sort();
-          var monthPct = monthLabels.map(function(m) {
-            var h = monthAgg[m].hit || 0;
-            var ms = monthAgg[m].miss || 0;
+          var facLabels = facilities.slice();
+          var facPct = facLabels.map(function(fac) {
+            var h = (facAgg[fac] && facAgg[fac].hit) ? facAgg[fac].hit : 0;
+            var ms = (facAgg[fac] && facAgg[fac].miss) ? facAgg[fac].miss : 0;
             var t = h + ms;
             return t > 0 ? Math.round((h * 100) / t) : 0;
           });
@@ -2757,14 +2764,17 @@
           if (window.chartInstances[cid]) {
             try { window.chartInstances[cid].destroy(); } catch (e2) {}
           }
-          if (!monthLabels.length) return;
+          if (!facLabels.length) {
+            facLabels = ['No Data'];
+            facPct = [0];
+          }
           window.chartInstances[cid] = new Chart(chartCanvas.getContext('2d'), {
             type: 'bar',
             data: {
-              labels: monthLabels,
+              labels: facLabels,
               datasets: [{
                 label: 'Hit %',
-                data: monthPct,
+                data: facPct,
                 backgroundColor: 'rgba(159, 129, 112, 0.85)',
                 borderColor: 'rgba(129, 97, 62, 1)',
                 borderWidth: 1
@@ -2775,7 +2785,7 @@
               maintainAspectRatio: false,
               scales: {
                 y: { beginAtZero: true, max: 100, title: { display: true, text: '%' } },
-                x: { title: { display: true, text: 'Month' } }
+                x: { title: { display: true, text: 'Facility' } }
               },
               plugins: { legend: { display: false } }
             }
@@ -2809,7 +2819,13 @@
             window.chartInstances = window.chartInstances || {};
             if (window.chartInstances['chart-inbound-putaway-performance']) {
               try { window.chartInstances['chart-inbound-putaway-performance'].destroy(); } catch (e) {}
-              delete window.chartInstances['chart-inbound-putaway-performance'];
+            }
+            if (typeof Chart !== 'undefined') {
+              window.chartInstances['chart-inbound-putaway-performance'] = new Chart(perfCanvas.getContext('2d'), {
+                type: 'bar',
+                data: { labels: ['No Data'], datasets: [{ label: 'Putaway Hit %', data: [0], backgroundColor: 'rgba(40, 167, 69, 0.78)', borderColor: 'rgba(23, 120, 48, 1)', borderWidth: 1 }] },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 }, x: {} }, plugins: { legend: { display: false } } }
+              });
             }
             return;
           }
@@ -2899,7 +2915,13 @@
             window.chartInstances = window.chartInstances || {};
             if (window.chartInstances['chart-inbound-shipment-type-mix']) {
               try { window.chartInstances['chart-inbound-shipment-type-mix'].destroy(); } catch (e) {}
-              delete window.chartInstances['chart-inbound-shipment-type-mix'];
+            }
+            if (typeof Chart !== 'undefined') {
+              window.chartInstances['chart-inbound-shipment-type-mix'] = new Chart(mixCanvas.getContext('2d'), {
+                type: 'bar',
+                data: { labels: ['No Data'], datasets: [{ label: 'Type %', data: [0], backgroundColor: 'rgba(87, 117, 144, 0.85)', borderColor: 'rgba(64, 91, 116, 1)', borderWidth: 1 }] },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 }, x: {} }, plugins: { legend: { display: false } } }
+              });
             }
             return;
           }
@@ -2980,7 +3002,13 @@
             window.chartInstances = window.chartInstances || {};
             if (window.chartInstances['chart-inbound-lpn-volume']) {
               try { window.chartInstances['chart-inbound-lpn-volume'].destroy(); } catch (e) {}
-              delete window.chartInstances['chart-inbound-lpn-volume'];
+            }
+            if (typeof Chart !== 'undefined') {
+              window.chartInstances['chart-inbound-lpn-volume'] = new Chart(lpnCanvas.getContext('2d'), {
+                type: 'bar',
+                data: { labels: ['No Data'], datasets: [{ label: 'LPN Volume %', data: [0], backgroundColor: 'rgba(255, 159, 64, 0.82)', borderColor: 'rgba(226, 123, 21, 1)', borderWidth: 1 }] },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 }, x: {} }, plugins: { legend: { display: false } } }
+              });
             }
             return;
           }
@@ -3055,7 +3083,7 @@
           });
           updateInboundSummary(visibleRows);
           updateInboundKpiCards(globalRows);
-          updateGrnBreakout(globalRows);
+          updateGrnBreakout(globalRows, gfEffective);
           updatePutawayPerformanceWidget(globalRows);
           updateShipmentTypeMixWidget(globalRows);
           updateLpnVolumeWidget(globalRows);

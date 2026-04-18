@@ -107,6 +107,551 @@
   border-top: 5px solid #dc3545;
 }
 
+  /* Capacity + Expiry — creative “slab” cards (no table look) */
+  .ce-inv-card {
+    position: relative;
+    border-radius: 22px;
+    overflow: hidden;
+    height: 100%;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow:
+      0 4px 6px -1px rgba(15, 23, 42, 0.06),
+      0 24px 48px -12px rgba(15, 23, 42, 0.12);
+    background: linear-gradient(165deg, #ffffff 0%, #f8fafc 50%, #f1f5f9 100%);
+  }
+  .ce-inv-card::before {
+    content: "";
+    position: absolute;
+    inset: -40% -20% auto auto;
+    width: 55%;
+    height: 70%;
+    background: radial-gradient(circle at 30% 30%, rgba(99, 102, 241, 0.18), transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .ce-inv-card.ce-inv-card--lines::before {
+    background: radial-gradient(circle at 30% 30%, rgba(13, 148, 136, 0.2), transparent 65%);
+  }
+  .ce-inv-card > * {
+    position: relative;
+    z-index: 1;
+  }
+  .ce-inv-card .ce-inv-head {
+    padding: 1.05rem 1.35rem;
+    background: linear-gradient(118deg, #0f172a 0%, #1e3a5f 48%, #312e81 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-head {
+    background: linear-gradient(118deg, #042f2e 0%, #0f766e 42%, #134e4a 100%);
+  }
+  /* div title — avoids theme-nespresso.css forcing brown on all h3 */
+  .ce-inv-head__title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #ffffff !important;
+    letter-spacing: -0.02em;
+    line-height: 1.3;
+  }
+  .ce-inv-head__title span {
+    color: #ffffff !important;
+  }
+  .ce-inv-head__title i {
+    font-size: 1.2rem;
+    color: #e0e7ff !important;
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-head__title i {
+    color: #ccfbf1 !important;
+  }
+  .ce-inv-card .ce-inv-head .ce-inv-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 0.28rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    letter-spacing: 0.04em;
+  }
+  .ce-inv-body--slabs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 1rem 1rem 1.25rem;
+    max-height: min(62vh, 520px);
+    overflow: auto;
+    min-height: 12rem;
+  }
+  /* Slabs are flex items: without flex-shrink: 0 they compress when total
+     intrinsic height exceeds max-height, clipping pill text; scroll the
+     container instead (no per-slab padding hack). */
+  .ce-inv-body--slabs > .ce-inv-slab {
+    flex-shrink: 0;
+  }
+  /* Capacity + Expiry: third table — LPN × Category × expiry bucket */
+  .ce-lpn-matrix {
+    --lpn-mx-accent: #6366f1;
+    border-radius: 18px;
+    border: 1px solid rgba(99, 102, 241, 0.22);
+    background: linear-gradient(165deg, #fafbff 0%, #ffffff 38%, #f8fafc 100%);
+    box-shadow:
+      0 4px 6px -1px rgba(15, 23, 42, 0.06),
+      0 12px 28px -8px rgba(30, 58, 95, 0.12);
+    overflow: hidden;
+    transition: box-shadow 0.25s ease, transform 0.2s ease;
+  }
+  .ce-lpn-matrix:hover {
+    box-shadow:
+      0 8px 16px -4px rgba(15, 23, 42, 0.08),
+      0 20px 40px -12px rgba(79, 70, 229, 0.15);
+  }
+  .ce-lpn-matrix__head {
+    position: relative;
+    padding: 1.15rem 1.25rem 1.25rem;
+    background:
+      radial-gradient(900px 120px at 15% -20%, rgba(255, 255, 255, 0.34), transparent 55%),
+      radial-gradient(600px 180px at 95% 20%, rgba(167, 139, 250, 0.35), transparent 50%),
+      linear-gradient(125deg, #312e81 0%, #4338ca 38%, #5b21b6 88%);
+    border-bottom: none;
+  }
+  .ce-lpn-matrix__head::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6);
+    opacity: 0.85;
+  }
+  .ce-lpn-matrix__title-wrap {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+  }
+  .ce-lpn-matrix__icon-ring {
+    flex-shrink: 0;
+    width: 2.65rem;
+    height: 2.65rem;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+    color: #eef2ff !important;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+  .ce-lpn-matrix__title {
+    font-size: 1.05rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #ffffff !important;
+    line-height: 1.25;
+    margin: 0;
+  }
+  .ce-lpn-matrix__sub {
+    color: rgba(238, 242, 255, 0.92) !important;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    margin: 0.35rem 0 0;
+    max-width: 52rem;
+  }
+  .ce-lpn-matrix__fac-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+  .ce-lpn-matrix__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(6px);
+  }
+  .ce-lpn-matrix__chip--ry {
+    background: rgba(99, 102, 241, 0.45);
+    color: #eef2ff !important;
+  }
+  .ce-lpn-matrix__chip--jd {
+    background: rgba(45, 212, 191, 0.38);
+    color: #ecfdf5 !important;
+  }
+  .ce-lpn-matrix__scroll {
+    max-height: min(52vh, 560px);
+    overflow: auto;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.65), #ffffff);
+  }
+  /* Card list layout (no <table>) — same column grid for legend + rows */
+  .ce-lpn-matrix__list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.65rem 0.75rem 1rem;
+  }
+  .ce-lpn-matrix__legend {
+    display: grid;
+    grid-template-columns: minmax(5.25rem, 0.82fr) minmax(6.25rem, 1.05fr) repeat(3, minmax(4rem, 0.62fr));
+    gap: 0.45rem 0.55rem;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 55%, #020617 100%);
+    color: #e2e8f0;
+    font-size: 0.62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    border-radius: 14px;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.22);
+  }
+  .ce-lpn-matrix__legend span:nth-child(n + 3) {
+    text-align: right;
+  }
+  .ce-lpn-matrix__card {
+    --row-accent: #94a3b8;
+    display: grid;
+    grid-template-columns: minmax(5.25rem, 0.82fr) minmax(6.25rem, 1.05fr) repeat(3, minmax(4rem, 0.62fr));
+    gap: 0.45rem 0.55rem;
+    align-items: center;
+    padding: 0.55rem 0.75rem;
+    border-radius: 14px;
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    border-left: 4px solid var(--row-accent);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92));
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  }
+  .ce-lpn-matrix__card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 26px rgba(79, 70, 229, 0.12);
+    border-color: rgba(99, 102, 241, 0.22);
+  }
+  .ce-lpn-matrix__card[data-bucket="gt_9m"] {
+    --row-accent: #10b981;
+  }
+  .ce-lpn-matrix__card[data-bucket="expired"] {
+    --row-accent: #ef4444;
+  }
+  .ce-lpn-matrix__card[data-bucket="day_8"] {
+    --row-accent: #f97316;
+  }
+  .ce-lpn-matrix__card[data-bucket="grand"] {
+    --row-accent: #6366f1;
+  }
+  .ce-lpn-matrix__card[data-bucket^="m_"] {
+    --row-accent: #eab308;
+  }
+  .ce-lpn-matrix__total-banner {
+    display: grid;
+    grid-template-columns: minmax(5.25rem, 0.82fr) minmax(6.25rem, 1.05fr) repeat(3, minmax(4rem, 0.62fr));
+    gap: 0.45rem 0.55rem;
+    align-items: center;
+    padding: 0.85rem 0.85rem;
+    margin-top: 0.35rem;
+    border-radius: 16px;
+    border: 2px solid rgba(99, 102, 241, 0.42);
+    background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 45%, #ecfdf5 100%);
+    box-shadow: 0 12px 32px rgba(67, 56, 202, 0.14);
+  }
+  .ce-lpn-matrix__total-banner:hover {
+    transform: none;
+    box-shadow: 0 12px 32px rgba(67, 56, 202, 0.14);
+  }
+  @media (max-width: 767.98px) {
+    .ce-lpn-matrix__scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .ce-lpn-matrix__list {
+      min-width: min(540px, 135vw);
+    }
+    .ce-lpn-matrix__legend span {
+      font-size: 0.58rem;
+    }
+  }
+  .ce-lpn-matrix__group-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 700;
+    color: #0f172a !important;
+  }
+  .ce-lpn-matrix__group-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--row-accent, #64748b);
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06);
+  }
+  .ce-lpn-matrix__cat-pill {
+    display: inline-block;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: #334155 !important;
+    background: linear-gradient(180deg, #ffffff, #f1f5f9);
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    max-width: 100%;
+    word-break: break-word;
+  }
+  .ce-lpn-matrix__num {
+    display: inline-flex;
+    justify-content: flex-end;
+    min-width: 3.25rem;
+    padding: 0.28rem 0.55rem;
+    border-radius: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    font-size: 0.82rem;
+    line-height: 1.2;
+  }
+  .ce-lpn-matrix__num--ry {
+    color: #3730a3 !important;
+    background: linear-gradient(180deg, rgba(238, 242, 255, 0.95), rgba(224, 231, 255, 0.65));
+    border: 1px solid rgba(99, 102, 241, 0.28);
+  }
+  .ce-lpn-matrix__num--jd {
+    color: #115e59 !important;
+    background: linear-gradient(180deg, rgba(204, 251, 241, 0.85), rgba(167, 243, 208, 0.45));
+    border: 1px solid rgba(13, 148, 136, 0.35);
+  }
+  .ce-lpn-matrix__num--sum {
+    color: #5b21b6 !important;
+    background: linear-gradient(135deg, rgba(237, 233, 254, 0.95), rgba(221, 214, 254, 0.65));
+    border: 1px solid rgba(139, 92, 246, 0.35);
+  }
+  .ce-lpn-matrix__cell--num {
+    text-align: right;
+  }
+  .ce-lpn-matrix__total-banner .ce-lpn-matrix__group-label {
+    font-size: 0.92rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #312e81 !important;
+  }
+  .ce-lpn-matrix__total-banner .ce-lpn-matrix__num {
+    font-size: 0.9rem;
+  }
+  .ce-lpn-matrix__footer-accent {
+    height: 6px;
+    margin: 0;
+    border: none;
+    background: linear-gradient(90deg, #6366f1, #a78bfa, #14b8a6);
+    opacity: 0.9;
+  }
+  .ce-inv-card__footer-bar {
+    height: 5px;
+    margin: 0 1rem 1rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa);
+    opacity: 0.85;
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-card__footer-bar {
+    background: linear-gradient(90deg, #0d9488, #14b8a6, #2dd4bf);
+  }
+  .ce-inv-slab {
+    --slab-accent: #6366f1;
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 2px 12px rgba(15, 23, 42, 0.05);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .ce-inv-slab:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  }
+  .ce-inv-slab__rail {
+    width: 5px;
+    flex-shrink: 0;
+    background: linear-gradient(180deg, var(--slab-accent), #1e293b);
+    box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.12);
+  }
+  .ce-inv-slab__content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem 1rem;
+    padding: 0.65rem 0.85rem 0.65rem 0.75rem;
+  }
+  .ce-inv-slab__title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 8.5rem;
+    flex: 0 1 auto;
+  }
+  .ce-inv-slab__dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--slab-accent);
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06);
+    flex-shrink: 0;
+  }
+  .ce-inv-slab__title {
+    margin: 0;
+    font-size: 0.88rem;
+    font-weight: 800;
+    color: #0f172a !important;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+  }
+  .ce-inv-pills {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+  .ce-inv-pill {
+    border-radius: 12px;
+    padding: 0.55rem 0.5rem 0.5rem;
+    text-align: center;
+    min-height: 4.1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .ce-inv-pill--riyadh {
+    border-top: 3px solid #6366f1;
+  }
+  .ce-inv-pill--jeddah {
+    border-top: 3px solid #0d9488;
+  }
+  .ce-inv-pill--total {
+    border-top: 3px solid #7c3aed;
+    background: linear-gradient(180deg, rgba(250, 245, 255, 0.95), rgba(255, 255, 255, 0.92));
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-pill--riyadh {
+    border-top-color: #2dd4bf;
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-pill--jeddah {
+    border-top-color: #14b8a6;
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-pill--total {
+    border-top-color: #a78bfa;
+  }
+  .ce-inv-pill__label {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #334155 !important;
+    margin-bottom: 0.2rem;
+  }
+  .ce-inv-pill__code {
+    display: block;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #475569 !important;
+    margin-top: 0.06rem;
+    margin-bottom: 0.12rem;
+  }
+  .ce-inv-pill__value {
+    font-size: 1.05rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: #020617 !important;
+    line-height: 1.25;
+    margin-top: 0.05rem;
+  }
+  .ce-inv-slab--grand {
+    margin-top: 0.15rem;
+    border-width: 2px;
+    border-color: rgba(99, 102, 241, 0.35);
+    background: linear-gradient(125deg, rgba(238, 242, 255, 0.95), rgba(255, 255, 255, 0.92), rgba(250, 245, 255, 0.88));
+    box-shadow: 0 8px 28px rgba(99, 102, 241, 0.12);
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-slab--grand {
+    border-color: rgba(13, 148, 136, 0.4);
+    background: linear-gradient(125deg, rgba(236, 253, 245, 0.95), rgba(255, 255, 255, 0.92), rgba(240, 253, 250, 0.9));
+    box-shadow: 0 8px 28px rgba(13, 148, 136, 0.12);
+  }
+  .ce-inv-slab--grand .ce-inv-slab__title {
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .ce-inv-slab--grand .ce-inv-pill__value {
+    font-size: 1.02rem;
+  }
+  .ce-inv-slab-bck--expired {
+    --slab-accent: #ef4444;
+  }
+  .ce-inv-slab-bck--day_8 {
+    --slab-accent: #f97316;
+  }
+  .ce-inv-slab-bck--m_1,
+  .ce-inv-slab-bck--m_2 {
+    --slab-accent: #f59e0b;
+  }
+  .ce-inv-slab-bck--m_3,
+  .ce-inv-slab-bck--m_4 {
+    --slab-accent: #eab308;
+  }
+  .ce-inv-slab-bck--m_5,
+  .ce-inv-slab-bck--m_6 {
+    --slab-accent: #84cc16;
+  }
+  .ce-inv-slab-bck--m_7,
+  .ce-inv-slab-bck--m_8,
+  .ce-inv-slab-bck--m_9 {
+    --slab-accent: #22c55e;
+  }
+  .ce-inv-slab-bck--gt_9m {
+    --slab-accent: #10b981;
+  }
+  .ce-inv-slab-bck--grand {
+    --slab-accent: #6366f1;
+  }
+  .ce-inv-card.ce-inv-card--lines .ce-inv-slab-bck--grand {
+    --slab-accent: #0d9488;
+  }
+  .ce-section-label {
+    padding: 0.65rem 1rem 0.45rem;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    background: linear-gradient(180deg, rgba(241, 245, 249, 0.65), transparent);
+  }
+  .ce-section-label strong {
+    color: #0f172a !important;
+    font-size: 0.78rem;
+    letter-spacing: -0.01em;
+  }
+
 /*
  * Inbound KPI row: force standard Bootstrap icon colors. theme-nespresso.css maps
  * .text-primary/.text-success/.text-danger globally to brown — override only here.
@@ -1178,34 +1723,165 @@
       {% endif %}
     {% endfor %}
   </div>
-  {# ================= CAPACITY + EXPIRY: كروت مثل Expiry + رسمة Capacity Used vs Available + جداول + جدول الإكسل بفلتر Facility و Status و Expiry Date ================= #}
+  {# ================= CAPACITY + EXPIRY: expiry bucket cards + Capacity table + utilization chart + filtered sheet ================= #}
   {% elif tab_name_lower == 'capacity + expiry' %}
   <div class="col-12">
-    <div class="row g-4 mb-3">
-      {% if tab.expiry_counts %}
-      <div class="col-12 col-sm-6 col-lg-4">
-        <div class="kpi-card text-center">
-          <div class="kpi-icon text-warning"><i class="bi bi-exclamation-triangle-fill"></i></div>
-          <div class="kpi-title">Nearly expired (1–3 months)</div>
-          <div class="kpi-value">{{ tab.expiry_counts.within_1_3|default:0 }}</div>
+    {% if tab.inventory_expiry_summary %}
+    <div class="row g-4 mb-4">
+      <div class="col-12 col-lg-6">
+        <div class="ce-inv-card">
+          <div class="ce-inv-head d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div class="ce-inv-head__title" role="heading" aria-level="3">
+              <i class="bi bi-box-seam" aria-hidden="true"></i>
+              <span>Quantity by expiry</span>
+            </div>
+            <span class="ce-inv-badge">00001 Riyadh · 00003 Jeddah</span>
+          </div>
+         
+          <div class="ce-inv-body--slabs custom-scrollbar">
+            {% for row in tab.inventory_expiry_summary.rows %}
+            <article class="ce-inv-slab ce-inv-slab-bck--{{ row.buck_cls }}{% if row|get_item:'is_total' %} ce-inv-slab--grand{% endif %}">
+              <div class="ce-inv-slab__rail" aria-hidden="true"></div>
+              <div class="ce-inv-slab__content">
+                <div class="ce-inv-slab__title-row">
+                  <span class="ce-inv-slab__dot" aria-hidden="true"></span>
+                  <div class="ce-inv-slab__title" role="heading" aria-level="4">{{ row.label }}</div>
+                </div>
+                <div class="ce-inv-pills">
+                  <div class="ce-inv-pill ce-inv-pill--riyadh">
+                    <span class="ce-inv-pill__label">Riyadh</span><span class="ce-inv-pill__code">00001</span>
+                    <span class="ce-inv-pill__value">{{ row.riyadh_qty_fmt }}</span>
+                  </div>
+                  <div class="ce-inv-pill ce-inv-pill--jeddah">
+                    <span class="ce-inv-pill__label">Jeddah</span><span class="ce-inv-pill__code">00003</span>
+                    <span class="ce-inv-pill__value">{{ row.jeddah_qty_fmt }}</span>
+                  </div>
+                  <div class="ce-inv-pill ce-inv-pill--total">
+                    <span class="ce-inv-pill__label">Grand total</span>
+                    <span class="ce-inv-pill__value">{{ row.total_qty_fmt }}</span>
+                  </div>
+                </div>
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+          <div class="ce-inv-card__footer-bar" aria-hidden="true"></div>
         </div>
       </div>
-      <div class="col-12 col-sm-6 col-lg-4">
-        <div class="kpi-card text-center danger">
-          <div class="kpi-icon text-danger"><i class="bi bi-exclamation-circle-fill"></i></div>
-          <div class="kpi-title">Nearly expired (3–6 months)</div>
-          <div class="kpi-value">{{ tab.expiry_counts.within_3_6|default:0 }}</div>
+      <div class="col-12 col-lg-6">
+        <div class="ce-inv-card ce-inv-card--lines">
+          <div class="ce-inv-head d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div class="ce-inv-head__title" role="heading" aria-level="3">
+              <i class="bi bi-upc-scan" aria-hidden="true"></i>
+              <span>Distinct LPN count</span>
+            </div>
+            <span class="ce-inv-badge">00001 Riyadh · 00003 Jeddah</span>
+          </div>
+          <div class="ce-inv-body--slabs custom-scrollbar">
+            {% for row in tab.inventory_expiry_summary.rows %}
+            <article class="ce-inv-slab ce-inv-slab-bck--{{ row.buck_cls }}{% if row|get_item:'is_total' %} ce-inv-slab--grand{% endif %}">
+              <div class="ce-inv-slab__rail" aria-hidden="true"></div>
+              <div class="ce-inv-slab__content">
+                <div class="ce-inv-slab__title-row">
+                  <span class="ce-inv-slab__dot" aria-hidden="true"></span>
+                  <div class="ce-inv-slab__title" role="heading" aria-level="4">{{ row.label }}</div>
+                </div>
+                <div class="ce-inv-pills">
+                  <div class="ce-inv-pill ce-inv-pill--riyadh">
+                    <span class="ce-inv-pill__label">Riyadh</span><span class="ce-inv-pill__code">00001</span>
+                    <span class="ce-inv-pill__value">{{ row.riyadh_lines_fmt }}</span>
+                  </div>
+                  <div class="ce-inv-pill ce-inv-pill--jeddah">
+                    <span class="ce-inv-pill__label">Jeddah</span><span class="ce-inv-pill__code">00003</span>
+                    <span class="ce-inv-pill__value">{{ row.jeddah_lines_fmt }}</span>
+                  </div>
+                  <div class="ce-inv-pill ce-inv-pill--total">
+                    <span class="ce-inv-pill__label">Grand total</span>
+                    <span class="ce-inv-pill__value">{{ row.total_lines_fmt }}</span>
+                  </div>
+                </div>
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+          <div class="ce-inv-card__footer-bar" aria-hidden="true"></div>
         </div>
       </div>
-      <div class="col-12 col-sm-6 col-lg-4">
-        <div class="kpi-card text-center">
-          <div class="kpi-icon text-secondary"><i class="bi bi-clock-history"></i></div>
-          <div class="kpi-title">Nearly expired (6–9 months)</div>
-          <div class="kpi-value">{{ tab.expiry_counts.within_6_9|default:0 }}</div>
-        </div>
-      </div>
-      {% endif %}
     </div>
+    {% if tab.inventory_lpn_category_matrix %}
+    <div class="row g-0 mb-4">
+      <div class="col-12">
+        <div class="ce-lpn-matrix">
+          <div class="ce-lpn-matrix__head">
+            <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+              <div class="ce-lpn-matrix__title-wrap flex-grow-1">
+                <div class="ce-lpn-matrix__icon-ring" aria-hidden="true">
+                  <i class="bi bi-diagram-3-fill"></i>
+                </div>
+                <div>
+                  <h3 class="ce-lpn-matrix__title">Distinct LPN by expiry grouping &amp; category</h3>
+                  <p class="ce-lpn-matrix__sub">
+                    Facility → dedupe <strong>LPN Nbr</strong> → <strong>Category</strong> → classify by earliest <strong>Expiry Date</strong>. Each cell = count of distinct LPNs.
+                  </p>
+                </div>
+              </div>
+              <div class="ce-lpn-matrix__fac-strip">
+                <span class="ce-lpn-matrix__chip ce-lpn-matrix__chip--ry"><i class="bi bi-geo-alt-fill" aria-hidden="true"></i> Riyadh 00001</span>
+                <span class="ce-lpn-matrix__chip ce-lpn-matrix__chip--jd"><i class="bi bi-geo-alt-fill" aria-hidden="true"></i> Jeddah 00003</span>
+              </div>
+            </div>
+          </div>
+          <div class="ce-lpn-matrix__scroll custom-scrollbar">
+            <div class="ce-lpn-matrix__list" role="list">
+              <div class="ce-lpn-matrix__legend" role="row" aria-hidden="true">
+                <span>Grouping</span>
+                <span>Category</span>
+                <span>Riyadh</span>
+                <span>Jeddah</span>
+                <span>Grand total</span>
+              </div>
+              {% for mrow in tab.inventory_lpn_category_matrix.rows %}
+                {% if mrow|get_item:'is_total' %}
+              <div class="ce-lpn-matrix__total-banner" role="listitem" data-bucket="grand">
+                <div class="ce-lpn-matrix__cell--group">
+                  <span class="ce-lpn-matrix__group-label">{{ mrow.grouping }}</span>
+                </div>
+                <div class="ce-lpn-matrix__cell--cat"><span class="text-muted small fw-semibold">All categories</span></div>
+                <div class="ce-lpn-matrix__cell--num"><span class="ce-lpn-matrix__num ce-lpn-matrix__num--ry">{{ mrow.riyadh_fmt }}</span></div>
+                <div class="ce-lpn-matrix__cell--num"><span class="ce-lpn-matrix__num ce-lpn-matrix__num--jd">{{ mrow.jeddah_fmt }}</span></div>
+                <div class="ce-lpn-matrix__cell--num"><span class="ce-lpn-matrix__num ce-lpn-matrix__num--sum">{{ mrow.grand_fmt }}</span></div>
+              </div>
+                {% else %}
+              <article class="ce-lpn-matrix__card" role="listitem" data-bucket="{{ mrow.buck_cls|default:'gt_9m' }}">
+                <div class="ce-lpn-matrix__cell--group">
+                  <span class="ce-lpn-matrix__group-label">
+                    <span class="ce-lpn-matrix__group-dot" aria-hidden="true"></span>
+                    {{ mrow.grouping }}
+                  </span>
+                </div>
+                <div class="ce-lpn-matrix__cell--cat">
+                  <span class="ce-lpn-matrix__cat-pill">{{ mrow.category }}</span>
+                </div>
+                <div class="ce-lpn-matrix__cell--num"><span class="ce-lpn-matrix__num ce-lpn-matrix__num--ry">{{ mrow.riyadh_fmt }}</span></div>
+                <div class="ce-lpn-matrix__cell--num"><span class="ce-lpn-matrix__num ce-lpn-matrix__num--jd">{{ mrow.jeddah_fmt }}</span></div>
+                <div class="ce-lpn-matrix__cell--num"><span class="ce-lpn-matrix__num ce-lpn-matrix__num--sum">{{ mrow.grand_fmt }}</span></div>
+              </article>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+          <div class="ce-lpn-matrix__footer-accent" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="alert alert-light border mb-4" role="status">
+      <strong>Inventory summary unavailable.</strong>
+      Check that sheet <strong>Capacity + Expiry_tab</strong> includes columns <strong>Facility</strong> (or Plant/Warehouse), <strong>LPN</strong>/<strong>LPN Nbr</strong>, a valid <strong>Expiry Date</strong>, and (for quantities) <strong>Current Qty</strong>. Rows must be for <strong>Riyadh / Jeddah</strong> (codes <strong>00001</strong> / <strong>00003</strong> or those names) with non-empty LPN.
+      If you just uploaded a new file, do a <strong>hard refresh</strong> (Ctrl+F5) so the browser does not show an old cached tab.
+    </div>
+    {% endif %}
 
     <div class="row mb-4 align-items-start">
       <div class="col-12 col-md-6">
@@ -1325,6 +2001,7 @@
                   {% endfor %}
                 </select>
               </div>
+              {% if sub.filter_options.statuses %}
               <div class="col-12 col-sm-6 col-md-3">
                 <label class="form-label small fw-semibold mb-1">Status</label>
                 <select class="form-select capacity-expiry-detail-filter w-100" data-filter="status">
@@ -1334,6 +2011,7 @@
                   {% endfor %}
                 </select>
               </div>
+              {% endif %}
               <div class="col-12 col-sm-6 col-md-3">
                 <label class="form-label small fw-semibold mb-1">Expiry Date</label>
                 <select class="form-select capacity-expiry-detail-filter w-100" data-filter="expiry">
@@ -2033,6 +2711,13 @@
             <h4 class="mb-2 text-dark w-100 text-center">{{ tab.raw_excel_table.title }}</h4>
           </div>
           <div class="card-body text-center">
+            {% if tab.raw_excel_table.truncated %}
+            <div class="alert alert-info py-2 small mb-3 mx-auto text-start" style="max-width: 48rem;">
+              Showing the first {{ tab.raw_excel_table.data|length }} rows of
+              {{ tab.raw_excel_table.total_row_count|default:tab.raw_excel_table.data|length }} in this sheet (web limit). Adjust
+              <code class="small">B2C_RAW_EXCEL_HTML_MAX_ROWS</code> in settings if you need more rows in the browser.
+            </div>
+            {% endif %}
             {% if tab.raw_excel_table.month_filter_options %}
             <div class="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3 px-2">
               <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-month-filter" style="color: #81613E;">Month</label>

@@ -1120,7 +1120,11 @@
           tab: selectedTab,
           month: month,
           quarter: quarter,
-          full_data: 0,
+          full_data:
+            selectedTab &&
+            String(selectedTab).toLowerCase().trim() === "capacity + expiry"
+              ? 1
+              : 0,
         },
         beforeSend: function () {
           if (quarter) {
@@ -1132,8 +1136,10 @@
         },
         success: function (data) {
           applyAvailableMonthsToSelect(data);
-          writeTabCache(cacheKey, data);
+          // عرض المحتوى قبل كتابة localStorage: تاب B2C قد يرجع HTML ضخمًا فيفشل
+          // JSON.stringify أو يتجاوز حد التخزين — كان يمنع استبدال "Loading data...".
           handleTabResponse(data);
+          writeTabCache(cacheKey, data);
         },
         error: function (err) {
           $("#quarter-loader").hide();

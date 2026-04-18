@@ -204,6 +204,10 @@ EXCEL_PREVIEW_MAX_ROWS = 200
 # عند الضغط على «تحميل كامل» أو full_data=1: حد أقصى للصفوف (خفّضيه لو السيرفر يتعطل)
 # None = قراءة الشيت كاملًا (قد يكون بطيئًا جدًا على ملفات ضخمة)
 EXCEL_FULL_MAX_ROWS = 50000
+# حد صفوف جدول B2C الخام في HTML (القراءة قد تكون كاملة لكن العرض يُقتصر لتفادي تعليق المتصفح/فشل الكاش).
+B2C_RAW_EXCEL_HTML_MAX_ROWS = int(
+    os.environ.get("B2C_RAW_EXCEL_HTML_MAX_ROWS", "2500").strip() or "2500"
+)
 # للتوافق مع كود قديم يشير لـ EXCEL_LOAD_MAX_ROWS
 EXCEL_LOAD_MAX_ROWS = 500
 

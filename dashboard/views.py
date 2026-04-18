@@ -657,7 +657,9 @@ def _get_excel_path_for_request(request):
     folder = os.path.abspath(
         os.path.join(str(settings.MEDIA_ROOT), "excel_uploads")
     )
-    if not os.path.isdir(folder):
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
         return None
     path = request.session.get("uploaded_excel_path")
     if path and os.path.isfile(path):
@@ -680,7 +682,34 @@ def _get_excel_path_for_request(request):
         p = os.path.join(folder, name)
         if os.path.isfile(p):
             return p
-    return None
+    return _ensure_placeholder_latest_xlsx(folder)
+
+
+def _ensure_placeholder_latest_xlsx(folder_abs: str):
+    """
+    إن لم يوجد أي ملف إكسل في المجلد، أنشئ latest.xlsx فارغاً (شيت افتراضي واحد).
+    كان السلوك القديم يعيد مسار latest حتى لو غير موجود فيُضلّل؛ ثم أُصلح بإرجاع None
+    فتوقف إعادة إنشاء الملف — هذه الدالة تعيد السلوك العملي (الداشبورد يفتح ثم الرفع يستبدل الملف).
+    """
+    folder_abs = os.path.abspath(folder_abs or "")
+    if not folder_abs:
+        return None
+    try:
+        os.makedirs(folder_abs, exist_ok=True)
+    except OSError:
+        return None
+    target = os.path.join(folder_abs, "latest.xlsx")
+    if os.path.isfile(target):
+        return os.path.abspath(target)
+    try:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        wb.save(target)
+    except Exception as e:
+        print(f"⚠️ [excel] تعذر إنشاء latest.xlsx تلقائياً: {e}")
+        return None
+    return os.path.abspath(target) if os.path.isfile(target) else None
 
 
 def _excel_file_signature(excel_path):
@@ -2751,7 +2780,9 @@ class UploadExcelViewRoche(View):
             path = os.path.join(folder_path, name)
             if os.path.exists(path):
                 return path
-        return os.path.join(folder_path, "latest.xlsx")
+        fallback = os.path.join(folder_path, "latest.xlsx")
+        ensured = _ensure_placeholder_latest_xlsx(folder_path)
+        return ensured or fallback
 
     def get_uploaded_file_path(self, request):
         folder = os.path.abspath(
@@ -3034,7 +3065,9 @@ class UploadExcelViewRoche(View):
                     data["available_months"] = self._available_months_for_tab(
                         request, tab_for_months
                     )
-        return JsonResponse(data, safe=False)
+        return JsonResponse(
+            data, safe=False, json_dumps_params={"default": str, "ensure_ascii": False}
+        )
 
     @staticmethod
     def safe_format_value(val):
@@ -3507,8 +3540,10 @@ class UploadExcelViewRoche(View):
                 ),
             }
 
-            # Iterate available tab filters
-            for key, func in tab_filter_map.items():
+            # أطول المفاتيح أولاً حتى لا يطابق "outbound" تاب "b2c outbound" إن تغيّر ترتيب القاموس
+            for key, func in sorted(
+                tab_filter_map.items(), key=lambda kv: (-len(kv[0]), kv[0])
+            ):
                 if key in selected_tab:
                     print(f"📂 Executing tab filter: {key}")
                     try:
@@ -6952,6 +6987,15 @@ class UploadExcelViewRoche(View):
                 )
                 raw_excel_rows.append(rec)
 
+            _raw_html_cap = int(
+                getattr(settings, "B2C_RAW_EXCEL_HTML_MAX_ROWS", 2500) or 0
+            )
+            _total_raw_rows = len(raw_excel_rows)
+            _raw_truncated = False
+            if _raw_html_cap > 0 and _total_raw_rows > _raw_html_cap:
+                raw_excel_rows = raw_excel_rows[:_raw_html_cap]
+                _raw_truncated = True
+
             raw_excel_table = {
                 "id": "sub-table-b2c-raw-sheet",
                 "title": "B2C_Outbound (Sheet Data)",
@@ -6959,6 +7003,8 @@ class UploadExcelViewRoche(View):
                 "data": raw_excel_rows,
                 "full_width": True,
                 "month_filter_options": month_filter_options,
+                "truncated": _raw_truncated,
+                "total_row_count": _total_raw_rows,
             }
 
             result = {
@@ -7615,6 +7661,16 @@ class UploadExcelViewRoche(View):
             selected_month=selected_month,
             selected_months=selected_months,
         )
+        if not res.get("sub_tables"):
+            msg = (res.get("detail_html") or "").strip()
+            if not msg:
+                msg = "<p class='text-muted text-center p-4'>No B2C outbound data to display.</p>"
+            return {
+                "detail_html": msg,
+                "chart_data": [],
+                "count": 0,
+                "hit_pct": 0,
+            }
         stats = res.get("stats") or {}
         hit_pct = stats.get("hit_pct", 0)
         try:
@@ -8428,11 +8484,12 @@ class UploadExcelViewRoche(View):
 
     def filter_capacity_expiry(self, request, selected_month=None, selected_months=None):
         """
-        تاب Capacity + Expiry: يقرأ من ملف all_sheet_nespresso.xlsx (أو الملف المرفوع)، شيت "Capacity + Expiry_tab".
-        - فلترة: Facility، Order Nbr، Status = Allocated فقط.
-        - جدول Capacity: عد الوكيشنات (From Location) للحالة Allocated.
-        - جدول Expiry: تجميع حسب batch_nbr و Expiry Date؛ فترات 1–3، 3–6، 6–9 أشهر؛ تحذير أحمر للقريب من الانتهاء.
-        - جدول التفاصيل: شيت الإكسل مع الفلاتر.
+        Capacity + Expiry tab: reads all_sheet_nespresso.xlsx (or uploaded file), sheet Capacity + Expiry_tab.
+        - Top: two summary cards (quantity + row counts) by expiry bucket for facilities 00001 and 00003, non-empty LPN, Expiry Date.
+        - Filters: Facility, Order Nbr, Status = Allocated only (for Capacity / batch expiry sub-tables).
+        - Capacity table: count From Location for Allocated.
+        - Expiry sub-table: by batch_nbr and Expiry Date; 1–3 / 3–6 / 6–9 month markers; near-expiry warning.
+        - Detail grid: raw sheet rows with filters.
         """
         import os
         from datetime import datetime, timedelta
@@ -8486,18 +8543,54 @@ class UploadExcelViewRoche(View):
                     "count": 0,
                 }
 
-            _nr_kw = _read_excel_nrows_kw(_excel_max_rows_for_request(request))
-            df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+            # قراءة كاملة للشيت (معاينة 200 صف فقط تُسقط صفوف المخزون الحقيقية بعد الصف 200).
+            _full_nr_kw = _read_excel_nrows_kw(
+                _excel_max_rows_for_request(request, force_full=True)
             )
-            if df.empty:
-                return {
-                    "detail_html": "<p class='text-warning'>⚠️ الشيت فاضي.</p>",
-                    "sub_tables": [],
-                    "chart_data": [],
-                    "count": 0,
-                }
 
+            def _looks_like_inventory_headers(dfx):
+                """يكتشف إن كان الصف مستخدمًا كعناوين أعمدة (Facility + LPN + Expiry)."""
+                if dfx is None or dfx.empty:
+                    return False
+                cols = [str(x).strip().lower() for x in dfx.columns]
+                txt = " ".join(cols)
+                has_fac = any(
+                    "facility" in c
+                    or "warehouse" in c
+                    or "plant" in c
+                    or c.strip() in ("wh", "wh code", "wh id", "loc code")
+                    for c in cols
+                )
+                has_lpn = "lpn" in txt.replace(" ", "") or "license" in txt
+                has_exp = "expir" in txt or "bbd" in txt or "best before" in txt
+                return bool(has_fac and has_lpn and has_exp)
+
+            df = None
+            for _hdr in (0, 1, 2, 3, 4, 5):
+                try:
+                    _try_df = pd.read_excel(
+                        excel_path,
+                        sheet_name=sheet_name,
+                        engine="openpyxl",
+                        header=_hdr,
+                        **_full_nr_kw,
+                    )
+                except Exception:
+                    continue
+                if _try_df is None or _try_df.empty:
+                    continue
+                _try_df.columns = _try_df.columns.astype(str).str.strip()
+                if _looks_like_inventory_headers(_try_df):
+                    df = _try_df
+                    break
+            if df is None:
+                df = pd.read_excel(
+                    excel_path,
+                    sheet_name=sheet_name,
+                    engine="openpyxl",
+                    header=0,
+                    **_full_nr_kw,
+                )
             df.columns = df.columns.astype(str).str.strip()
 
             def _col(name_candidates):
@@ -8507,20 +8600,408 @@ class UploadExcelViewRoche(View):
                             return c
                 return None
 
-            facility_col = _col(["Facility", "Facility Code"])
+            facility_col = _col(
+                [
+                    "Facility",
+                    "Facility Code",
+                    "Plant",
+                    "Warehouse",
+                    "WH",
+                    "WH Code",
+                    "Warehouse Code",
+                    "Loc",
+                    "Location",
+                ]
+            )
             order_col = _col(["Order Nbr", "Order Nbr.", "Order_Nbr", "OrderNbr"])
             status_col = _col(["Status", "status"])
             from_loc_col = _col(["From Location", "From_Location", "FromLocation"])
             batch_col = _col(["batch_nbr", "Batch Nbr", "Batch_Nbr", "BatchNbr"])
-            expiry_col = _col(["Expiry Date", "Expiry_Date", "ExpiryDate", "Expiry"])
+            expiry_col = _col(
+                [
+                    "Expiry Date",
+                    "Expiry_Date",
+                    "ExpiryDate",
+                    "Expiry",
+                    "Best Before",
+                    "BBD",
+                    "Shelf Life End",
+                ]
+            )
+            lpn_col = _col(
+                [
+                    "LPN Nbr",
+                    "LPN NBR",
+                    "Lpn Nbr",
+                    "LPN",
+                    "LPNNbr",
+                    "License Plate",
+                    "LPN Number",
+                ]
+            )
+            category_col = _col(
+                ["Category", "category", "Item Category", "CAT", "Product Category"]
+            )
+            company_col = _col(
+                [
+                    "Company",
+                    "Company Code",
+                    "Company Name",
+                    "Customer",
+                    "Sold To",
+                    "Sold-To",
+                    "Business Partner",
+                ]
+            )
+            qty_col = _col(
+                [
+                    "Current Qty",
+                    "CurrentQty",
+                    "Curr Qty",
+                    "Curr. Qty",
+                    "Orig Qty",
+                    "OrigQty",
+                    "Qty",
+                    "Quantity",
+                    "On Hand",
+                    "On Hand Qty",
+                    "Volume",
+                    "Total Qty",
+                    "Total_Qty",
+                    "Inv Qty",
+                ]
+            )
+
+            def _norm_facility_code(val):
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    return ""
+                s = str(val).strip()
+                if not s or s.lower() in ("nan", "none", "nat"):
+                    return ""
+                try:
+                    f = float(s.replace(",", ""))
+                    if f == int(f) and abs(f) < 1e12:
+                        return str(int(f)).zfill(5)
+                except ValueError:
+                    pass
+                if s.isdigit():
+                    return s.zfill(5)
+                return s
+
+            def _map_facility_rj(val):
+                """00001 / 00003 أو أسماء الرياض وجدة لو العمود نصّي بدل الرقم."""
+                c = _norm_facility_code(val)
+                if c in ("00001", "00003"):
+                    return c
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    return ""
+                s = str(val).strip().lower()
+                if not s or s in ("nan", "none", "nat"):
+                    return ""
+                if "riyadh" in s or "رياض" in str(val):
+                    return "00001"
+                if "jeddah" in s or "jedda" in s or "جدة" in str(val):
+                    return "00003"
+                return ""
+
+            def _ce_expiry_bucket_key(days_val):
+                import math
+
+                if days_val is None or (isinstance(days_val, float) and pd.isna(days_val)):
+                    return None
+                di = int(days_val)
+                if di < 0:
+                    return "expired"
+                if di <= 8:
+                    return "day_8"
+                mo = int(math.ceil(di / 30.44))
+                if mo >= 10:
+                    return "gt_9m"
+                if mo <= 1:
+                    return "m_1"
+                if mo <= 9:
+                    return f"m_{mo}"
+                return "gt_9m"
+
+            # Row order aligned with typical Excel pivot for this report (>9m, 2–7m, 8 days, 8–9m, …)
+            _CE_BUCKET_ORDER = [
+                ("gt_9m", "> 9 months"),
+                ("m_2", "2 months"),
+                ("m_3", "3 months"),
+                ("m_4", "4 months"),
+                ("m_5", "5 months"),
+                ("m_6", "6 months"),
+                ("m_7", "7 months"),
+                ("day_8", "8 days"),
+                ("m_8", "8 months"),
+                ("m_9", "9 months"),
+                ("m_1", "1 month"),
+                ("expired", "Expired"),
+            ]
+
+            inventory_expiry_summary = None
+            inventory_lpn_category_matrix = None
+            if (
+                facility_col
+                and expiry_col
+                and expiry_col in df.columns
+                and lpn_col
+                and lpn_col in df.columns
+            ):
+                _inv = df.copy()
+                _inv["_fac_n"] = _inv[facility_col].map(_map_facility_rj)
+                _inv = _inv[_inv["_fac_n"].isin(("00001", "00003"))].copy()
+                _lpn_s = _inv[lpn_col].astype(str).str.strip()
+                _inv = _inv[
+                    _inv[lpn_col].notna()
+                    & (~_lpn_s.str.lower().isin(("", "nan", "none", "nat")))
+                ].copy()
+                _inv["_lpn_k"] = _inv[lpn_col].astype(str).str.strip()
+                if category_col and category_col in _inv.columns:
+                    _inv["_cat_k"] = (
+                        _inv[category_col]
+                        .apply(
+                            lambda x: ""
+                            if x is None or (isinstance(x, float) and pd.isna(x))
+                            else str(x).strip()
+                        )
+                    )
+                else:
+                    _inv["_cat_k"] = ""
+                if not _inv.empty:
+                    _inv["_exp_dt"] = _excel_dates_to_datetime(
+                        _inv[expiry_col], errors="coerce"
+                    )
+                    _inv = _inv.dropna(subset=["_exp_dt"])
+                    if not _inv.empty:
+                        _today_ce = pd.Timestamp.now().normalize()
+                        _inv["_days_left"] = (_inv["_exp_dt"] - _today_ce).dt.days
+                        if qty_col and qty_col in _inv.columns:
+                            _inv["_qty"] = pd.to_numeric(
+                                _inv[qty_col], errors="coerce"
+                            ).fillna(0)
+                        else:
+                            _inv["_qty"] = 1.0
+                        # Pipeline: filter Facility (Riyadh/Jeddah) → non-empty LPN Nbr → collapse
+                        # duplicate lines by (Facility, LPN Nbr [, Category]) → sum Current Qty;
+                        # bucket date = earliest Expiry Date in that group.
+                        _gkeys = ["_fac_n", "_lpn_k"]
+                        if category_col and category_col in _inv.columns:
+                            _gkeys.append("_cat_k")
+                        _dedup = (
+                            _inv.groupby(_gkeys, as_index=False, dropna=False).agg(
+                                _qty_sum=("_qty", "sum"),
+                                _exp_min=("_exp_dt", "min"),
+                            )
+                        )
+                        _dedup["_days_min"] = (
+                            _dedup["_exp_min"] - _today_ce
+                        ).dt.days
+                        _dedup["_bucket"] = _dedup["_days_min"].map(
+                            _ce_expiry_bucket_key
+                        )
+                        _dedup_slabs = _dedup[
+                            _dedup["_bucket"].notna()
+                        ].copy()
+
+                        def _fmt_num(n, as_int=False):
+                            if as_int:
+                                v = int(round(float(n)))
+                                return f"{v:,}"
+                            v = float(n)
+                            if abs(v - round(v)) < 1e-6:
+                                return f"{int(round(v)):,}"
+                            return f"{v:,.2f}"
+
+                        if not _dedup.empty:
+
+                            _rows_out = []
+                            for bkey, blabel in _CE_BUCKET_ORDER:
+                                sub = _dedup_slabs[
+                                    _dedup_slabs["_bucket"] == bkey
+                                ]
+                                qr = float(
+                                    sub[sub["_fac_n"] == "00001"][
+                                        "_qty_sum"
+                                    ].sum()
+                                )
+                                qj = float(
+                                    sub[sub["_fac_n"] == "00003"][
+                                        "_qty_sum"
+                                    ].sum()
+                                )
+                                lr = int(
+                                    sub[sub["_fac_n"] == "00001"][
+                                        "_lpn_k"
+                                    ].nunique()
+                                )
+                                lj = int(
+                                    sub[sub["_fac_n"] == "00003"][
+                                        "_lpn_k"
+                                    ].nunique()
+                                )
+                                qt = qr + qj
+                                lt = lr + lj
+                                _rows_out.append(
+                                    {
+                                        "label": blabel,
+                                        "buck_cls": bkey,
+                                        "riyadh_qty": qr,
+                                        "jeddah_qty": qj,
+                                        "total_qty": qt,
+                                        "riyadh_lines": lr,
+                                        "jeddah_lines": lj,
+                                        "total_lines": lt,
+                                        "riyadh_qty_fmt": _fmt_num(qr),
+                                        "jeddah_qty_fmt": _fmt_num(qj),
+                                        "total_qty_fmt": _fmt_num(qt),
+                                        "riyadh_lines_fmt": _fmt_num(
+                                            lr, as_int=True
+                                        ),
+                                        "jeddah_lines_fmt": _fmt_num(
+                                            lj, as_int=True
+                                        ),
+                                        "total_lines_fmt": _fmt_num(
+                                            lt, as_int=True
+                                        ),
+                                    }
+                                )
+                            _grand_r_l = int(
+                                _dedup[_dedup["_fac_n"] == "00001"][
+                                    "_lpn_k"
+                                ].nunique()
+                            )
+                            _grand_j_l = int(
+                                _dedup[_dedup["_fac_n"] == "00003"][
+                                    "_lpn_k"
+                                ].nunique()
+                            )
+                            _grand_t_l = _grand_r_l + _grand_j_l
+                            _rows_out.append(
+                                {
+                                    "label": "Grand total",
+                                    "is_total": True,
+                                    "buck_cls": "grand",
+                                    "riyadh_qty_fmt": _fmt_num(
+                                        float(
+                                            _dedup[
+                                                _dedup["_fac_n"] == "00001"
+                                            ]["_qty_sum"].sum()
+                                        )
+                                    ),
+                                    "jeddah_qty_fmt": _fmt_num(
+                                        float(
+                                            _dedup[
+                                                _dedup["_fac_n"] == "00003"
+                                            ]["_qty_sum"].sum()
+                                        )
+                                    ),
+                                    "total_qty_fmt": _fmt_num(
+                                        float(_dedup["_qty_sum"].sum())
+                                    ),
+                                    "riyadh_lines_fmt": _fmt_num(
+                                        _grand_r_l, as_int=True
+                                    ),
+                                    "jeddah_lines_fmt": _fmt_num(
+                                        _grand_j_l, as_int=True
+                                    ),
+                                    "total_lines_fmt": _fmt_num(
+                                        _grand_t_l, as_int=True
+                                    ),
+                                }
+                            )
+                            inventory_expiry_summary = {
+                                "rows": _rows_out,
+                            }
+
+                            # Distinct LPN count by Expiry grouping × Category × Facility (after same dedup pipeline).
+                            if category_col and category_col in _inv.columns and not _dedup_slabs.empty:
+                                _cat_vals = []
+                                for _cv in _dedup_slabs["_cat_k"].unique():
+                                    if _cv is None or (
+                                        isinstance(_cv, float) and pd.isna(_cv)
+                                    ):
+                                        _cat_vals.append("")
+                                    else:
+                                        _cat_vals.append(str(_cv).strip())
+                                _cats_sorted = sorted(
+                                    set(_cat_vals),
+                                    key=lambda x: (x == "", x.lower()),
+                                )
+                                _matrix_rows = []
+                                for _bkey, _blabel in _CE_BUCKET_ORDER:
+                                    for _cat in _cats_sorted:
+                                        _sub_m = _dedup_slabs[
+                                            (_dedup_slabs["_bucket"] == _bkey)
+                                            & (_dedup_slabs["_cat_k"] == _cat)
+                                        ]
+                                        _lr_m = int(
+                                            _sub_m[
+                                                _sub_m["_fac_n"] == "00001"
+                                            ]["_lpn_k"].nunique()
+                                        )
+                                        _lj_m = int(
+                                            _sub_m[
+                                                _sub_m["_fac_n"] == "00003"
+                                            ]["_lpn_k"].nunique()
+                                        )
+                                        _lt_m = _lr_m + _lj_m
+                                        _matrix_rows.append(
+                                            {
+                                                "grouping": _blabel,
+                                                "buck_cls": _bkey,
+                                                "category": _cat if _cat else "—",
+                                                "riyadh": _lr_m,
+                                                "jeddah": _lj_m,
+                                                "grand_total": _lt_m,
+                                                "riyadh_fmt": _fmt_num(
+                                                    _lr_m, as_int=True
+                                                ),
+                                                "jeddah_fmt": _fmt_num(
+                                                    _lj_m, as_int=True
+                                                ),
+                                                "grand_fmt": _fmt_num(
+                                                    _lt_m, as_int=True
+                                                ),
+                                            }
+                                        )
+                                if _matrix_rows:
+                                    _sr = sum(
+                                        int(r["riyadh"]) for r in _matrix_rows
+                                    )
+                                    _sj = sum(
+                                        int(r["jeddah"]) for r in _matrix_rows
+                                    )
+                                    _st = sum(
+                                        int(r["grand_total"])
+                                        for r in _matrix_rows
+                                    )
+                                    _matrix_rows.append(
+                                        {
+                                            "grouping": "Grand total",
+                                            "buck_cls": "grand",
+                                            "category": "",
+                                            "riyadh": _sr,
+                                            "jeddah": _sj,
+                                            "grand_total": _st,
+                                            "riyadh_fmt": _fmt_num(
+                                                _sr, as_int=True
+                                            ),
+                                            "jeddah_fmt": _fmt_num(
+                                                _sj, as_int=True
+                                            ),
+                                            "grand_fmt": _fmt_num(
+                                                _st, as_int=True
+                                            ),
+                                            "is_total": True,
+                                        }
+                                    )
+                                    inventory_lpn_category_matrix = {
+                                        "rows": _matrix_rows,
+                                    }
 
             if not status_col:
-                return {
-                    "detail_html": "<p class='text-danger'>⚠️ عمود Status غير موجود في الشيت.</p>",
-                    "sub_tables": [],
-                    "chart_data": [],
-                    "count": 0,
-                }
+                status_col = None
 
             facility_filter = (request.GET.get("facility") or "").strip()
             order_filter = (request.GET.get("order_nbr") or "").strip()
@@ -8532,7 +9013,10 @@ class UploadExcelViewRoche(View):
 
             # Capacity: Used = عدد الوكيشنات (From Location) اللي Status = Allocated، Available = الباقي
             total_locations = int(df_filtered[from_loc_col].nunique()) if from_loc_col and from_loc_col in df_filtered.columns else 0
-            df_allocated = df_filtered[df_filtered[status_col].astype(str).str.strip().str.lower() == "allocated"].copy()
+            if status_col:
+                df_allocated = df_filtered[df_filtered[status_col].astype(str).str.strip().str.lower() == "allocated"].copy()
+            else:
+                df_allocated = df_filtered.iloc[0:0].copy()
             used_locations = int(df_allocated[from_loc_col].nunique()) if from_loc_col and from_loc_col in df_allocated.columns and not df_allocated.empty else 0
             available_locations = max(0, total_locations - used_locations)
             used_pct = round((used_locations / total_locations) * 100, 1) if total_locations else 0
@@ -8755,7 +9239,13 @@ class UploadExcelViewRoche(View):
                 detail_rows = [{k: _to_blank(v) if k != "_near_expiry" else v for k, v in row.items()} for row in detail_rows]
 
             facility_options = sorted(df[facility_col].dropna().unique().astype(str).tolist()) if facility_col and facility_col in df.columns else []
-            status_options = sorted(df[status_col].dropna().astype(str).str.strip().unique().tolist()) if status_col in df.columns else []
+            status_options = (
+                sorted(
+                    df[status_col].dropna().astype(str).str.strip().unique().tolist()
+                )
+                if status_col and status_col in df.columns
+                else []
+            )
             expiry_options = []
             if expiry_col and expiry_col in df.columns:
                 exp_ser = _excel_dates_to_datetime(df[expiry_col], errors="coerce")
@@ -8788,6 +9278,8 @@ class UploadExcelViewRoche(View):
                 "capacity_counts": capacity_counts,
                 "capacity_chart": capacity_chart,
                 "expiry_counts": expiry_counts,
+                "inventory_expiry_summary": inventory_expiry_summary,
+                "inventory_lpn_category_matrix": inventory_lpn_category_matrix,
             }
 
             html = render_to_string(

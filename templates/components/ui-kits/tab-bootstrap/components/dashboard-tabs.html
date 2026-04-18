@@ -721,15 +721,17 @@
   $(document).ready(function () {
     console.log("🚀 Page is ready");
 
-    const csrftoken = document.querySelector(
-      "[name=csrfmiddlewaretoken]",
-    ).value;
+    const _csrfEl = document.querySelector("[name=csrfmiddlewaretoken]");
+    const csrftoken = _csrfEl && _csrfEl.value ? _csrfEl.value : "";
+    if (!csrftoken) {
+      console.warn("⚠️ CSRF token input not found — POST actions may fail; GET tab loads should still work.");
+    }
     let selectedTab = (typeof window.INITIAL_TAB !== "undefined" && window.INITIAL_TAB) ? window.INITIAL_TAB : "dashboard";
     let selectedQuarter = "";
 
     const TAB_CACHE_PREFIX = "dashboard_tab_cache";
     // v12: مفتاح الكاش يتضمن توقيع الملف — عند وجود كاش صالح لا نعيد طلب السيرفر (تنقل أسرع بين التابات)
-    const TAB_CACHE_VERSION = "v14_per_tab_months";
+    const TAB_CACHE_VERSION = "v16_capacity_ui_refresh";
     const TAB_CACHE_TTL_MS = 45 * 60 * 1000; // 45 دقيقة لنفس الملف ثم إعادة جلب
 
     window.EXCEL_WORKBOOK_CACHE_SIG = "{{ excel_workbook_cache_sig|default:'' }}";
@@ -748,12 +750,16 @@
       return "0";
     }
 
-    function buildTabCacheKey(tab, month, quarter, bust) {
+    function buildTabCacheKey(tab, month, quarter, bust, extra) {
       const safeTab = (tab || "dashboard").toLowerCase();
       const safeMonth = month && month !== "" ? month : "all";
       const safeQuarter = quarter && quarter !== "" ? quarter : "all";
       const b = bust && String(bust).trim() ? String(bust).trim() : "0";
-      return `${TAB_CACHE_PREFIX}:${TAB_CACHE_VERSION}:${safeTab}:${safeMonth}:${safeQuarter}:${b}`;
+      const ex =
+        extra !== undefined && extra !== null && String(extra).trim() !== ""
+          ? String(extra).trim()
+          : "";
+      return `${TAB_CACHE_PREFIX}:${TAB_CACHE_VERSION}:${safeTab}:${safeMonth}:${safeQuarter}:${b}:${ex}`;
     }
 
     function readTabCache(key) {
@@ -777,8 +783,24 @@
       }
     }
 
+    /** Skip caching huge HTML (e.g. Dashboard) — JSON.stringify blocks the UI thread for seconds. */
+    const TAB_CACHE_MAX_DETAIL_HTML = 450000;
+
     function writeTabCache(key, payload) {
       try {
+        if (!payload || typeof payload !== "object") return;
+        var dh =
+          typeof payload.detail_html === "string"
+            ? payload.detail_html.length
+            : 0;
+        if (dh > TAB_CACHE_MAX_DETAIL_HTML) {
+          console.warn(
+            "⚠️ Tab cache skipped (detail_html too large):",
+            dh,
+            "chars — tab will load from server each time.",
+          );
+          return;
+        }
         localStorage.setItem(
           key,
           JSON.stringify({ timestamp: Date.now(), payload }),
@@ -841,15 +863,23 @@
     // 🔹 تحميل بيانات التاب المحدد
     function reinitializeScripts(container) {
       if (!container) return;
-      const scripts = container.querySelectorAll("script");
-      scripts.forEach((oldScript) => {
-        const newScript = document.createElement("script");
-        Array.from(oldScript.attributes).forEach((attr) =>
-          newScript.setAttribute(attr.name, attr.value),
-        );
-        newScript.text = oldScript.textContent;
-        oldScript.parentNode.replaceChild(newScript, oldScript);
-      });
+      try {
+        const scripts = container.querySelectorAll("script");
+        scripts.forEach((oldScript) => {
+          try {
+            const newScript = document.createElement("script");
+            Array.from(oldScript.attributes).forEach((attr) =>
+              newScript.setAttribute(attr.name, attr.value),
+            );
+            newScript.text = oldScript.textContent;
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+          } catch (inner) {
+            console.warn("⚠️ reinitializeScripts: skipped one script", inner);
+          }
+        });
+      } catch (err) {
+        console.warn("⚠️ reinitializeScripts:", err);
+      }
     }
 
     function attachInnerTabListeners(container) {
@@ -1101,7 +1131,31 @@
       const month = $("#month-select").val() || "";
       const quarter = selectedQuarter || "";
       const bust = getWorkbookCacheBust();
-      const cacheKey = buildTabCacheKey(selectedTab, month, quarter, bust);
+      let ceFilterKey = "";
+      let ceFacility = "";
+      let ceCompany = "";
+      let ceOrderNbr = "";
+      if (
+        selectedTab &&
+        String(selectedTab).toLowerCase().trim() === "capacity + expiry"
+      ) {
+        try {
+          const sp = new URLSearchParams(window.location.search || "");
+          ceFacility = (sp.get("facility") || "").trim();
+          ceCompany = (sp.get("company") || "").trim();
+          ceOrderNbr = (sp.get("order_nbr") || "").trim();
+          ceFilterKey = JSON.stringify([ceFacility, ceCompany, ceOrderNbr]);
+        } catch (e) {
+          ceFilterKey = "";
+        }
+      }
+      const cacheKey = buildTabCacheKey(
+        selectedTab,
+        month,
+        quarter,
+        bust,
+        ceFilterKey,
+      );
       const cachedPayload = readTabCache(cacheKey);
 
       if (cachedPayload) {
@@ -1125,6 +1179,9 @@
             String(selectedTab).toLowerCase().trim() === "capacity + expiry"
               ? 1
               : 0,
+          facility: ceFacility,
+          company: ceCompany,
+          order_nbr: ceOrderNbr,
         },
         beforeSend: function () {
           if (quarter) {
@@ -1139,7 +1196,10 @@
           // عرض المحتوى قبل كتابة localStorage: تاب B2C قد يرجع HTML ضخمًا فيفشل
           // JSON.stringify أو يتجاوز حد التخزين — كان يمنع استبدال "Loading data...".
           handleTabResponse(data);
-          writeTabCache(cacheKey, data);
+          // Defer stringify so the browser can paint tab HTML first (large Dashboard payloads).
+          setTimeout(function () {
+            writeTabCache(cacheKey, data);
+          }, 0);
         },
         error: function (err) {
           $("#quarter-loader").hide();
@@ -1152,6 +1212,9 @@
           $("#tab-content").html(
             "<div class='alert alert-danger text-center'>" + msg + "</div>",
           );
+        },
+        complete: function () {
+          $("#quarter-loader").hide();
         },
       });
     }

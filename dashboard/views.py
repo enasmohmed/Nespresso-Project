@@ -8486,8 +8486,8 @@ class UploadExcelViewRoche(View):
         """
         Capacity + Expiry tab: reads all_sheet_nespresso.xlsx (or uploaded file), sheet Capacity + Expiry_tab.
         - Top: two summary cards (quantity + row counts) by expiry bucket for facilities 00001 and 00003, non-empty LPN, Expiry Date.
-        - Filters: Facility, Order Nbr, Status = Allocated only (for Capacity / batch expiry sub-tables).
-        - Capacity table: count From Location for Allocated.
+        - Filters: Facility, Company, Order Nbr; Status = Allocated only (for batch expiry sub-tables).
+        - Capacity table: fixed caps Riyadh 735 / Jeddah 1728; Utilization = distinct LPN Nbr per region (after filters).
         - Expiry sub-table: by batch_nbr and Expiry Date; 1–3 / 3–6 / 6–9 month markers; near-expiry warning.
         - Detail grid: raw sheet rows with filters.
         """
@@ -9027,21 +9027,123 @@ class UploadExcelViewRoche(View):
                 "locations_available": available_locations,
                 "total_locations": total_locations,
             }
+
+            # --- Capacity / utilization: fixed caps; utilization = distinct LPN Nbr (Riyadh 00001 / Jeddah 00003) ---
+            _CAP_RIYADH = 735
+            _CAP_JEDDAH = 1728
+            company_filter = (request.GET.get("company") or "").strip()
+            df_for_capacity = df_filtered.copy()
+            if (
+                company_filter
+                and company_col
+                and company_col in df_for_capacity.columns
+            ):
+                df_for_capacity = df_for_capacity[
+                    df_for_capacity[company_col]
+                    .astype(str)
+                    .str.strip()
+                    == company_filter
+                ]
+
+            def _unique_lpn_util_by_region(dframe):
+                if (
+                    not facility_col
+                    or facility_col not in dframe.columns
+                    or not lpn_col
+                    or lpn_col not in dframe.columns
+                ):
+                    return 0, 0
+                dc = dframe.copy()
+                dc["_fac_n"] = dc[facility_col].map(_map_facility_rj)
+                dc = dc[dc["_fac_n"].isin(("00001", "00003"))]
+                if dc.empty:
+                    return 0, 0
+                _lpn_s = dc[lpn_col].astype(str).str.strip()
+                dc = dc.loc[
+                    dc[lpn_col].notna()
+                    & (
+                        ~_lpn_s.str.lower().isin(
+                            ("", "nan", "none", "nat")
+                        )
+                    )
+                ]
+                if dc.empty:
+                    return 0, 0
+                dc["_lpn_k"] = dc[lpn_col].astype(str).str.strip()
+                ur = int(dc.loc[dc["_fac_n"] == "00001", "_lpn_k"].nunique())
+                uj = int(dc.loc[dc["_fac_n"] == "00003", "_lpn_k"].nunique())
+                return ur, uj
+
+            util_r, util_j = _unique_lpn_util_by_region(df_for_capacity)
+
+            def _pct_label(num, den):
+                if not den:
+                    return "—"
+                return f"{round(num / den * 100, 1)}%"
+
+            empty_r = max(0, _CAP_RIYADH - util_r)
+            empty_j = max(0, _CAP_JEDDAH - util_j)
+            pct_r_str = _pct_label(util_r, _CAP_RIYADH)
+            pct_j_str = _pct_label(util_j, _CAP_JEDDAH)
+            _cap_tot = _CAP_RIYADH + _CAP_JEDDAH
+            _util_tot = util_r + util_j
+            _empty_tot = max(0, _cap_tot - _util_tot)
+            pct_tot_str = _pct_label(_util_tot, _cap_tot)
+
+            capacity_rows = [
+                {
+                    "Facility": "Riyadh",
+                    "Capacity": _CAP_RIYADH,
+                    "Utilization": util_r,
+                    "Empty": empty_r,
+                    "Percentage": pct_r_str,
+                },
+                {
+                    "Facility": "Jeddah",
+                    "Capacity": _CAP_JEDDAH,
+                    "Utilization": util_j,
+                    "Empty": empty_j,
+                    "Percentage": pct_j_str,
+                },
+                {
+                    "Facility": "Total",
+                    "Capacity": _cap_tot,
+                    "Utilization": _util_tot,
+                    "Empty": _empty_tot,
+                    "Percentage": pct_tot_str,
+                    "_is_total": True,
+                },
+            ]
+            capacity_table = {
+                "id": "capacity-summary",
+                "title": "Capacity",
+                "columns": [
+                    "Facility",
+                    "Capacity",
+                    "Utilization",
+                    "Empty",
+                    "Percentage",
+                ],
+                "data": capacity_rows,
+                "chart_data": [],
+                "full_width": False,
+            }
+            pct_r_val = (
+                round(util_r / _CAP_RIYADH * 100, 2) if _CAP_RIYADH else 0.0
+            )
+            pct_j_val = (
+                round(util_j / _CAP_JEDDAH * 100, 2) if _CAP_JEDDAH else 0.0
+            )
+            capacity_chart = {
+                "riyadh_pct": pct_r_val,
+                "jeddah_pct": pct_j_val,
+            }
+            capacity_counts["riyadh_unique_lpns"] = util_r
+            capacity_counts["jeddah_unique_lpns"] = util_j
+            capacity_counts["riyadh_capacity_fixed"] = _CAP_RIYADH
+            capacity_counts["jeddah_capacity_fixed"] = _CAP_JEDDAH
+
             if df_allocated.empty:
-                capacity_chart = {"utilization_pct_list": []}
-                # جدول: Capacity | Utilization | Empty | Percentage (بدون Pending، بدون مدن)
-                cap, util, empty = total_locations, 0, total_locations
-                pct = "—"
-                capacity_rows = [{"Capacity": cap, "Utilization": util, "Empty": empty, "Percentage": pct}]
-                capacity_rows.append({"Capacity": cap, "Utilization": util, "Empty": empty, "Percentage": pct, "_is_total": True})
-                capacity_table = {
-                    "id": "capacity-summary",
-                    "title": "Capacity",
-                    "columns": ["Capacity", "Utilization", "Empty", "Percentage"],
-                    "data": capacity_rows,
-                    "chart_data": [],
-                    "full_width": False,
-                }
                 expiry_table = {
                     "id": "expiry-summary",
                     "title": "Expiry (Allocated by batch — near expiry أولاً مع تحذير)",
@@ -9094,44 +9196,6 @@ class UploadExcelViewRoche(View):
                 expiry_counts = {"within_1_3": 0, "within_3_6": 0, "within_6_9": 0}
             else:
                 expiry_counts = {"within_1_3": 0, "within_3_6": 0, "within_6_9": 0}
-                # جدول: Capacity | Utilization | Empty | Percentage (بدون Pending، بدون مدن)
-                capacity_rows = []
-                if from_loc_col:
-                    if facility_col:
-                        # لكل facility: Capacity = إجمالي locations في df_filtered، Utilization = allocated
-                        facilities = df_filtered[facility_col].astype(str).str.strip().unique()
-                        for fac in facilities:
-                            cap = int(df_filtered[df_filtered[facility_col].astype(str).str.strip() == fac][from_loc_col].nunique())
-                            util = int(df_allocated[df_allocated[facility_col].astype(str).str.strip() == fac][from_loc_col].nunique()) if not df_allocated.empty else 0
-                            empty = max(0, cap - util)
-                            capacity_rows.append({"Capacity": cap, "Utilization": util, "Empty": empty})
-                    else:
-                        cap = int(df_filtered[from_loc_col].nunique())
-                        util = int(df_allocated[from_loc_col].nunique())
-                        empty = max(0, cap - util)
-                        capacity_rows.append({"Capacity": cap, "Utilization": util, "Empty": empty})
-                else:
-                    capacity_rows = [{"Capacity": 0, "Utilization": 0, "Empty": 0}]
-                total_util = sum(r["Utilization"] for r in capacity_rows)
-                utilization_pct_list = []
-                for r in capacity_rows:
-                    pct_val = round(r["Utilization"] / total_util * 100, 1) if total_util else 0
-                    utilization_pct_list.append(pct_val)
-                    r["Percentage"] = f"{pct_val}%" if total_util else "—"
-                capacity_chart = {"utilization_pct_list": utilization_pct_list}
-                cap_tot = sum(r["Capacity"] for r in capacity_rows)
-                util_tot = sum(r["Utilization"] for r in capacity_rows)
-                empty_tot = sum(r["Empty"] for r in capacity_rows)
-                pct_tot = "100.0%" if total_util else "—"
-                capacity_rows.append({"Capacity": cap_tot, "Utilization": util_tot, "Empty": empty_tot, "Percentage": pct_tot, "_is_total": True})
-                capacity_table = {
-                    "id": "capacity-summary",
-                    "title": "Capacity",
-                    "columns": ["Capacity", "Utilization", "Empty", "Percentage"],
-                    "data": capacity_rows,
-                    "chart_data": [],
-                    "full_width": False,
-                }
 
                 today = pd.Timestamp.now().normalize()
                 expiry_buckets = []
@@ -9239,6 +9303,18 @@ class UploadExcelViewRoche(View):
                 detail_rows = [{k: _to_blank(v) if k != "_near_expiry" else v for k, v in row.items()} for row in detail_rows]
 
             facility_options = sorted(df[facility_col].dropna().unique().astype(str).tolist()) if facility_col and facility_col in df.columns else []
+            company_options = (
+                sorted(
+                    df[company_col]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                )
+                if company_col and company_col in df.columns
+                else []
+            )
             status_options = (
                 sorted(
                     df[status_col].dropna().astype(str).str.strip().unique().tolist()
@@ -9261,9 +9337,11 @@ class UploadExcelViewRoche(View):
                 "full_width": True,
                 "filter_options": {
                     "facility_codes": facility_options,
+                    "companies": company_options,
                     "statuses": status_options,
                     "expiry_dates": expiry_options,
                     "facility_column": facility_col or "Facility",
+                    "company_column": company_col or "Company",
                     "status_column": status_col or "Status",
                     "expiry_column": expiry_col or "Expiry Date",
                 },

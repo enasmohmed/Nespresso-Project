@@ -466,6 +466,224 @@
   .ce-inv-card.ce-inv-card--lines .ce-inv-card__footer-bar {
     background: linear-gradient(90deg, #0d9488, #14b8a6, #2dd4bf);
   }
+  /* Capacity summary + dual utilization — minimal slate + accent */
+  .ce-capacity-table-card {
+    --ce-cap-accent: #6366f1;
+    position: relative;
+    border-radius: 24px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: #fff;
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.04),
+      0 12px 40px -16px rgba(15, 23, 42, 0.12);
+    overflow: hidden;
+  }
+  .ce-capacity-table-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    background: linear-gradient(180deg, #6366f1, #8b5cf6, #a855f7);
+    border-radius: 24px 0 0 24px;
+    pointer-events: none;
+  }
+  .ce-capacity-table-card .ce-capacity-table-head {
+    padding: 1.15rem 1.35rem 1rem 1.5rem;
+    background: linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .ce-capacity-table-card .ce-capacity-table-head h5 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: #0f172a !important;
+  }
+  .ce-capacity-table-card .ce-capacity-table-head p {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    color: #64748b;
+    line-height: 1.45;
+    max-width: 36rem;
+  }
+  .ce-capacity-table-card .ce-capacity-table-head p strong {
+    color: #334155;
+    font-weight: 700;
+  }
+  .ce-capacity-table-card .capacity-summary-table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .ce-capacity-table-card .capacity-summary-table thead th {
+    background: #f8fafc !important;
+    color: #475569 !important;
+    font-weight: 700;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-color: rgba(15, 23, 42, 0.06) !important;
+    padding: 0.65rem 0.75rem;
+  }
+  .ce-capacity-table-card .capacity-summary-table thead th:first-child {
+    border-radius: 12px 0 0 0;
+  }
+  .ce-capacity-table-card .capacity-summary-table thead th:last-child {
+    border-radius: 0 12px 0 0;
+  }
+  .ce-capacity-table-card .capacity-summary-table td {
+    border-color: rgba(15, 23, 42, 0.06) !important;
+    color: #1e293b;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    padding: 0.7rem 0.75rem;
+    vertical-align: middle;
+  }
+  .ce-capacity-table-card .capacity-summary-table tbody tr:nth-child(even) td {
+    background: #fcfcfd;
+  }
+  .ce-capacity-table-card .capacity-summary-table tbody tr.ce-cap-row--total td {
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.06), rgba(168, 85, 247, 0.04));
+    border-top: 2px solid rgba(99, 102, 241, 0.2);
+    font-weight: 800;
+    color: #0f172a;
+  }
+  .ce-cap-td-fac {
+    text-align: start !important;
+    padding-left: 1rem !important;
+  }
+  .ce-cap-fac-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.28rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .ce-cap-fac-pill--r {
+    background: rgba(99, 102, 241, 0.12);
+    color: #3730a3;
+    border: 1px solid rgba(99, 102, 241, 0.22);
+  }
+  .ce-cap-fac-pill--j {
+    background: rgba(13, 148, 136, 0.11);
+    color: #115e59;
+    border: 1px solid rgba(13, 148, 136, 0.22);
+  }
+  .ce-cap-fac-total {
+    font-weight: 800;
+    color: #0f172a;
+    letter-spacing: -0.02em;
+  }
+  .ce-capacity-charts-stack {
+    position: relative;
+    border-radius: 24px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: #fff;
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.04),
+      0 12px 40px -16px rgba(15, 23, 42, 0.12);
+    overflow: hidden;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .ce-capacity-charts-stack::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    background: linear-gradient(180deg, #0ea5e9, #6366f1, #a855f7);
+    border-radius: 0 24px 24px 0;
+    pointer-events: none;
+  }
+  .ce-capacity-charts-stack .ce-capacity-charts-head {
+    padding: 1.15rem 1.35rem 1rem 1.25rem;
+    background: linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .ce-capacity-charts-stack .ce-capacity-charts-head h5 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: #0f172a !important;
+  }
+  .ce-capacity-charts-stack .ce-capacity-charts-head p {
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    color: #64748b;
+    line-height: 1.45;
+  }
+  .ce-util-chart-panel {
+    padding: 1rem 1.25rem 1.1rem 1.25rem;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+    flex: 1;
+    min-height: 0;
+    background: #fff;
+  }
+  .ce-util-chart-panel:last-of-type {
+    border-bottom: none;
+  }
+  .ce-util-chart-panel--riyadh {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, #fff 48%);
+  }
+  .ce-util-chart-panel--jeddah {
+    background: linear-gradient(135deg, rgba(13, 148, 136, 0.05) 0%, #fff 48%);
+  }
+  .ce-util-chart-panel__label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    margin-bottom: 0.55rem;
+  }
+  .ce-util-chart-panel__title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .ce-util-chart-panel__title i {
+    font-size: 1.05rem;
+    opacity: 0.85;
+  }
+  .ce-util-chart-panel--riyadh .ce-util-chart-panel__title i {
+    color: #4f46e5;
+  }
+  .ce-util-chart-panel--jeddah .ce-util-chart-panel__title i {
+    color: #0d9488;
+  }
+  .ce-util-chart-panel__title strong {
+    font-size: 0.95rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #0f172a;
+  }
+  .ce-util-chart-panel__pct {
+    font-size: 0.85rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    padding: 0.35rem 0.65rem;
+    border-radius: 10px;
+    background: #f1f5f9;
+    color: #0f172a;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .ce-util-chart-panel--riyadh .ce-util-chart-panel__pct {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: rgba(99, 102, 241, 0.18);
+    color: #312e81;
+  }
+  .ce-util-chart-panel--jeddah .ce-util-chart-panel__pct {
+    background: rgba(13, 148, 136, 0.1);
+    border-color: rgba(13, 148, 136, 0.2);
+    color: #134e4a;
+  }
   .ce-inv-slab {
     --slab-accent: #6366f1;
     position: relative;
@@ -1883,15 +2101,18 @@
     </div>
     {% endif %}
 
-    <div class="row mb-4 align-items-start">
-      <div class="col-12 col-md-6">
+    <div class="row mb-4 align-items-stretch g-4">
+      <div class="col-12 col-lg-6">
         {% for sub in tab.sub_tables %}
           {% if not sub.full_width and sub.id == 'capacity-summary' %}
-        <div class="table-card">
-          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
-          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
-            <table class="table table-striped table-bordered text-center align-middle mb-0 capacity-summary-table">
-              <thead class="table-light">
+        <div class="ce-capacity-table-card h-100">
+          <div class="ce-capacity-table-head">
+            <h5>{{ sub.title }}</h5>
+            <p class="d-none d-sm-block">Fixed capacity: <strong>Riyadh 735</strong>, <strong>Jeddah 1728</strong>. Utilization = distinct <strong>LPN Nbr</strong> per location (after Facility, Company, and Order filters on the sheet).</p>
+          </div>
+          <div class="table-responsive custom-scrollbar px-3 pb-3 pt-0" style="overflow-x: auto;">
+            <table class="table table-bordered text-center align-middle mb-0 capacity-summary-table">
+              <thead>
                 <tr>
                   {% for col in sub.columns %}
                   <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
@@ -1900,9 +2121,21 @@
               </thead>
               <tbody>
                 {% for row in sub.data %}
-                <tr class="{% if row|get_item:'_is_total' %}fw-bold{% endif %}">
+                <tr class="{% if row|get_item:'_is_total' %}ce-cap-row--total{% endif %}">
                   {% for col in sub.columns %}
-                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  <td class="text-nowrap {% if col == 'Facility' %}ce-cap-td-fac{% endif %}" style="min-width: 4rem;">
+                    {% if col == 'Facility' %}
+                      {% if row|get_item:'_is_total' %}
+                        <span class="ce-cap-fac-total">{{ row|get_item:col }}</span>
+                      {% else %}
+                        {% with fac=row|get_item:col %}
+                        <span class="ce-cap-fac-pill {% if fac == 'Riyadh' %}ce-cap-fac-pill--r{% elif fac == 'Jeddah' %}ce-cap-fac-pill--j{% endif %}">{{ fac }}</span>
+                        {% endwith %}
+                      {% endif %}
+                    {% else %}
+                      {{ row|get_item:col }}
+                    {% endif %}
+                  </td>
                   {% endfor %}
                 </tr>
                 {% empty %}
@@ -1915,67 +2148,107 @@
           {% endif %}
         {% endfor %}
       </div>
-      <div class="col-12 col-md-6">
-        {% if tab.capacity_chart and tab.capacity_chart.utilization_pct_list %}
-        <div class="card h-100">
-          <div class="card-header pb-0 card-no-border">
-            <h5 class="mb-2 fw-bold" style="color: #81613E">Capacity — Utilization %</h5>
+      <div class="col-12 col-lg-6">
+        {% if tab.capacity_chart %}
+        <div class="ce-capacity-charts-stack h-100">
+          <div class="ce-capacity-charts-head">
+            <h5>Capacity — Utilization %</h5>
+            <p>Scale 0–100%. Each bar is utilization ÷ fixed capacity × 100.</p>
           </div>
-          <div class="card-body">
-            <div id="chart-capacity-used-available" style="min-height: 280px;" data-pcts="{{ tab.capacity_chart.utilization_pct_list|join:',' }}"></div>
-            <script>
-            (function() {
-              var container = document.getElementById('chart-capacity-used-available');
-              if (!container) return;
-              var pctStr = container.getAttribute('data-pcts') || '';
-              var pcts = pctStr ? pctStr.split(',').map(function(x) { return parseFloat(x) || 0; }) : [];
-              if (typeof ApexCharts === 'undefined') {
-                container.innerHTML = '<p class="text-muted text-center py-4">' + (pcts.length ? pcts.map(function(p, i) { return 'Segment ' + (i+1) + ': ' + p + '%'; }).join(' — ') : 'No data') + '</p>';
-                return;
-              }
-              if (window._capacityUsedAvailableChart) {
-                try { window._capacityUsedAvailableChart.destroy(); } catch (e) {}
-                window._capacityUsedAvailableChart = null;
-              }
-              var colors = ['#9F8170', '#A0785A', '#81613E', '#C3B091', '#EDC9AF'];
-              var series = pcts.map(function(p, i) { return { name: 'Segment ' + (i + 1) + ' (' + p + '%)', data: [p] }; });
-              if (!series.length) series = [{ name: 'Utilization', data: [0] }];
-              var options = {
-                chart: { type: 'bar', height: 280, stacked: true, toolbar: { show: false } },
+          <div class="ce-util-chart-panel ce-util-chart-panel--riyadh">
+            <div class="ce-util-chart-panel__label">
+              <div class="ce-util-chart-panel__title">
+                <i class="bi bi-geo-alt-fill" aria-hidden="true"></i>
+                <strong>Riyadh</strong>
+              </div>
+              <span class="ce-util-chart-panel__pct">{{ tab.capacity_chart.riyadh_pct|floatformat:1 }}%</span>
+            </div>
+            <div id="chart-capacity-util-riyadh" style="min-height: 112px;" data-pct="{{ tab.capacity_chart.riyadh_pct|default:0 }}"></div>
+          </div>
+          <div class="ce-util-chart-panel ce-util-chart-panel--jeddah">
+            <div class="ce-util-chart-panel__label">
+              <div class="ce-util-chart-panel__title">
+                <i class="bi bi-geo-alt-fill" aria-hidden="true"></i>
+                <strong>Jeddah</strong>
+              </div>
+              <span class="ce-util-chart-panel__pct">{{ tab.capacity_chart.jeddah_pct|floatformat:1 }}%</span>
+            </div>
+            <div id="chart-capacity-util-jeddah" style="min-height: 112px;" data-pct="{{ tab.capacity_chart.jeddah_pct|default:0 }}"></div>
+          </div>
+          <script>
+          (function() {
+            function readPct(id) {
+              var el = document.getElementById(id);
+              if (!el) return 0;
+              var v = parseFloat(el.getAttribute('data-pct') || '0');
+              return isNaN(v) ? 0 : Math.min(100, Math.max(0, v));
+            }
+            var pctR = readPct('chart-capacity-util-riyadh');
+            var pctJ = readPct('chart-capacity-util-jeddah');
+            if (typeof ApexCharts === 'undefined') {
+              ['chart-capacity-util-riyadh', 'chart-capacity-util-jeddah'].forEach(function(id) {
+                var c = document.getElementById(id);
+                if (c) c.innerHTML = '<p class="text-muted small mb-0 py-2">ApexCharts not loaded</p>';
+              });
+              return;
+            }
+            if (window._capacityUtilRiyadhChart) {
+              try { window._capacityUtilRiyadhChart.destroy(); } catch (e) {}
+              window._capacityUtilRiyadhChart = null;
+            }
+            if (window._capacityUtilJeddahChart) {
+              try { window._capacityUtilJeddahChart.destroy(); } catch (e) {}
+              window._capacityUtilJeddahChart = null;
+            }
+            function barOptions(pct, color) {
+              return {
+                chart: { type: 'bar', height: 118, toolbar: { show: false }, sparkline: { enabled: false } },
                 plotOptions: {
                   bar: {
                     horizontal: true,
-                    columnWidth: '70%',
-                    borderRadius: 6,
-                    barHeight: '60%',
+                    barHeight: '62%',
+                    borderRadius: 8,
+                    borderRadiusApplication: 'end',
                   },
                 },
-                colors: colors,
-                series: series,
+                colors: [color],
+                series: [{ name: 'Utilization', data: [pct] }],
                 xaxis: {
                   categories: [''],
                   min: 0,
                   max: 100,
                   tickAmount: 5,
-                  labels: { formatter: function(v) { return v + '%'; } },
+                  labels: { formatter: function(v) { return v + '%'; }, style: { fontSize: '11px', colors: '#64748b' } },
                 },
                 yaxis: { show: false },
                 grid: {
-                  borderColor: '#C3B091',
+                  borderColor: '#e2e8f0',
                   strokeDashArray: 4,
+                  padding: { left: 4, right: 8, top: 0, bottom: 0 },
                   xaxis: { lines: { show: true } },
                   yaxis: { lines: { show: false } },
                 },
-                legend: { show: true, position: 'bottom', horizontalAlign: 'left' },
-                dataLabels: { enabled: true, formatter: function(v) { return v ? v.toFixed(1) + '%' : ''; } },
-                tooltip: { y: { formatter: function(v) { return v + '%'; } } },
+                dataLabels: {
+                  enabled: true,
+                  formatter: function(v) { return (v || 0).toFixed(1) + '%'; },
+                  style: { fontSize: '12px', fontWeight: 700, colors: ['#0f172a'] },
+                  offsetX: 6,
+                },
+                tooltip: { y: { formatter: function(v) { return (v || 0).toFixed(1) + '% of capacity'; } } },
               };
-              var chart = new ApexCharts(container, options);
-              chart.render();
-              window._capacityUsedAvailableChart = chart;
-            })();
-            </script>
-          </div>
+            }
+            var elR = document.getElementById('chart-capacity-util-riyadh');
+            var elJ = document.getElementById('chart-capacity-util-jeddah');
+            if (elR) {
+              window._capacityUtilRiyadhChart = new ApexCharts(elR, barOptions(pctR, '#4f46e5'));
+              window._capacityUtilRiyadhChart.render();
+            }
+            if (elJ) {
+              window._capacityUtilJeddahChart = new ApexCharts(elJ, barOptions(pctJ, '#0f766e'));
+              window._capacityUtilJeddahChart.render();
+            }
+          })();
+          </script>
         </div>
         {% endif %}
       </div>
@@ -2001,6 +2274,17 @@
                   {% endfor %}
                 </select>
               </div>
+              {% if sub.filter_options.companies %}
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label small fw-semibold mb-1">Company</label>
+                <select class="form-select capacity-expiry-detail-filter w-100" data-filter="company">
+                  <option value="">All</option>
+                  {% for opt in sub.filter_options.companies %}
+                  <option value="{{ opt }}">{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              {% endif %}
               {% if sub.filter_options.statuses %}
               <div class="col-12 col-sm-6 col-md-3">
                 <label class="form-label small fw-semibold mb-1">Status</label>
@@ -2036,7 +2320,7 @@
                 </thead>
                 <tbody>
                   {% for row in sub.data %}
-                  <tr class="{% if row|get_item:'_near_expiry' %}table-warning{% endif %}" data-facility="{{ row|get_item:sub.filter_options.facility_column|default:'' }}" data-status="{{ row|get_item:sub.filter_options.status_column|default:'' }}" data-expiry="{{ row|get_item:sub.filter_options.expiry_column|default:'' }}">
+                  <tr class="{% if row|get_item:'_near_expiry' %}table-warning{% endif %}" data-facility="{{ row|get_item:sub.filter_options.facility_column|default:'' }}" data-company="{{ row|get_item:sub.filter_options.company_column|default:'' }}" data-status="{{ row|get_item:sub.filter_options.status_column|default:'' }}" data-expiry="{{ row|get_item:sub.filter_options.expiry_column|default:'' }}">
                     {% for col in sub.columns %}
                     <td>{{ row|get_item:col }}</td>
                     {% endfor %}
@@ -3844,14 +4128,17 @@
         var filters = card ? card.querySelectorAll('.capacity-expiry-detail-filter') : [];
         function applyCapacityExpiryFilters() {
           var facility = (card.querySelector('[data-filter="facility"]') || {}).value || '';
+          var companyEl = card.querySelector('[data-filter="company"]');
+          var company = companyEl ? (companyEl.value || '') : '';
           var status = (card.querySelector('[data-filter="status"]') || {}).value || '';
           var expiry = (card.querySelector('[data-filter="expiry"]') || {}).value || '';
           var rows = tbody ? tbody.querySelectorAll('tr') : [];
           rows.forEach(function(tr) {
             var f = (tr.getAttribute('data-facility') || '').trim();
+            var co = (tr.getAttribute('data-company') || '').trim();
             var s = (tr.getAttribute('data-status') || '').trim();
             var e = (tr.getAttribute('data-expiry') || '').trim();
-            var show = (!facility || f === facility) && (!status || s === status) && (!expiry || e === expiry);
+            var show = (!facility || f === facility) && (!company || co === company) && (!status || s === status) && (!expiry || e === expiry);
             tr.style.display = show ? '' : 'none';
           });
         }

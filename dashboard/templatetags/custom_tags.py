@@ -137,6 +137,16 @@ def render_chart(context, sub_id_or_title):
             sub_id_or_title_str = str(sub_id_or_title).strip()
             sub_id_or_title_lower = sub_id_or_title_str.lower()
 
+            # شارت KPI Actual & Contractual: ليس sub_table — يجب ألا يقع في fallback إلى tab.chart_data (48h)
+            if sub_id_or_title_lower == "b2b-outbound-sheet-kpi-chart":
+                ck = tab.get("chart_data_sheet_kpi")
+                if ck and isinstance(ck, list) and len(ck) > 0:
+                    print(
+                        f"✅ [render_chart] collect_datasets: chart_data_sheet_kpi for '{sub_id_or_title}' ({len(ck)} datasets)"
+                    )
+                    return ck
+                return []
+
             # ✅ البحث عن sub_table المطابق بالـ ID أولاً
             for sub_table in tab["sub_tables"]:
                 if not isinstance(sub_table, dict):
@@ -313,6 +323,15 @@ def render_chart(context, sub_id_or_title):
                     datasets = tab_dict.get("chart_data_pods", [])
                     if datasets:
                         print(f"✅ [render_chart] Using tab.chart_data_pods: {len(datasets)} datasets")
+                if not datasets:
+                    sd = str(sub_id_or_title).strip().lower()
+                    if sd == "b2b-outbound-sheet-kpi-chart":
+                        ck = tab_dict.get("chart_data_sheet_kpi")
+                        if ck:
+                            datasets = ck
+                            print(
+                                f"✅ [render_chart] Using tab.chart_data_sheet_kpi: {len(datasets)} datasets"
+                            )
                 if not datasets:
                     tab_chart_data = tab_dict.get("chart_data", [])
                     print(

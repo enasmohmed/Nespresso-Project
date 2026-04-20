@@ -2376,6 +2376,240 @@
     </div>
     {% endif %}
 
+    {# KPI Actual & Contractual من أعمدة الشيت (Hit/Miss ، END to END) — بالإضافة إلى الـ 48h #}
+    {% if tab.chart_data_sheet_kpi %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-2 fw-bold" style="color: #81613E">KPI Actual &amp; Contractual — Hit% </h5>
+          {% render_chart "b2b-outbound-sheet-kpi-chart" %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    <div class="row mb-4">
+      {% for sub in tab.sub_tables %}
+        {% if sub.side_by_side and sub.id == 'sub-table-b2b-kpi-actual-b2b' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+        {% if sub.side_by_side and sub.id == 'sub-table-b2b-kpi-actual-btq' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <div class="row mb-4">
+      {% for sub in tab.sub_tables %}
+        {% if sub.side_by_side and sub.id == 'sub-table-b2b-kpi-contractual-b2b' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+        {% if sub.side_by_side and sub.id == 'sub-table-b2b-kpi-contractual-btq' %}
+      <div class="col-12 col-lg-6 mb-3">
+        <div class="table-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+          <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+            <table class="table table-striped table-bordered text-center align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  {% for col in sub.columns %}
+                  <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in sub.data %}
+                <tr>
+                  {% for col in sub.columns %}
+                  <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {# Delay reasons: لكل WH جدول فرعي (هيدر WH + أعمدة Channel / Reason / Comments / SO) — فلتر WH بدون reload #}
+    {% if tab.delay_reasons_table %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card b2b-delay-reasons-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ tab.delay_reasons_table.title }}</h5>
+          {% if tab.delay_reasons_table.wh_filter_options %}
+          <div class="d-flex flex-wrap justify-content-center align-items-center gap-2 mb-3 px-2">
+            <label class="small mb-0 fw-semibold" for="b2b-delay-wh-filter" style="color: #81613E;">WH</label>
+            <select id="b2b-delay-wh-filter" class="form-select form-select-sm" style="max-width: 320px; border-color: #C3B091;" title="فلتر عرض الأقسام فقط — بدون إعادة تحميل الصفحة">
+              <option value="">All WH</option>
+              {% for w in tab.delay_reasons_table.wh_filter_options %}
+              <option value="{{ w }}">{{ w }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if tab.delay_reasons_table.sections %}
+          {% for sec in tab.delay_reasons_table.sections %}
+          <div class="b2b-delay-wh-section mb-4" data-delay-wh="{{ sec.wh }}">
+            <div class="table-responsive custom-scrollbar table-top">
+              <table class="table table-bordered text-center align-middle mb-0">
+                <thead>
+                  <tr style="background-color: #C3B091; color: #000;">
+                    <th colspan="{{ tab.delay_reasons_table.columns|length }}" class="text-center fw-bold py-2">{{ sec.wh }}</th>
+                  </tr>
+                  <tr class="table-light">
+                    {% for col in tab.delay_reasons_table.columns %}
+                    <th class="text-nowrap small" style="min-width: 6rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sec.rows %}
+                  <tr>
+                    {% for col in tab.delay_reasons_table.columns %}
+                    <td class="text-nowrap text-start small" style="max-width: 28rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endfor %}
+          {% else %}
+          <p class="text-muted text-center small mb-0">No LATE / DELAY rows in this period for the breakdown (or columns missing on sheet).</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Cut-off Before/After: نفس منطق التأخير — شهر الإنشاء من الداشبورد، صف واحد لكل SO لكل شهر، تجميع حسب WH ثم Channel ثم Before/After #}
+    {% if tab.cutoff_so_table %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="table-card b2b-cutoff-so-card">
+          <h5 class="text-center mt-3 mb-3 fw-bold" style="color: #81613E">{{ tab.cutoff_so_table.title }}</h5>
+          {% if tab.cutoff_so_table.wh_filter_options %}
+          <div class="d-flex flex-wrap justify-content-center align-items-center gap-2 mb-3 px-2">
+            <label class="small mb-0 fw-semibold" for="b2b-cutoff-wh-filter" style="color: #81613E;">WH</label>
+            <select id="b2b-cutoff-wh-filter" class="form-select form-select-sm" style="max-width: 320px; border-color: #C3B091;" title="فلتر عرض الأقسام فقط — بدون إعادة تحميل الصفحة">
+              <option value="">All WH</option>
+              {% for w in tab.cutoff_so_table.wh_filter_options %}
+              <option value="{{ w }}">{{ w }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if tab.cutoff_so_table.sections %}
+          {% for sec in tab.cutoff_so_table.sections %}
+          <div class="b2b-cutoff-wh-section mb-4" data-cutoff-wh="{{ sec.wh }}">
+            <div class="table-responsive custom-scrollbar table-top">
+              <table class="table table-bordered text-center align-middle mb-0">
+                <thead>
+                  <tr style="background-color: #C3B091; color: #000;">
+                    <th colspan="{{ tab.cutoff_so_table.columns|length }}" class="text-center fw-bold py-2">{{ sec.wh }}</th>
+                  </tr>
+                  <tr class="table-light">
+                    {% for col in tab.cutoff_so_table.columns %}
+                    <th class="text-nowrap small" style="min-width: 6rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sec.rows %}
+                  <tr>
+                    {% for col in tab.cutoff_so_table.columns %}
+                    <td class="text-nowrap text-start small" style="max-width: 28rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endfor %}
+          {% else %}
+          <p class="text-muted text-center small mb-0">No rows for this period (or Cut off column empty / not matched).</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     {# ===== 1) شارت B2B & BTQ (48 hours) ===== #}
     {% if tab.chart_data %}
     <div class="row mb-4">
@@ -2534,17 +2768,39 @@
             <h4 class="mb-2 text-dark">{{ tab.raw_excel_table.title }}</h4>
           </div>
           <div class="card-body text-center">
-            {% if tab.raw_excel_table.month_filter_options %}
-            <div class="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3 px-2">
-              <label class="small text-muted mb-0 fw-semibold" for="b2b-raw-month-filter" style="color: #81613E;">Month</label>
-              <select id="b2b-raw-month-filter" class="form-select form-select-sm b2b-raw-month-filter" style="max-width: 220px; border-color: #C3B091;">
-                <option value="">All months</option>
-                {% for m in tab.raw_excel_table.month_filter_options %}
-                <option value="{{ m }}" {% if selected_month and selected_month|lower == m|lower %}selected{% endif %}>{{ m }}</option>
-                {% endfor %}
-              </select>
+            <div class="card border-0 shadow-sm mb-3">
+              <div class="card-body py-2 px-3">
+                <div class="row g-3 align-items-end filter-row">
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1" for="b2b-raw-wh-filter">WH</label>
+                    <select id="b2b-raw-wh-filter" class="form-select form-select-sm b2b-raw-filter" data-filter="wh" style="border-color: #C3B091;">
+                      <option value="">All WH</option>
+                    </select>
+                  </div>
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1" for="b2b-raw-month-filter">Creation Month</label>
+                    <select id="b2b-raw-month-filter" class="form-select form-select-sm b2b-raw-filter" data-filter="month" style="border-color: #C3B091;">
+                      <option value="">All months</option>
+                      {% for m in tab.raw_excel_table.month_filter_options %}
+                      <option value="{{ m }}" {% if selected_month and selected_month|lower == m|lower %}selected{% endif %}>{{ m }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1" for="b2b-raw-status-filter">ORDER STATUS</label>
+                    <select id="b2b-raw-status-filter" class="form-select form-select-sm b2b-raw-filter" data-filter="status" style="border-color: #C3B091;">
+                      <option value="">All Status</option>
+                    </select>
+                  </div>
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold mb-1" for="b2b-raw-so-filter">SO</label>
+                    <select id="b2b-raw-so-filter" class="form-select form-select-sm b2b-raw-filter" data-filter="so" style="border-color: #C3B091;">
+                      <option value="">All SO</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             </div>
-            {% endif %}
             <div class="table-responsive custom-scrollbar b2b-raw-sheet-table">
               <table id="b2b-outbound-raw-sheet-table" class="table table-bordered table-sm mb-0 b2b-raw-excel">
                 <thead>
@@ -2556,7 +2812,7 @@
                 </thead>
                 <tbody>
                   {% for row in tab.raw_excel_table.data %}
-                  <tr data-b2b-raw-month="{{ row|get_item:'_filter_month'|default:'' }}">
+                  <tr data-b2b-raw-month="{{ row|get_item:'_filter_month'|default:'' }}" data-b2b-raw-created="{{ row|get_item:'Creation Date & Time'|default:'' }}" data-b2b-raw-wh="{{ row|get_item:'WH'|default:'' }}" data-b2b-raw-status="{{ row|get_item:'ORDER STATUS'|default:'' }}" data-b2b-raw-so="{{ row|get_item:'SO'|default:'' }}">
                     {% for col_info in tab.raw_excel_table.columns %}
                     <td class="text-nowrap text-dark b2b-raw-td">{{ row|get_item:col_info.key|default:"" }}</td>
                     {% endfor %}
@@ -2773,7 +3029,7 @@
     {% endfor %}
   </div>
 
-  {# ================= B2C Outbound: كروت KPI + جدول Pick & Peak (col-12) + جدول الإكسل الخام ================= #}
+  {# ================= B2C Outbound: كروت KPI + جدول Pick&Pack (col-12) + جدول الإكسل الخام ================= #}
   {% elif tab_name_lower == 'b2c outbound' %}
   <div class="col-12">
     {% if tab.stats %}
@@ -2790,7 +3046,7 @@
           <div class="kpi-icon text-success"><i class="bi bi-check-circle-fill"></i></div>
           <div class="kpi-title">Successful Shipments</div>
           <div class="kpi-value">{{ tab.stats.hit_pct|default:0|floatformat:0 }}%</div>
-          <small class="text-success">Hit (Pick & Peak)</small>
+          <small class="text-success">Hit (Pick&Pack)</small>
         </div>
       </div>
       <div class="col-12 col-md-6 col-lg-3">
@@ -2810,7 +3066,119 @@
     </div>
     {% endif %}
 
-    {# ===== Pick & Peak: أعداد + % ===== #}
+    {% if tab.raw_excel_table and tab.raw_excel_table.b2c_warehouse_options %}
+    <div class="d-flex flex-wrap align-items-center justify-content-start gap-2 mb-3 px-2">
+      <label class="small text-muted mb-0 fw-semibold" for="b2c-global-wh-filter" style="color: #81613E;">Warehouse (All B2C)</label>
+      <select id="b2c-global-wh-filter" class="form-select form-select-sm" style="max-width: 220px; border-color: #C3B091;">
+        <option value="">All warehouses</option>
+        {% for w in tab.raw_excel_table.b2c_warehouse_options %}
+        <option value="{{ w }}" {% if tab.raw_excel_table.selected_b2c_warehouse and tab.raw_excel_table.selected_b2c_warehouse|lower == w|lower %}selected{% endif %}>{{ w }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    {# ===== Pick&Pack KPI Actual: جدول KPI بالشهور + شارت Hit % ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-pickpack-kpi-actual' %}
+    <div class="row mb-4 align-items-stretch b2c-table-chart-row">
+      <div class="col-12 col-lg-7 mb-3 mb-lg-0">
+        <div class="card h-100 b2c-split-card table-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>IN:</strong> {{ sub.summary.in_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>OUT:</strong> {{ sub.summary.out_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Hit %:</strong> {{ sub.summary.hit_pct|default:0 }}%</span>
+            </div>
+            {% endif %}
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;{% if sub.columns.0 != 'KPI' %} max-height: 420px;{% endif %}">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 4rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap" style="min-width: 4rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-5">
+        <div class="card h-100 b2c-split-card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-2 fw-bold" style="color: #81613E">Pick&Pack KPI Actual — Hit %</h5>
+            {% render_chart "sub-table-b2c-pickpack-kpi-actual" %}
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== Pick&Pack & Dispatch Delay Reasons ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-pickpack-dispatch-delay-reasons' %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Shipments with delay reason:</strong> {{ sub.summary.shipments_with_reason|default:0 }}</span>
+            </div>
+            {% endif %}
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 8rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap {% if forloop.first %}text-start{% endif %}" style="min-width: 8rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td colspan="{{ sub.columns|length }}" class="text-muted">No delay reasons available after filtering.</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
+    {# ===== Pick&Pack: أعداد + % ===== #}
     {% for sub in tab.sub_tables %}
       {% if sub.id == 'sub-table-b2c-pick-peak' %}
     <div class="row mb-4">
@@ -2858,6 +3226,17 @@
         <div class="card h-100 b2c-split-card table-card" style="background-color: #FFF; border-color: #C3B091;">
           <div class="card-body">
             <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>IN:</strong> {{ sub.summary.in_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>OUT:</strong> {{ sub.summary.out_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Hit %:</strong> {{ sub.summary.hit_pct|default:0 }}%</span>
+            </div>
+            {% endif %}
             <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;{% if sub.columns.0 != 'KPI' %} max-height: 420px;{% endif %}">
               <table class="table table-striped table-bordered text-center align-middle mb-0">
                 <thead class="table-light">
@@ -2901,6 +3280,17 @@
         <div class="card h-100 b2c-split-card table-card" style="background-color: #FFF; border-color: #C3B091;">
           <div class="card-body">
             <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>IN:</strong> {{ sub.summary.in_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>OUT:</strong> {{ sub.summary.out_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Hit %:</strong> {{ sub.summary.hit_pct|default:0 }}%</span>
+            </div>
+            {% endif %}
             <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;{% if sub.columns.0 != 'KPI' %} max-height: 420px;{% endif %}">
               <table class="table table-striped table-bordered text-center align-middle mb-0">
                 <thead class="table-light">
@@ -2936,6 +3326,52 @@
       {% endif %}
     {% endfor %}
 
+    {# ===== LMD & E2E Delay Reasons ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-lmd-e2e-delay-reasons' %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Shipments with reason:</strong> {{ sub.summary.shipments_with_reason|default:0 }}</span>
+            </div>
+            {% endif %}
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 8rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap {% if forloop.first %}text-start{% endif %}" style="min-width: 8rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td colspan="{{ sub.columns|length }}" class="text-muted">No delay reasons available after filtering.</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
     {# ===== End to End: جدول KPI بالشهور + شارت Hit % (شهور بنسبة > 0 فقط) ===== #}
     {% for sub in tab.sub_tables %}
       {% if sub.id == 'sub-table-b2c-endtoend' %}
@@ -2944,6 +3380,17 @@
         <div class="card h-100 b2c-split-card table-card" style="background-color: #FFF; border-color: #C3B091;">
           <div class="card-body">
             <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>IN:</strong> {{ sub.summary.in_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>OUT:</strong> {{ sub.summary.out_count|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Hit %:</strong> {{ sub.summary.hit_pct|default:0 }}%</span>
+            </div>
+            {% endif %}
             <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;{% if sub.columns.0 != 'KPI' %} max-height: 420px;{% endif %}">
               <table class="table table-striped table-bordered text-center align-middle mb-0">
                 <thead class="table-light">
@@ -2979,6 +3426,52 @@
       {% endif %}
     {% endfor %}
 
+    {# ===== Deviation (Missed Source) ===== #}
+    {% for sub in tab.sub_tables %}
+      {% if sub.id == 'sub-table-b2c-deviation-missed-source' %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card" style="background-color: #FFF; border-color: #C3B091;">
+          <div class="card-body">
+            <h5 class="text-center mt-2 mb-3 fw-bold" style="color: #81613E">{{ sub.title }}</h5>
+            {% if sub.summary %}
+            <div class="d-flex justify-content-end flex-wrap gap-2 small text-muted mb-3 px-2">
+              <span><strong>Total after dedupe:</strong> {{ sub.summary.total_after_dedupe|default:0 }}</span>
+              <span>|</span>
+              <span><strong>Shipments with reason:</strong> {{ sub.summary.shipments_with_reason|default:0 }}</span>
+            </div>
+            {% endif %}
+            <div class="table-responsive custom-scrollbar table-top" style="overflow-x: auto;">
+              <table class="table table-striped table-bordered text-center align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for col in sub.columns %}
+                    <th class="text-nowrap" style="min-width: 8rem;">{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sub.data %}
+                  <tr>
+                    {% for col in sub.columns %}
+                    <td class="text-nowrap {% if forloop.first %}text-start{% endif %}" style="min-width: 8rem;">{{ row|get_item:col }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td colspan="{{ sub.columns|length }}" class="text-muted">No deviation sources available after filtering.</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+      {% endif %}
+    {% endfor %}
+
     {# ===== جدول الإكسل الخام B2C_Outbound ===== #}
     {% if tab.raw_excel_table %}
     <style>
@@ -3002,17 +3495,66 @@
               <code class="small">B2C_RAW_EXCEL_HTML_MAX_ROWS</code> in settings if you need more rows in the browser.
             </div>
             {% endif %}
-            {% if tab.raw_excel_table.month_filter_options %}
-            <div class="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3 px-2">
-              <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-month-filter" style="color: #81613E;">Month</label>
-              <select id="b2c-raw-month-filter" class="form-select form-select-sm b2c-raw-month-filter" style="max-width: 220px; border-color: #C3B091;">
-                <option value="">All months</option>
-                {% for m in tab.raw_excel_table.month_filter_options %}
-                <option value="{{ m }}" {% if selected_month and selected_month|lower == m|lower %}selected{% endif %}>{{ m }}</option>
-                {% endfor %}
-              </select>
+            <div class="mb-3 px-2">
+              <div class="d-flex flex-wrap align-items-end justify-content-start gap-3 mb-2">
+                {% if tab.raw_excel_table.month_filter_options %}
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-month-filter" style="color: #81613E;">Month</label>
+                  <select id="b2c-raw-month-filter" class="form-select form-select-sm b2c-raw-month-filter" style="width: 220px; border-color: #C3B091;">
+                    <option value="">All months</option>
+                    {% for m in tab.raw_excel_table.month_filter_options %}
+                    <option value="{{ m }}" {% if selected_month and selected_month|lower == m|lower %}selected{% endif %}>{{ m }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                {% endif %}
+                {% if tab.raw_excel_table.warehouse_filter_options %}
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-wh-filter" style="color: #81613E;">Warehouse</label>
+                  <select id="b2c-raw-wh-filter" class="form-select form-select-sm b2c-raw-wh-filter" style="width: 220px; border-color: #C3B091;">
+                    <option value="">All warehouses</option>
+                    {% for w in tab.raw_excel_table.warehouse_filter_options %}
+                    <option value="{{ w }}">{{ w }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                {% endif %}
+                {% if tab.raw_excel_table.status_filter_options %}
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-status-filter" style="color: #81613E;">Status</label>
+                  <select id="b2c-raw-status-filter" class="form-select form-select-sm b2c-raw-status-filter" style="width: 220px; border-color: #C3B091;">
+                    <option value="">All status</option>
+                    {% for s in tab.raw_excel_table.status_filter_options %}
+                    <option value="{{ s }}">{{ s }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                {% endif %}
+              </div>
+              <div class="d-flex flex-wrap align-items-end justify-content-start gap-3">
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-so-filter" style="color: #81613E;">SO</label>
+                  <input id="b2c-raw-so-filter" type="text" class="form-control form-control-sm b2c-raw-so-filter" style="width: 220px; border-color: #C3B091;" placeholder="Search SO">
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-tracking-filter" style="color: #81613E;">Tracking #</label>
+                  <input id="b2c-raw-tracking-filter" type="text" class="form-control form-control-sm b2c-raw-tracking-filter" style="width: 220px; border-color: #C3B091;" placeholder="Search Tracking #">
+                </div>
+              </div>
+              {% if tab.raw_excel_table.cycle_filter_options %}
+              <div class="d-flex flex-wrap align-items-end justify-content-start gap-3 mt-2">
+                <div class="d-flex align-items-center gap-2">
+                  <label class="small text-muted mb-0 fw-semibold" for="b2c-raw-cycle-filter" style="color: #81613E;">Cycle</label>
+                  <select id="b2c-raw-cycle-filter" class="form-select form-select-sm b2c-raw-cycle-filter" style="width: 220px; border-color: #C3B091;">
+                    <option value="">All cycles</option>
+                    {% for c in tab.raw_excel_table.cycle_filter_options %}
+                    <option value="{{ c }}">{{ c }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              {% endif %}
             </div>
-            {% endif %}
             <div class="table-responsive custom-scrollbar b2c-raw-sheet-table">
               <table id="b2c-outbound-raw-sheet-table" class="table table-bordered table-sm mb-0 b2c-raw-excel">
                 <thead>
@@ -3024,7 +3566,14 @@
                 </thead>
                 <tbody>
                   {% for row in tab.raw_excel_table.data %}
-                  <tr data-b2c-raw-month="{{ row|get_item:'_filter_month'|default:'' }}">
+                  <tr
+                    data-b2c-raw-month="{{ row|get_item:'_filter_month'|default:'' }}"
+                    data-b2c-raw-wh="{{ row|get_item:'_filter_wh'|default:'' }}"
+                    data-b2c-raw-so="{{ row|get_item:'_filter_so'|default:'' }}"
+                    data-b2c-raw-status="{{ row|get_item:'_filter_status'|default:'' }}"
+                    data-b2c-raw-tracking="{{ row|get_item:'_filter_tracking'|default:'' }}"
+                    data-b2c-raw-cycle="{{ row|get_item:'_filter_cycle'|default:'' }}"
+                  >
                     {% for col_info in tab.raw_excel_table.columns %}
                     <td class="text-nowrap text-dark b2c-raw-td">{{ row|get_item:col_info.key|default:"" }}</td>
                     {% endfor %}
@@ -4148,42 +4697,209 @@
       })();
 
       (function() {
+        var sel = document.getElementById('b2c-global-wh-filter');
+        if (!sel) return;
+        sel.addEventListener('change', function() {
+          var v = (sel.value || '').trim();
+          var u = new URL(window.location.href);
+          if (v) u.searchParams.set('b2c_wh', v);
+          else u.searchParams.delete('b2c_wh');
+          var q = u.searchParams.toString();
+          var nextUrl = u.pathname + (q ? ('?' + q) : '');
+          window.history.replaceState({}, '', nextUrl);
+          if (typeof window.loadTabData === 'function') {
+            window.__dashboardSkipLsOnce = true;
+            window.loadTabData();
+          } else {
+            window.location.replace(nextUrl);
+          }
+        });
+      })();
+
+      (function() {
         var table = document.getElementById('b2c-outbound-raw-sheet-table');
         if (!table) return;
         var card = table.closest('.b2c-outbound-card') || table.closest('.card');
-        var sel = card ? card.querySelector('#b2c-raw-month-filter') : null;
+        var monthSel = card ? card.querySelector('#b2c-raw-month-filter') : null;
+        var whSel = card ? card.querySelector('#b2c-raw-wh-filter') : null;
+        var statusSel = card ? card.querySelector('#b2c-raw-status-filter') : null;
+        var cycleSel = card ? card.querySelector('#b2c-raw-cycle-filter') : null;
+        var soInput = card ? card.querySelector('#b2c-raw-so-filter') : null;
+        var trackingInput = card ? card.querySelector('#b2c-raw-tracking-filter') : null;
         var tbody = table.querySelector('tbody');
-        if (!sel || !tbody) return;
-        function applyB2cRawMonthFilter() {
-          var month = (sel.value || '').trim();
+        if (!tbody) return;
+        function applyB2cRawFilters() {
+          var month = monthSel ? (monthSel.value || '').trim() : '';
+          var wh = whSel ? (whSel.value || '').trim() : '';
+          var status = statusSel ? (statusSel.value || '').trim() : '';
+          var cycle = cycleSel ? (cycleSel.value || '').trim() : '';
+          var so = soInput ? (soInput.value || '').trim().toLowerCase() : '';
+          var tracking = trackingInput ? (trackingInput.value || '').trim().toLowerCase() : '';
           var rows = tbody.querySelectorAll('tr[data-b2c-raw-month]');
           rows.forEach(function(tr) {
             var m = (tr.getAttribute('data-b2c-raw-month') || '').trim();
-            var show = !month || m === month;
+            var w = (tr.getAttribute('data-b2c-raw-wh') || '').trim();
+            var s = (tr.getAttribute('data-b2c-raw-status') || '').trim();
+            var c = (tr.getAttribute('data-b2c-raw-cycle') || '').trim();
+            var soVal = (tr.getAttribute('data-b2c-raw-so') || '').trim().toLowerCase();
+            var trkVal = (tr.getAttribute('data-b2c-raw-tracking') || '').trim().toLowerCase();
+            var show = (!month || m === month)
+              && (!wh || w === wh)
+              && (!status || s === status)
+              && (!cycle || c === cycle)
+              && (!so || soVal.indexOf(so) !== -1)
+              && (!tracking || trkVal.indexOf(tracking) !== -1);
             tr.style.display = show ? '' : 'none';
           });
         }
-        sel.addEventListener('change', applyB2cRawMonthFilter);
-        applyB2cRawMonthFilter();
+        if (monthSel) monthSel.addEventListener('change', applyB2cRawFilters);
+        if (whSel) whSel.addEventListener('change', applyB2cRawFilters);
+        if (statusSel) statusSel.addEventListener('change', applyB2cRawFilters);
+        if (cycleSel) cycleSel.addEventListener('change', applyB2cRawFilters);
+        if (soInput) soInput.addEventListener('input', applyB2cRawFilters);
+        if (trackingInput) trackingInput.addEventListener('input', applyB2cRawFilters);
+        applyB2cRawFilters();
       })();
 
       (function() {
         var table = document.getElementById('b2b-outbound-raw-sheet-table');
         if (!table) return;
         var card = table.closest('.b2b-outbound-card') || table.closest('.card');
-        var sel = card ? card.querySelector('#b2b-raw-month-filter') : null;
+        var monthSel = card ? card.querySelector('#b2b-raw-month-filter') : null;
+        var whSel = card ? card.querySelector('#b2b-raw-wh-filter') : null;
+        var statusSel = card ? card.querySelector('#b2b-raw-status-filter') : null;
+        var soSel = card ? card.querySelector('#b2b-raw-so-filter') : null;
         var tbody = table.querySelector('tbody');
-        if (!sel || !tbody) return;
-        function applyB2bRawMonthFilter() {
-          var month = (sel.value || '').trim();
-          var rows = tbody.querySelectorAll('tr[data-b2b-raw-month]');
+        if (!tbody) return;
+        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr[data-b2b-raw-wh], tr[data-b2b-raw-month], tr[data-b2b-raw-status], tr[data-b2b-raw-so]'));
+        if (!rows.length) return;
+
+        function normalizeMonthFromCreation(rawValue) {
+          var value = (rawValue || '').trim();
+          if (!value) return '';
+          var dateOnly = value.split(' ')[0].split('T')[0];
+
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return dateOnly.slice(0, 7);
+
+          var slashMatch = dateOnly.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (slashMatch) {
+            var mmSlash = slashMatch[2].padStart(2, '0');
+            return slashMatch[3] + '-' + mmSlash;
+          }
+
+          var dashMatch = dateOnly.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+          if (dashMatch) {
+            var mmDash = dashMatch[2].padStart(2, '0');
+            return dashMatch[3] + '-' + mmDash;
+          }
+
+          return dateOnly;
+        }
+
+        function rowMonthValue(tr) {
+          var month = (tr.getAttribute('data-b2b-raw-month') || '').trim();
+          if (month) return month;
+          var createdRaw = (tr.getAttribute('data-b2b-raw-created') || '').trim();
+          return normalizeMonthFromCreation(createdRaw);
+        }
+
+        function setSelectOptions(selectEl, values, defaultLabel) {
+          if (!selectEl) return;
+          var selected = (selectEl.value || '').trim();
+          selectEl.innerHTML = '';
+          var defaultOption = document.createElement('option');
+          defaultOption.value = '';
+          defaultOption.textContent = defaultLabel;
+          selectEl.appendChild(defaultOption);
+
+          values.sort(function(a, b) { return a.localeCompare(b); }).forEach(function(value) {
+            var option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            selectEl.appendChild(option);
+          });
+
+          if (selected && values.indexOf(selected) !== -1) {
+            selectEl.value = selected;
+          }
+        }
+
+        function initB2bRawFilters() {
+          var whValues = new Set();
+          var monthValues = new Set();
+          var statusValues = new Set();
+          var soValues = new Set();
+
           rows.forEach(function(tr) {
-            var m = (tr.getAttribute('data-b2b-raw-month') || '').trim();
-            var show = !month || m === month;
+            var wh = (tr.getAttribute('data-b2b-raw-wh') || '').trim();
+            var month = rowMonthValue(tr);
+            var status = (tr.getAttribute('data-b2b-raw-status') || '').trim();
+            var so = (tr.getAttribute('data-b2b-raw-so') || '').trim();
+            if (wh) whValues.add(wh);
+            if (month) monthValues.add(month);
+            if (status) statusValues.add(status);
+            if (so) soValues.add(so);
+          });
+
+          setSelectOptions(whSel, Array.from(whValues), 'All WH');
+          setSelectOptions(monthSel, Array.from(monthValues), 'All months');
+          setSelectOptions(statusSel, Array.from(statusValues), 'All Status');
+          setSelectOptions(soSel, Array.from(soValues), 'All SO');
+        }
+
+        function applyB2bRawFilters() {
+          var month = monthSel ? (monthSel.value || '').trim() : '';
+          var wh = whSel ? (whSel.value || '').trim() : '';
+          var status = statusSel ? (statusSel.value || '').trim() : '';
+          var so = soSel ? (soSel.value || '').trim() : '';
+          rows.forEach(function(tr) {
+            var m = rowMonthValue(tr);
+            var w = (tr.getAttribute('data-b2b-raw-wh') || '').trim();
+            var s = (tr.getAttribute('data-b2b-raw-status') || '').trim();
+            var o = (tr.getAttribute('data-b2b-raw-so') || '').trim();
+            var show = (!month || m === month) && (!wh || w === wh) && (!status || s === status) && (!so || o === so);
             tr.style.display = show ? '' : 'none';
           });
         }
-        sel.addEventListener('change', applyB2bRawMonthFilter);
-        applyB2bRawMonthFilter();
+
+        initB2bRawFilters();
+        [monthSel, whSel, statusSel, soSel].forEach(function(el) {
+          if (el) el.addEventListener('change', applyB2bRawFilters);
+        });
+        applyB2bRawFilters();
+      })();
+
+      (function() {
+        var sel = document.getElementById('b2b-delay-wh-filter');
+        if (!sel) return;
+        var card = sel.closest('.b2b-delay-reasons-card');
+        function applyDelayWhFilter() {
+          var v = (sel.value || '').trim();
+          var secs = card ? card.querySelectorAll('.b2b-delay-wh-section') : [];
+          secs.forEach(function(sec) {
+            var wh = (sec.getAttribute('data-delay-wh') || '').trim();
+            var show = !v || wh === v;
+            sec.style.display = show ? '' : 'none';
+          });
+        }
+        sel.addEventListener('change', applyDelayWhFilter);
+        applyDelayWhFilter();
+      })();
+
+      (function() {
+        var sel = document.getElementById('b2b-cutoff-wh-filter');
+        if (!sel) return;
+        var card = sel.closest('.b2b-cutoff-so-card');
+        function applyCutoffWhFilter() {
+          var v = (sel.value || '').trim();
+          var secs = card ? card.querySelectorAll('.b2b-cutoff-wh-section') : [];
+          secs.forEach(function(sec) {
+            var wh = (sec.getAttribute('data-cutoff-wh') || '').trim();
+            var show = !v || wh === v;
+            sec.style.display = show ? '' : 'none';
+          });
+        }
+        sel.addEventListener('change', applyCutoffWhFilter);
+        applyCutoffWhFilter();
       })();
 </script>

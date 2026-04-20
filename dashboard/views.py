@@ -62,6 +62,30 @@ def _tab_cache_set(cache_key, value, timeout):
         pass
 
 
+def _b2c_tab_result_cache_get(key):
+    """كاش نتيجة B2C مستقل عن EXCEL_DISABLE_TAB_CACHE (الذي يعطل كاش التابات العام افتراضياً)."""
+    if not getattr(settings, "B2C_TAB_RESULT_CACHE", True):
+        return None
+    try:
+        return cache.get(key)
+    except Exception:
+        return None
+
+
+def _b2c_tab_result_cache_set(key, value, timeout=None):
+    if not getattr(settings, "B2C_TAB_RESULT_CACHE", True):
+        return
+    if timeout is None:
+        try:
+            timeout = int(getattr(settings, "B2C_TAB_RESULT_CACHE_TTL", 300))
+        except (TypeError, ValueError):
+            timeout = 300
+    try:
+        cache.set(key, value, timeout)
+    except Exception:
+        pass
+
+
 try:
     from dateutil import parser as _dateutil_parser
 except ImportError:  # pragma: no cover
@@ -603,11 +627,16 @@ def _get_sheet_dataframe(
     يرجع DataFrame للشيت مع كاش Django لتقليل قراءات الديسك.
     max_rows صريح يتجاوز الطلب؛ وإلا يُستخدم full_data / معاينة من request.
     header: 0 للرؤوس في الصف الأول، أو None لقراءة خام (مسار اكتشاف رؤوس Inbound).
+    عند EXCEL_DISABLE_TAB_CACHE: ما زال بإمكان EXCEL_SHEET_DF_CACHE (الافتراضي مفعّل) تخزين
+    نسخة الـ DataFrame الخام؛ مفتاح الكاش يتضمن توقيع الملف.
     """
     if not excel_path or not os.path.exists(excel_path):
         return None
-    if _tab_cache_disabled():
-        use_cache = False
+    # كاش قراءة الشيت (I/O) مستقل عن كاش نتيجة التاب: مع EXCEL_DISABLE_TAB_CACHE يمكن
+    # الإبقاء على كاش الـ DataFrame الخام لتسريع التطوير — تعديلات بايثون تُطبَّق على نسخة من الـ DF.
+    df_cache = bool(use_cache)
+    if _tab_cache_disabled() and not getattr(settings, "EXCEL_SHEET_DF_CACHE", True):
+        df_cache = False
     if max_rows is None:
         if request is not None:
             max_rows = _excel_max_rows_for_request(request, force_full=force_full)
@@ -625,7 +654,7 @@ def _get_sheet_dataframe(
         _nkey = "all" if max_rows is None else int(max_rows)
         _hkey = "none" if header is None else str(header)
         cache_key = f"excel_df::{_path_hash}::{_fsig}::{sheet_name}::n{_nkey}::h{_hkey}"
-        if use_cache:
+        if df_cache:
             try:
                 cached_df = _dj_cache.get(cache_key)
                 if cached_df is not None:
@@ -639,7 +668,7 @@ def _get_sheet_dataframe(
         if header is not None:
             df.columns = [str(c).strip() for c in df.columns]
 
-        if use_cache:
+        if df_cache:
             try:
                 _dj_cache.set(cache_key, df, 3600)
             except Exception as e:
@@ -770,7 +799,11 @@ def _get_excel_sheet_names_cached(excel_path):
     sig = _excel_file_signature(excel_path)
     path_key = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
     cache_key = f"excel_sheet_names::{path_key}::{sig}"
-    cached = _tab_cache_get(cache_key)
+    # لا نستخدم _tab_cache_* — مع EXCEL_DISABLE_TAB_CACHE ما زال من المفيد تخزين أسماء الشيتات (خفيف + يتبع توقيع الملف).
+    try:
+        cached = cache.get(cache_key)
+    except Exception:
+        cached = None
     if cached is not None:
         return list(cached)
     try:
@@ -781,7 +814,10 @@ def _get_excel_sheet_names_cached(excel_path):
             names = [str(s).strip() for s in xls.sheet_names]
         except Exception:
             names = []
-    _tab_cache_set(cache_key, names, 86400)
+    try:
+        cache.set(cache_key, names, 86400)
+    except Exception:
+        pass
     return names
 
 
@@ -792,7 +828,10 @@ def _extract_months_from_excel_cached(excel_path, sheet_names):
     sig = _excel_file_signature(excel_path)
     path_key = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
     cache_key = f"excel_months::{path_key}::{sig}"
-    cached = _tab_cache_get(cache_key)
+    try:
+        cached = cache.get(cache_key)
+    except Exception:
+        cached = None
     if cached is not None:
         return list(cached)
 
@@ -839,7 +878,10 @@ def _extract_months_from_excel_cached(excel_path, sheet_names):
         print("⚠️ [ERROR] أثناء استخراج الشهور:", e)
         all_months = []
 
-    _tab_cache_set(cache_key, all_months, 86400)
+    try:
+        cache.set(cache_key, all_months, 86400)
+    except Exception:
+        pass
     return all_months
 
 
@@ -1482,7 +1524,14 @@ def _distinct_month_abbrs_from_sheet(
         read_kw = {"engine": "openpyxl", "header": 0}
         mr = max_rows
         if mr is None:
-            mr = getattr(settings, "EXCEL_FULL_MAX_ROWS", None)
+            try:
+                scan_cap = int(getattr(settings, "EXCEL_MONTH_SCAN_MAX_ROWS", 12000))
+            except (TypeError, ValueError):
+                scan_cap = 12000
+            if scan_cap > 0:
+                mr = scan_cap
+            else:
+                mr = getattr(settings, "EXCEL_FULL_MAX_ROWS", None)
         if mr is not None:
             try:
                 ni = int(mr)
@@ -2701,6 +2750,1062 @@ def _clean_traceability_item_description(val):
     return s
 
 
+def _norm_master_kpi_sheet_token(s):
+    return (str(s) or "").lower().replace(" ", "").replace("_", "").replace("-", "")
+
+
+def _resolve_master_kpi_sheet_name(sheet_names):
+    """
+    Prefer workbook sheet Master_KPI / Master KPI, then legacy Safety KPI naming.
+    """
+    if not sheet_names:
+        return None
+    names = list(sheet_names)
+    # Exact / near-exact master sheet (user naming)
+    for s in names:
+        t = _norm_master_kpi_sheet_token(s)
+        if t in ("masterkpi", "masterkpisheet"):
+            return s
+    for s in names:
+        t = _norm_master_kpi_sheet_token(s)
+        if "master" in t and "kpi" in t:
+            return s
+    for s in names:
+        t = _norm_master_kpi_sheet_token(s)
+        if "safety" in t and "kpi" in t:
+            return s
+    for s in names:
+        if _norm_master_kpi_sheet_token(s) == _norm_master_kpi_sheet_token("Safety KPI"):
+            return s
+    return None
+
+
+def _flatten_master_kpi_column_name(col):
+    if isinstance(col, tuple):
+        parts = []
+        for p in col:
+            s = str(p).strip()
+            if not s or s.lower() in ("nan", "none"):
+                continue
+            if s.lower().startswith("unnamed"):
+                continue
+            parts.append(s)
+        deduped = []
+        for p in parts:
+            if deduped and deduped[-1] == p:
+                continue
+            deduped.append(p)
+        return " — ".join(deduped) if deduped else ""
+    return str(col).strip()
+
+
+# Split flattened multi-level column titles (e.g. "Actual — Jan — Jeddah").
+_MASTER_KPI_COL_DASH_RE = re.compile(r"\s*[\u2012\u2013\u2014\u2015\-]\s*")
+
+
+def _master_kpi_column_tail(col_name):
+    """Last meaningful segment of a column title (after merged-row headers)."""
+    s = str(col_name or "").strip()
+    if not s:
+        return ""
+    parts = [p.strip().lower() for p in _MASTER_KPI_COL_DASH_RE.split(s)]
+    parts = [p for p in parts if p]
+    for p in reversed(parts):
+        if p.startswith("unnamed"):
+            continue
+        return p
+    return parts[-1] if parts else ""
+
+
+def _master_kpi_split_col_segments(col_name):
+    """Split a flattened Excel column title into segments (preserves case)."""
+    s = str(col_name or "").strip()
+    if not s:
+        return []
+    return [p.strip() for p in _MASTER_KPI_COL_DASH_RE.split(s) if p.strip()]
+
+
+def _master_kpi_build_actual_blocks(actual_cols):
+    """
+    Turn flat headers like 'Actual — Jan — Jeddah' into nested blocks:
+    [ { title: 'Actual', months: [ { title: 'Jan', cells: [ {col, region}, ... ] }, ... ] }, ... ]
+    Preserves sheet column order within each month.
+    """
+    if not actual_cols:
+        return []
+    blocks = []
+    block_by_key = {}
+
+    def _get_block(seg_title):
+        key = str(seg_title).strip().lower()
+        b = block_by_key.get(key)
+        if b is None:
+            b = {"title": str(seg_title).strip(), "key": key, "months": []}
+            block_by_key[key] = b
+            blocks.append(b)
+        return b
+
+    orphans = []
+
+    for col in actual_cols:
+        parts = _master_kpi_split_col_segments(col)
+        if len(parts) >= 3:
+            seg, month, region = parts[0], parts[1], parts[2]
+            b = _get_block(seg)
+            months = b["months"]
+            m_obj = None
+            for m in months:
+                if m.get("title") == month:
+                    m_obj = m
+                    break
+            if m_obj is None:
+                m_obj = {"title": month, "cells": []}
+                months.append(m_obj)
+            m_obj["cells"].append({"col": col, "region": region})
+        elif len(parts) == 2:
+            seg, leaf = parts[0], parts[1]
+            b = _get_block(seg)
+            months = b["months"]
+            m_obj = None
+            for m in months:
+                if m.get("title") == leaf:
+                    m_obj = m
+                    break
+            if m_obj is None:
+                m_obj = {"title": leaf, "cells": []}
+                months.append(m_obj)
+            m_obj["cells"].append({"col": col, "region": ""})
+        else:
+            orphans.append(col)
+
+    if orphans:
+        blocks.append(
+            {
+                "title": "Other",
+                "key": "other",
+                "months": [
+                    {
+                        "title": "Values",
+                        "cells": [{"col": c, "region": ""} for c in orphans],
+                    }
+                ],
+            }
+        )
+    return blocks
+
+
+def _master_kpi_q1_month_sort_key(month_title):
+    """
+    Return 1–3 for Jan/Feb/Mar (English or Arabic labels), else None.
+    """
+    s = (str(month_title) or "").strip().lower()
+    if not s:
+        return None
+    s = s.replace(".", "").replace("،", "")
+    for order, tokens in (
+        (1, ("jan", "january", "يناير")),
+        (2, ("feb", "february", "فبراير")),
+        (3, ("mar", "march", "مارس")),
+    ):
+        for tok in tokens:
+            if s == tok or s.startswith(tok + " ") or s.startswith(tok + "-"):
+                return order
+    return None
+
+
+def _master_kpi_normalize_city_region(region_raw):
+    """Map header tail to Jeddah / Riyadh when recognizable."""
+    if region_raw is None:
+        return None
+    s = str(region_raw).strip()
+    if not s:
+        return None
+    low = s.lower()
+    if "جدة" in s or "jeddah" in low or "jedda" in low:
+        return "Jeddah"
+    if "الرياض" in s or "riyadh" in low:
+        return "Riyadh"
+    return None
+
+
+def _master_kpi_block_by_metric_name(blocks, metric_key):
+    k = metric_key.strip().lower()
+    for b in blocks or []:
+        if (b.get("key") or "").strip().lower() == k:
+            return b
+        if (b.get("title") or "").strip().lower() == k:
+            return b
+    return None
+
+
+def _master_kpi_filter_block_months_q1_only(block):
+    """Return a copy of one block with only Jan–Mar month groups (or None)."""
+    if not block:
+        return None
+    month_entries = []
+    for mo in block.get("months") or []:
+        sk = _master_kpi_q1_month_sort_key(mo.get("title"))
+        if sk is None:
+            continue
+        cells = list(mo.get("cells") or [])
+        if not cells:
+            continue
+        month_entries.append(
+            (sk, {"title": mo.get("title"), "cells": cells})
+        )
+    month_entries.sort(key=lambda x: x[0])
+    new_months = [m for _, m in month_entries]
+    if not new_months:
+        return None
+    return {
+        "title": block.get("title"),
+        "key": block.get("key"),
+        "months": new_months,
+    }
+
+
+def _master_kpi_month_in_block_by_sort_key(block, sort_key):
+    if not block:
+        return None
+    for mo in block.get("months") or []:
+        if _master_kpi_q1_month_sort_key(mo.get("title")) == sort_key:
+            return mo
+    return None
+
+
+def _master_kpi_sorted_cell_cols(month_obj, col_order_index):
+    if not month_obj:
+        return []
+    cells = sorted(
+        month_obj.get("cells") or [],
+        key=lambda x: col_order_index.get(x.get("col"), 10**9),
+    )
+    return [c.get("col") for c in cells if c.get("col")]
+
+
+def _master_kpi_cells_by_city_from_month(month_obj, col_order_index):
+    """Jeddah / Riyadh -> Excel column name (best effort from header text)."""
+    out = {}
+    if not month_obj:
+        return out
+    cells = sorted(
+        month_obj.get("cells") or [],
+        key=lambda x: col_order_index.get(x.get("col"), 10**9),
+    )
+    for c in cells:
+        col = c.get("col")
+        city = _master_kpi_normalize_city_region(c.get("region"))
+        if city and col:
+            out[city] = col
+    return out
+
+
+def _master_kpi_merge_month_city_slots(ma, mc, col_order_index):
+    """
+    Two slots per month (Jeddah, Riyadh). When Actual (`ma`) has columns, pair them
+    by sheet order with Contractual (`mc`) column-for-column so March Actual (Q,R)
+    shows the right cells while Contractual (Y,Z) fills empty values via alt_col.
+    """
+    cities = ("Jeddah", "Riyadh")
+    ca = _master_kpi_sorted_cell_cols(ma, col_order_index)
+    cc = _master_kpi_sorted_cell_cols(mc, col_order_index)
+    merged = []
+
+    if ca:
+        for i, city in enumerate(cities):
+            pa = ca[i] if i < len(ca) else None
+            pc = cc[i] if i < len(cc) else None
+            primary = pa or pc
+            if not primary:
+                continue
+            cell = {"col": primary, "region": city}
+            if pa and pc and pa != pc:
+                cell["alt_col"] = pc
+            merged.append(cell)
+        return merged
+
+    if cc:
+        for i, city in enumerate(cities):
+            pc = cc[i] if i < len(cc) else None
+            if not pc:
+                continue
+            merged.append({"col": pc, "region": city})
+        return merged
+
+    da = _master_kpi_cells_by_city_from_month(ma, col_order_index)
+    dc = _master_kpi_cells_by_city_from_month(mc, col_order_index)
+    for city in cities:
+        pa = da.get(city)
+        pc = dc.get(city)
+        primary = pa or pc
+        if not primary:
+            continue
+        cell = {"col": primary, "region": city}
+        if pa and pc and pa != pc:
+            cell["alt_col"] = pc
+        merged.append(cell)
+    return merged
+
+
+_CANON_Q1_MONTH_TITLE = {1: "Jan", 2: "Feb", 3: "March"}
+
+
+def _master_kpi_merge_actual_contractual_q1_grid(all_blocks, actual_cols_order):
+    """
+    One visible 'Actual' table: Jan–Mar × Jeddah/Riyadh. Uses Actual columns first;
+    Contractual columns for the same month/city are linked via alt_col for fallback
+    when Actual cells are blank (many sheets put March % under Contractual only).
+    """
+    act = _master_kpi_filter_block_months_q1_only(
+        _master_kpi_block_by_metric_name(all_blocks, "actual")
+    )
+    con = _master_kpi_filter_block_months_q1_only(
+        _master_kpi_block_by_metric_name(all_blocks, "contractual")
+    )
+    if not act and not con:
+        return []
+    col_ix = {c: i for i, c in enumerate(actual_cols_order or [])}
+    merged_months = []
+    for sort_key in (1, 2, 3):
+        ma = _master_kpi_month_in_block_by_sort_key(act, sort_key)
+        mc = _master_kpi_month_in_block_by_sort_key(con, sort_key)
+        if not ma and not mc:
+            continue
+        cells_out = _master_kpi_merge_month_city_slots(ma, mc, col_ix)
+        if not cells_out:
+            continue
+        merged_months.append(
+            {
+                "title": _CANON_Q1_MONTH_TITLE.get(sort_key, "Month"),
+                "cells": cells_out,
+            }
+        )
+    if not merged_months:
+        return []
+    return [{"title": "Actual", "key": "actual", "months": merged_months}]
+
+
+def _master_kpi_apply_contractual_fallback_to_rows(rows, blocks):
+    """Copy non-empty Contractual column values into empty Actual slot (alt_col)."""
+    if not rows or not blocks:
+        return
+    for row in rows:
+        abc = row.get("actual_by_col") or {}
+        for blk in blocks:
+            for mo in blk.get("months") or []:
+                for cell in mo.get("cells") or []:
+                    col = cell.get("col")
+                    alt = cell.get("alt_col")
+                    if not col or not alt:
+                        continue
+                    pv = abc.get(col, "")
+                    av = abc.get(alt, "")
+                    if (not _master_kpi_actual_cell_nonempty(pv)) and (
+                        _master_kpi_actual_cell_nonempty(av)
+                    ):
+                        abc[col] = av
+
+
+def _master_kpi_enrich_actual_block_colspans(blocks):
+    """Set colspan on each block and month for merged multi-row Actual headers."""
+    if not blocks:
+        return blocks
+    for blk in blocks:
+        total = 0
+        for mo in blk.get("months") or []:
+            n = len(mo.get("cells") or [])
+            mo["colspan"] = n
+            total += n
+        blk["colspan"] = total
+    return blocks
+
+
+def _master_kpi_actual_cell_nonempty(val):
+    """True if an Actual cell should count as having data for month visibility."""
+    if val is None:
+        return False
+    s = str(val).strip()
+    if not s or s in ("—", "-", "\u2014"):
+        return False
+    low = s.lower()
+    if low in ("nan", "none", "nat", "<na>"):
+        return False
+    return True
+
+
+def _master_kpi_filter_blocks_for_category(blocks, cat_rows):
+    """
+    Keep only month × region groups where at least one KPI row in this category
+    has a non-empty value (sheet columns only — no invented months).
+    """
+    if not blocks:
+        return []
+    if not cat_rows:
+        return list(blocks)
+    out = []
+    for blk in blocks:
+        new_months = []
+        for mo in blk.get("months") or []:
+            cells = list(mo.get("cells") or [])
+            if not cells:
+                continue
+            keep = False
+            for r in cat_rows:
+                abc = r.get("actual_by_col") or {}
+                for c in cells:
+                    col = c.get("col")
+                    if col and _master_kpi_actual_cell_nonempty(abc.get(col, "")):
+                        keep = True
+                        break
+                if keep:
+                    break
+            if keep:
+                new_months.append({"title": mo.get("title"), "cells": cells})
+        if new_months:
+            out.append(
+                {
+                    "title": blk.get("title"),
+                    "key": blk.get("key"),
+                    "months": new_months,
+                }
+            )
+    return out
+
+
+def _master_kpi_flat_columns_from_blocks(blocks):
+    """Ordered flat headers for Actual fallback table."""
+    out = []
+    for blk in blocks or []:
+        for mo in blk.get("months") or []:
+            for cell in mo.get("cells") or []:
+                col = cell.get("col")
+                if not col:
+                    continue
+                parts = [
+                    str(blk.get("title") or "").strip(),
+                    str(mo.get("title") or "").strip(),
+                    str(cell.get("region") or "").strip(),
+                ]
+                label = " — ".join(p for p in parts if p)
+                out.append({"col": col, "label": label or str(col)})
+    return out
+
+
+def _find_master_kpi_category_header_row(peek_df):
+    """0-based row index of the table header row (cell Category in first columns)."""
+    if peek_df is None or peek_df.empty:
+        return None
+    max_r = min(45, len(peek_df))
+    max_c = min(12, peek_df.shape[1])
+    for r in range(max_r):
+        for j in range(max_c):
+            v = peek_df.iat[r, j]
+            if pd.isna(v):
+                continue
+            t = str(v).strip().lower()
+            if t == "category" or t.startswith("category"):
+                return r
+    return None
+
+
+def _master_kpi_header_candidate_lists(category_row_idx):
+    """
+    pandas header= uses 0-based row indices.
+    Prefer 3-row (Actual / Month / labels) then 2-row then single header row.
+    """
+    r = int(category_row_idx)
+    out = []
+    if r >= 2:
+        out.append(list(range(r - 2, r + 1)))
+    if r >= 1:
+        out.append(list(range(r - 1, r + 1)))
+    out.append([r])
+    seen = set()
+    deduped = []
+    for lst in out:
+        t = tuple(lst)
+        if t not in seen:
+            seen.add(t)
+            deduped.append(lst)
+    return deduped
+
+
+def _master_kpi_headers_seem_valid(flat_columns):
+    """True if flattened columns look like the Master KPI table (Category + KPI)."""
+    if not flat_columns:
+        return False
+    has_cat = any(_master_kpi_column_tail(c) == "category" for c in flat_columns)
+    has_kpi = any(_master_kpi_column_tail(c) == "kpi" for c in flat_columns)
+    return bool(has_cat and has_kpi)
+
+
+def _load_master_kpi_dataframe(excel_path, sheet_name, request):
+    """
+    Read Master KPI sheet. Many workbooks prefix blank rows + 'Actual' + month rows
+    before the real header (Category, #, KPI, …); detect that row and use a
+    matching multi-row header for pandas.
+    """
+    max_rows = _excel_max_rows_for_request(request)
+    nr_kw = _read_excel_nrows_kw(max_rows)
+    # Header detection only needs the first few sheet rows; do not merge nrows with nr_kw.
+    peek = pd.read_excel(
+        excel_path,
+        sheet_name=sheet_name,
+        engine="openpyxl",
+        header=None,
+        nrows=45,
+    )
+    cat_row = _find_master_kpi_category_header_row(peek)
+    candidates = []
+    if cat_row is not None:
+        candidates.extend(_master_kpi_header_candidate_lists(cat_row))
+    candidates.append([0, 1])
+    candidates.append([0])
+    seen_hdr = set()
+    ordered = []
+    for h in candidates:
+        t = tuple(h)
+        if t not in seen_hdr:
+            seen_hdr.add(t)
+            ordered.append(h)
+
+    last_err = None
+    for hdr in ordered:
+        try:
+            df = pd.read_excel(
+                excel_path,
+                sheet_name=sheet_name,
+                engine="openpyxl",
+                header=hdr,
+                **nr_kw,
+            )
+            if isinstance(df.columns, pd.MultiIndex):
+                flat = [_flatten_master_kpi_column_name(c) for c in df.columns]
+                if not any(flat):
+                    raise ValueError("empty multiindex headers")
+                df.columns = flat
+            else:
+                df.columns = [str(c).strip() for c in df.columns]
+            if cat_row is not None and not _master_kpi_headers_seem_valid(
+                list(df.columns)
+            ):
+                raise ValueError("header choice did not yield Category/KPI columns")
+            return df
+        except Exception as e:
+            last_err = e
+            continue
+
+    try:
+        df = pd.read_excel(
+            excel_path,
+            sheet_name=sheet_name,
+            engine="openpyxl",
+            header=[0, 1],
+            **nr_kw,
+        )
+        if isinstance(df.columns, pd.MultiIndex):
+            flat = [_flatten_master_kpi_column_name(c) for c in df.columns]
+            df.columns = flat
+        else:
+            df.columns = [str(c).strip() for c in df.columns]
+        return df
+    except Exception:
+        pass
+    if last_err:
+        raise last_err
+    df = pd.read_excel(
+        excel_path,
+        sheet_name=sheet_name,
+        engine="openpyxl",
+        header=0,
+        **nr_kw,
+    )
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _mk_norm_header(col_name):
+    """Normalize Excel column title for role matching."""
+    n = (str(col_name) or "").strip().lower().replace("_", " ")
+    while "  " in n:
+        n = n.replace("  ", " ")
+    return n
+
+
+def _master_kpi_map_roles_to_columns(columns):
+    """
+    Map columns to fixed roles without ambiguity (Category ≠ KPI).
+    Multi-row Excel headers flatten to names like 'Unnamed: … — KPI'; we match
+    using the title tail (last segment after dashes) as well as full normalized text.
+    Remaining columns = Actuals (month × location, etc.).
+    """
+    cols = [str(c).strip() for c in columns if str(c).strip()]
+    role_to_col = {}
+    used = set()
+
+    def tail(c):
+        return _master_kpi_column_tail(c)
+
+    def take(role, col):
+        if not col or col in used:
+            return False
+        role_to_col[role] = col
+        used.add(col)
+        return True
+
+    # ——— Category ———
+    for c in cols:
+        n = _mk_norm_header(c)
+        t = tail(c)
+        if t == "category" or n in (
+            "category",
+            "kpi category",
+            "category name",
+            "category group",
+        ):
+            take("category", c)
+            break
+    if "category" not in role_to_col:
+        for c in cols:
+            n = _mk_norm_header(c)
+            if "الفئة" in (c or "") or n.startswith("category") or tail(c) == "category":
+                take("category", c)
+                break
+
+    # ——— # ———
+    for c in cols:
+        if c in used:
+            continue
+        raw = c.strip()
+        n = _mk_norm_header(c)
+        t = tail(c)
+        if raw == "#" or t == "#" or n in ("#", "no.", "no", "num", "s.no", "s no", "sr"):
+            take("idx", c)
+            break
+
+    # ——— KPI ———
+    for c in cols:
+        if c in used:
+            continue
+        n = _mk_norm_header(c)
+        t = tail(c)
+        if t == "kpi" or n == "kpi" or (n.startswith("kpi") and "category" not in n):
+            take("kpi", c)
+            break
+
+    role_patterns = [
+        (
+            "comments",
+            lambda n, t, c: ("responsible" in n and "comment" in n)
+            or t == "responsible person"
+            or n == "responsible person",
+        ),
+        (
+            "delivery",
+            lambda n, t, c: ("delivery" in n and "timeline" in n) or t == "delivery timeline",
+        ),
+        ("frequency", lambda n, t, c: "reporting frequency" in n or t == "reporting frequency"),
+        (
+            "method",
+            lambda n, t, c: ("calculated" in n and "method" in n) or t == "calculated method",
+        ),
+        (
+            "breach",
+            lambda n, t, c: "level of contract" in n
+            or ("contract" in n and "breach" in n)
+            or t == "level of contract breach",
+        ),
+        (
+            "sla",
+            lambda n, t, c: "minimum acceptable" in n
+            or ("sla" in n and "minimum" in n)
+            or t == "sla (minimum acceptable)",
+        ),
+        (
+            "target",
+            lambda n, t, c: n == "target"
+            or (n.startswith("target") and "sla" not in n)
+            or t == "target",
+        ),
+        (
+            "reporting",
+            lambda n, t, c: (
+                "reporting" in n
+                and "frequency" not in n
+                and "reporting frequency" not in n
+            )
+            or t == "reporting by",
+        ),
+    ]
+    for role, pred in role_patterns:
+        if role in role_to_col:
+            continue
+        for c in cols:
+            if c in used:
+                continue
+            n = _mk_norm_header(c)
+            t = tail(c)
+            if n.startswith("unnamed") and not t:
+                continue
+            if pred(n, t, c):
+                take(role, c)
+                break
+
+    # Merged Excel often yields duplicate 'Responsible Person' columns — keep one only.
+    rp_cols = [c for c in cols if tail(c) == "responsible person"]
+    if rp_cols:
+        if "comments" not in role_to_col:
+            take("comments", rp_cols[0])
+        for c in rp_cols:
+            if role_to_col.get("comments") != c:
+                used.add(c)
+
+    # Second "Responsible comments" / person column must not fall through to Actuals.
+    comments_col = role_to_col.get("comments")
+    if comments_col:
+        for c in cols:
+            if c in used or c == comments_col:
+                continue
+            n = _mk_norm_header(c)
+            t = tail(c)
+            if ("responsible" in n and "comment" in n) or (
+                "responsible" in n and "person" in n
+            ):
+                used.add(c)
+            elif t == "responsible person":
+                used.add(c)
+
+    actual_cols = [c for c in cols if c not in used]
+    return role_to_col, actual_cols
+
+
+def _master_kpi_sheet_percent_display(
+    raw_val, formatted, *, allow_zero_as_percent=False, actual_column=False
+):
+    """
+    Many KPI cells store 0.98 meaning 98%%. Show as %% for (0,1].
+    - Target / SLA / Breach: keep a fractional digit when needed (e.g. 99.5%%).
+    - Actual columns: round to whole %% like the printed dashboard (e.g. 93%%).
+    """
+    if formatted is not None:
+        fs = str(formatted).strip()
+        if fs and "%" in fs:
+            return None
+    if raw_val is None:
+        return None
+    try:
+        if isinstance(raw_val, str):
+            rs = raw_val.strip()
+            if not rs or rs.lower() in ("nan", "none", "nat", "<na>"):
+                return None
+            f = float(rs.replace(",", "").replace("%", "").strip())
+        elif isinstance(raw_val, (int, float)) and not isinstance(raw_val, bool):
+            f = float(raw_val)
+            if np.isnan(f) or np.isinf(f):
+                return None
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if abs(f) < 1e-12:
+        return "0%" if allow_zero_as_percent else None
+    if 0 < f <= 1:
+        pct = f * 100.0
+        if actual_column:
+            return "%d%%" % int(round(pct))
+        if abs(pct - round(pct)) < 1e-6:
+            return "%d%%" % int(round(pct))
+        s = ("%.2f" % pct).rstrip("0").rstrip(".")
+        return s + "%"
+    return None
+
+
+def _master_kpi_format_cell(val, fmt_callable):
+    if fmt_callable is None:
+        return val if val is not None else ""
+    try:
+        return fmt_callable(val)
+    except Exception:
+        return str(val) if val is not None else ""
+
+
+def _master_kpi_display_idx(val):
+    """Show row # as 2 not 2.0 when Excel/pandas used a float."""
+    if val is None or val == "":
+        return ""
+    try:
+        if isinstance(val, str):
+            f = float(val.strip().replace(",", ""))
+        else:
+            f = float(val)
+        if np.isnan(f) or np.isinf(f):
+            return ""
+        if abs(f - round(f)) < 1e-9:
+            return str(int(round(f)))
+    except (TypeError, ValueError):
+        pass
+    return str(val).strip()
+
+
+def _master_kpi_row_is_blank(row, role_to_col, actual_cols):
+    pieces = []
+    for role in (
+        "kpi",
+        "method",
+        "target",
+        "sla",
+        "breach",
+        "reporting",
+        "frequency",
+        "delivery",
+        "comments",
+    ):
+        c = role_to_col.get(role)
+        if c is not None and c in row.index:
+            pieces.append(str(row.get(c, "")).strip())
+    for c in actual_cols:
+        if c in row.index:
+            pieces.append(str(row.get(c, "")).strip())
+    return not any(pieces)
+
+
+def _master_kpi_sheet_category_label(val, fmt_callable):
+    """Readable category cell from sheet (merged Category column after ffill)."""
+    t = str(_master_kpi_format_cell(val, fmt_callable)).strip()
+    if not t or t.lower() in ("nan", "none", "nat", "<na>"):
+        return None
+    return t
+
+
+def _master_kpi_icon_variant(category_name):
+    """Bootstrap icon group for known Master KPI categories."""
+    n = (str(category_name) or "").strip().lower()
+    if n == "safety" or n.startswith("safety ") or n.startswith("safety-"):
+        return "safety"
+    if n == "inbound" or n.startswith("inbound ") or n.startswith("inbound-"):
+        return "inbound"
+    if n == "storage" or n.startswith("storage ") or n.startswith("storage-"):
+        return "storage"
+    if n == "outbound" or n.startswith("outbound ") or n.startswith("outbound-"):
+        return "outbound"
+    return "generic"
+
+
+def _master_kpi_category_sort_key(category_name):
+    """Safety → Inbound → Storage → Outbound, then other names A–Z."""
+    n = (str(category_name) or "").strip().lower()
+    preferred = ("safety", "inbound", "storage", "outbound")
+    if n in preferred:
+        return (0, preferred.index(n), n)
+    for i, p in enumerate(preferred):
+        if n.startswith(p + " ") or n.startswith(p + "-"):
+            return (0, i, n)
+    return (1, n, n)
+
+
+def build_master_kpi_view_context(df, fmt_callable, request):
+    """
+    Build template context: categories with KPI rows, meta labels, actual column headers.
+    """
+    columns = [str(c) for c in df.columns]
+    role_to_col, actual_cols = _master_kpi_map_roles_to_columns(columns)
+    # If Category is unnamed (merged cells), first column may hold category labels.
+    if not role_to_col.get("category") and columns:
+        fc = columns[0]
+        if _mk_norm_header(fc).startswith("unnamed") and fc in df.columns:
+            try:
+                if int(df[fc].dropna().nunique()) <= 35:
+                    role_to_col = dict(role_to_col)
+                    role_to_col["category"] = fc
+                    actual_cols = [c for c in actual_cols if c != fc]
+            except Exception:
+                pass
+    cat_col = role_to_col.get("category")
+
+    work = df.copy()
+    if cat_col and cat_col in work.columns:
+        work[cat_col] = work[cat_col].replace("", pd.NA).ffill()
+
+    meta_labels = {
+        "category": "Category",
+        "idx": "#",
+        "kpi": "KPI",
+        "method": "Calculated method",
+        "reporting": "Reporting by",
+        "frequency": "Reporting frequency",
+        "target": "Target",
+        "sla": "SLA (Minimum Acceptable)",
+        "breach": "Level of contract breach",
+        "delivery": "Delivery timeline",
+        "comments": "Responsible comments",
+    }
+
+    _mk_built_actual = _master_kpi_build_actual_blocks(actual_cols)
+    raw_actual_blocks = _master_kpi_enrich_actual_block_colspans(
+        _master_kpi_merge_actual_contractual_q1_grid(_mk_built_actual, actual_cols)
+    )
+
+    def _master_kpi_attach_actual_layout(_cat_rows):
+        """
+        Every category tab uses the same Actual grid (يناير–فبراير–مارس × المناطق)
+        as parsed from the sheet — we do not hide months per category when cells
+        are empty, so all tabs stay aligned.
+        """
+        blocks_cat = raw_actual_blocks
+        flat_cat = _master_kpi_flat_columns_from_blocks(blocks_cat)
+        use_merged = any((b.get("colspan") or 0) > 0 for b in (blocks_cat or []))
+        return blocks_cat, flat_cat, use_merged
+
+    def series_to_records(sub_df, category_display=""):
+        rows_out = []
+        nonlocal_row = {"row": None}
+
+        def row_cell_plain(role_key):
+            row = nonlocal_row["row"]
+            c = role_to_col.get(role_key)
+            if not c or c not in row.index:
+                return ""
+            return _master_kpi_format_cell(row.get(c), fmt_callable)
+
+        def row_cell_contract_pct(role_key):
+            row = nonlocal_row["row"]
+            c = role_to_col.get(role_key)
+            if not c or c not in row.index:
+                return ""
+            raw = row.get(c)
+            fmted = _master_kpi_format_cell(raw, fmt_callable)
+            alt = _master_kpi_sheet_percent_display(
+                raw, fmted, allow_zero_as_percent=True
+            )
+            return alt if alt is not None else fmted
+
+        for _, row in sub_df.iterrows():
+            nonlocal_row["row"] = row
+            if _master_kpi_row_is_blank(row, role_to_col, actual_cols):
+                continue
+            cat_disp = (category_display or "").strip()
+            if not cat_disp and role_to_col.get("category"):
+                cat_disp = str(row_cell_plain("category") or "").strip()
+            rec = {
+                "category": cat_disp,
+                "idx": _master_kpi_display_idx(row_cell_plain("idx")),
+                "kpi": row_cell_plain("kpi"),
+                "method": row_cell_plain("method"),
+                "reporting": row_cell_plain("reporting"),
+                "frequency": row_cell_plain("frequency"),
+                "target": row_cell_contract_pct("target"),
+                "sla": row_cell_contract_pct("sla"),
+                "breach": row_cell_contract_pct("breach"),
+                "delivery": row_cell_plain("delivery"),
+                "comments": row_cell_plain("comments"),
+                "actuals": [],
+            }
+            for ac in actual_cols:
+                if ac not in row.index:
+                    continue
+                raw = row.get(ac)
+                fmted = _master_kpi_format_cell(raw, fmt_callable)
+                alt = _master_kpi_sheet_percent_display(
+                    raw, fmted, allow_zero_as_percent=False, actual_column=True
+                )
+                disp = alt if alt is not None else fmted
+                rec["actuals"].append({"col": ac, "value": disp})
+            rec["actual_by_col"] = {x["col"]: x["value"] for x in rec["actuals"]}
+            rows_out.append(rec)
+        return rows_out
+
+    categories = []
+    used_slugs = set()
+
+    def _next_slug(base_label):
+        base_slug = slugify(str(base_label)) or "category"
+        slug = base_slug
+        n = 0
+        while slug in used_slugs:
+            n += 1
+            slug = "{}-{}".format(base_slug, n)
+        used_slugs.add(slug)
+        return slug
+
+    if cat_col and cat_col in work.columns:
+        # Category card order follows first appearance in the sheet.
+        labels_ordered = []
+        for cell in work[cat_col]:
+            lab = _master_kpi_sheet_category_label(cell, fmt_callable)
+            if lab and lab not in labels_ordered:
+                labels_ordered.append(lab)
+        for lab in labels_ordered:
+            sub = work[
+                work[cat_col].apply(
+                    lambda v, _fmt=fmt_callable, _L=lab: _master_kpi_sheet_category_label(
+                        v, _fmt
+                    )
+                    == _L
+                )
+            ]
+            rows = series_to_records(sub, lab)
+            _master_kpi_apply_contractual_fallback_to_rows(rows, raw_actual_blocks)
+            ab, af, um = _master_kpi_attach_actual_layout(rows)
+            tw = bool(
+                um
+                and len(ab) == 1
+                and str((ab[0].get("key") or ab[0].get("title") or "")).strip().lower()
+                == "actual"
+            )
+            categories.append(
+                {
+                    "name": lab,
+                    "slug": _next_slug(lab),
+                    "rows": rows,
+                    "icon_variant": _master_kpi_icon_variant(lab),
+                    "actual_blocks": ab,
+                    "actual_flat_columns": af,
+                    "actual_use_merged_header": um,
+                    "actual_two_row_header": tw,
+                }
+            )
+        categories.sort(key=lambda c: _master_kpi_category_sort_key(c["name"]))
+    else:
+        all_rows = series_to_records(work, "KPIs")
+        if all_rows:
+            _master_kpi_apply_contractual_fallback_to_rows(all_rows, raw_actual_blocks)
+            ab, af, um = _master_kpi_attach_actual_layout(all_rows)
+            tw = bool(
+                um
+                and len(ab) == 1
+                and str((ab[0].get("key") or ab[0].get("title") or "")).strip().lower()
+                == "actual"
+            )
+            categories.append(
+                {
+                    "name": "KPIs",
+                    "slug": _next_slug("kpis"),
+                    "rows": all_rows,
+                    "icon_variant": "generic",
+                    "actual_blocks": ab,
+                    "actual_flat_columns": af,
+                    "actual_use_merged_header": um,
+                    "actual_two_row_header": tw,
+                }
+            )
+
+    preview_mode = not _excel_full_data_requested(request)
+    try:
+        cap = _excel_max_rows_for_request(request)
+    except Exception:
+        cap = None
+
+    return {
+        "master_kpi_categories": categories,
+        "master_kpi_meta_labels": meta_labels,
+        "master_kpi_actual_columns": actual_cols,
+        "master_kpi_role_map": role_to_col,
+        "master_kpi_uid": uuid.uuid4().hex[:10],
+        "master_kpi_preview_cap": cap,
+        "master_kpi_preview_mode": preview_mode,
+    }
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class UploadExcelViewRoche(View):
     template_name = "index.html"
@@ -2956,14 +4061,7 @@ class UploadExcelViewRoche(View):
         if "safety" in t and "kpi" in t:
             try:
                 xls = pd.ExcelFile(excel_path, engine="openpyxl")
-                sn = next(
-                    (
-                        s
-                        for s in xls.sheet_names
-                        if "safety" in (s or "").lower() and "kpi" in (s or "").lower()
-                    ),
-                    None,
-                )
+                sn = _resolve_master_kpi_sheet_name(xls.sheet_names)
                 if sn:
                     return _distinct_month_abbrs_from_sheet(
                         excel_path, sn, preferred_columns=None
@@ -3054,6 +4152,39 @@ class UploadExcelViewRoche(View):
             pass
         return []
 
+    def _available_months_for_tab_cached(self, request, tab_for_months):
+        """
+        نفس _available_months_for_tab مع كاش Django خفيف (مفتاح = ملف + تاب).
+        لا يمر عبر _tab_cache_disabled — تسريع فتح التابات دون كاش نتيجة التاب الكاملة.
+        """
+        if not getattr(settings, "EXCEL_AVAILABLE_MONTHS_CACHE", True):
+            return self._available_months_for_tab(request, tab_for_months)
+        excel_path = self.resolve_excel_file_path(request)
+        if not excel_path:
+            return []
+        cache_key = None
+        try:
+            pk = hashlib.md5(os.path.abspath(excel_path).encode()).hexdigest()[:12]
+            fs = _excel_cache_sig_suffix(excel_path)
+            tk = (tab_for_months or "").strip().lower()
+            cache_key = f"excel_avail_months_v2::{pk}::{fs}::{tk}"
+            hit = cache.get(cache_key)
+            if hit is not None:
+                return list(hit)
+        except Exception:
+            cache_key = None
+        out = self._available_months_for_tab(request, tab_for_months)
+        if cache_key:
+            try:
+                ttl = int(getattr(settings, "EXCEL_AVAILABLE_MONTHS_CACHE_TTL", 1800))
+            except (TypeError, ValueError):
+                ttl = 1800
+            try:
+                cache.set(cache_key, list(out), max(60, ttl))
+            except Exception:
+                pass
+        return out
+
     def _ajax_tab_json(self, request, tab_for_months, data):
         """JsonResponse للتابات مع available_months حسب الشيت."""
         if isinstance(data, dict):
@@ -3062,7 +4193,7 @@ class UploadExcelViewRoche(View):
                 if list(data.keys()) == ["error"]:
                     data["available_months"] = []
                 else:
-                    data["available_months"] = self._available_months_for_tab(
+                    data["available_months"] = self._available_months_for_tab_cached(
                         request, tab_for_months
                     )
         return JsonResponse(
@@ -3353,6 +4484,24 @@ class UploadExcelViewRoche(View):
                 if filtered_points:
                     chart["dataPoints"] = filtered_points
 
+        if "chart_data_sheet_kpi" in tab_data and isinstance(
+            tab_data["chart_data_sheet_kpi"], list
+        ):
+            for chart in tab_data["chart_data_sheet_kpi"]:
+                if not isinstance(chart, dict):
+                    continue
+                points = chart.get("dataPoints")
+                if not points:
+                    continue
+                filtered_points = []
+                for point in points:
+                    label_norm = self.normalize_month_label(point.get("label"))
+                    if label_norm and label_norm.lower() in month_filters_lower:
+                        matched_months.add(label_norm.lower())
+                        filtered_points.append(point)
+                if filtered_points:
+                    chart["dataPoints"] = filtered_points
+
         if selected_months_norm:
             tab_data["selected_months"] = selected_months_norm
             return selected_months_norm[0]
@@ -3422,6 +4571,15 @@ class UploadExcelViewRoche(View):
         # --------------------------
         # الافتراضي = dashboard (تحميل أخف؛ تاب All-in-One اختياري من الرابط ?tab=all فقط)
         selected_tab = request.GET.get("tab", "").strip().lower() or "dashboard"
+        # عرض الواجهة "Master KPI" / ?tab=master_kpi يجب أن يوجّه لنفس تاب الإكسل Safety KPI
+        _master_kpi_tab_aliases = {
+            "master kpi": "safety kpi",
+            "master_kpi": "safety kpi",
+            "master-kpi": "safety kpi",
+            "masterkpisheet": "safety kpi",
+        }
+        if selected_tab in _master_kpi_tab_aliases:
+            selected_tab = _master_kpi_tab_aliases[selected_tab]
         selected_month = request.GET.get("month", "").strip()
         selected_quarter = request.GET.get("quarter", "").strip()
         action = request.GET.get("action", "").lower()
@@ -3706,10 +4864,11 @@ class UploadExcelViewRoche(View):
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         selected_tab_norm = (selected_tab or "").strip().lower()
         fast_initial_page = bool(getattr(settings, "EXCEL_FAST_INITIAL_PAGE", True))
-        is_fast_dashboard_boot = (
+        # أول فتح للصفحة (أي تاب في الرابط): لا نقرأ أسماء الشيتات/الشهور من الإكسل على GET —
+        # يقلّل وقت الاستجابة بشكل كبير؛ الشهور تُملأ من أول رد AJAX للتاب.
+        is_fast_excel_shell_boot = (
             fast_initial_page
             and (not is_ajax)
-            and selected_tab_norm == "dashboard"
             and not selected_month
             and not selected_quarter
         )
@@ -3725,16 +4884,26 @@ class UploadExcelViewRoche(View):
             "Traceability KPI",
             "Meeting Points & Action",
         ]
+        tab_display_aliases = {
+            "Safety KPI": "Master KPI",
+        }
 
         all_sheets = []
         months_for_select = []
-        if is_fast_dashboard_boot:
-            # أول فتح للصفحة: لا نقرأ شيتات/شهور من الإكسل لتقليل زمن GET.
-            excel_tabs = [{"original": name, "display": name} for name in ordered_tabs]
+        if is_fast_excel_shell_boot:
+            # لا نقرأ شيتات/شهور من الإكسل على GET.
+            excel_tabs = [
+                {"original": name, "display": tab_display_aliases.get(name, name)}
+                for name in ordered_tabs
+            ]
             meeting_points = []
-            done_count = 0
-            total_count = 0
-            print("⚡ [GET] Fast initial dashboard bootstrap enabled")
+            try:
+                done_count = MeetingPoint.objects.filter(is_done=True).count()
+                total_count = MeetingPoint.objects.count()
+            except Exception:
+                done_count = 0
+                total_count = 0
+            print("⚡ [GET] Fast Excel shell bootstrap (skip sheet scan on first HTML)")
         else:
             # تبويبات الشيتات: openpyxl read_only + كاش (أسرع بكثير من pd.ExcelFile لكل GET)
             try:
@@ -3779,11 +4948,17 @@ class UploadExcelViewRoche(View):
                     filtered_tabs += ordered_tabs
 
                 filtered_tabs = [tab for tab in ordered_tabs if tab in filtered_tabs]
-                excel_tabs = [{"original": name, "display": name} for name in filtered_tabs]
+                excel_tabs = [
+                    {"original": name, "display": tab_display_aliases.get(name, name)}
+                    for name in filtered_tabs
+                ]
 
             except Exception as e:
                 print(f"⚠️ [ERROR] تعذر قراءة الشيتات من الملف: {e}")
-                excel_tabs = [{"original": name, "display": name} for name in ordered_tabs]
+                excel_tabs = [
+                    {"original": name, "display": tab_display_aliases.get(name, name)}
+                    for name in ordered_tabs
+                ]
                 all_sheets = []
 
             all_months = _extract_months_from_excel_cached(excel_path, all_sheets)
@@ -5645,6 +6820,10 @@ class UploadExcelViewRoche(View):
         🔹 جدول B2B: Channel = B2B أو Trade (نفس دلو الـ B2B في الإكسل)، ORDER STATUS ≠ Cancelled، Creation → Actual Delivery ≤48h = Hit.
         🔹 جدول BTQ: Channel = BTQ، ORDER STATUS ≠ Cancelled، نفس 48h.
         🔹 الشارت: عمودين (B2B و BTQ) مع تسمية "الشهر — اسم الجدول".
+        🔹 KPI Actual / KPI Contractual (إضافية): من عمودي الشيت «Hit / Miss» (OK/Late) و«END to END Status»
+          (ON TIME / DELAY) مع صف واحد لكل SO لكل شهر — جداول منفصلة لـ B2B & Trade مقابل BTQ، وشارت بعدة أعمدة.
+        🔹 جدول أسباع التأخير: بعد فلتر الشهر و Creation month وإزالة تكرار SO لكل شهر، صفوف LATE أو DELAY تُجمَّع
+          حسب WH ثم Channel والسبب والتعليق؛ يُعرض كل WH كقسم (هيدر + جدول) وفلتر WH في الواجهة فقط دون reload.
         - يُحمّل شيت B2B_Outbound بنفس حد الصفوف الكامل مثل B2C (force_full) حتى تظهر كل الشهور
           وليس أول 200 صف فقط (كانت تُظهر شهرين أو أقل في المعاينة).
         - عمود Month للتجميع: شهر الإنشاء؛ لو التاريخ ناقص نستخدم شهر Actual Delivery حتى لا يختفي شهر (مثل يناير).
@@ -5658,6 +6837,10 @@ class UploadExcelViewRoche(View):
                     "detail_html": "<p class='text-danger'>⚠️ Excel file not found.</p>",
                     "sub_tables": [],
                     "chart_data": [],
+                    "chart_data_pods": [],
+                    "chart_data_sheet_kpi": [],
+                    "delay_reasons_table": None,
+                    "cutoff_so_table": None,
                     "stats": {},
                 }
 
@@ -5675,6 +6858,10 @@ class UploadExcelViewRoche(View):
                         "detail_html": f"<p class='text-warning'>⚠️ Sheet '{sheet_name}' not found.</p>",
                         "sub_tables": [],
                         "chart_data": [],
+                        "chart_data_pods": [],
+                        "chart_data_sheet_kpi": [],
+                        "delay_reasons_table": None,
+                        "cutoff_so_table": None,
                         "stats": {},
                     }
 
@@ -5704,13 +6891,115 @@ class UploadExcelViewRoche(View):
 
             if not so_col or not channel_col or not order_status_col or not creation_col or not actual_delivery_col:
                 missing = [x for x, c in [("SO", so_col), ("Channel", channel_col), ("ORDER STATUS", order_status_col), ("Creation Date & Time", creation_col), ("Actual Delivery Date", actual_delivery_col)] if not c]
-                return {"detail_html": f"<p class='text-danger'>⚠️ B2B_Outbound: missing columns: {', '.join(missing)}.</p>", "sub_tables": [], "chart_data": [], "stats": {}}
+                return {
+                    "detail_html": f"<p class='text-danger'>⚠️ B2B_Outbound: missing columns: {', '.join(missing)}.</p>",
+                    "sub_tables": [],
+                    "chart_data": [],
+                    "chart_data_pods": [],
+                    "chart_data_sheet_kpi": [],
+                    "delay_reasons_table": None,
+                    "cutoff_so_table": None,
+                    "stats": {},
+                }
 
             df = df.rename(columns={so_col: "SO", channel_col: "Channel", order_status_col: "ORDER STATUS", creation_col: "Creation Date & Time", actual_delivery_col: "Actual Delivery Date"})
             if pod_date_col:
                 df = df.rename(columns={pod_date_col: "POD Date"})
             else:
                 df["POD Date"] = pd.NaT
+
+            hit_miss_col = find_col(
+                df,
+                [
+                    "Hit / Miss",
+                    "Hit/Miss",
+                    "Hit or Miss",
+                    "HitMiss",
+                    "HIT / MISS",
+                    "Hit /Miss",
+                ],
+            )
+            e2e_status_col = find_col(
+                df,
+                [
+                    "END to END Status",
+                    "End to End Status",
+                    "End To End Status",
+                    "E2E Status",
+                    "E2E status",
+                    "End-to-End Status",
+                ],
+            )
+            if hit_miss_col:
+                df = df.rename(columns={hit_miss_col: "Hit / Miss"})
+            if e2e_status_col:
+                df = df.rename(columns={e2e_status_col: "END to END Status"})
+
+            wh_col = find_col(
+                df,
+                [
+                    "WH",
+                    "Warehouse",
+                    "W/H",
+                    "Ship WH",
+                    "WH Code",
+                    "Ship From WH",
+                ],
+            )
+            reason_delay_col = find_col(
+                df,
+                [
+                    "Reason of delay in delivery",
+                    "Reason of Delay in Delivery",
+                    "Reason Of Delay In Delivery",
+                    "Delay reason",
+                    "Reason For Delay",
+                ],
+            )
+            wh_comments_col = find_col(
+                df,
+                [
+                    "WH Comments / Appointment Date",
+                    "WH Comments / Appointment",
+                    "WH Comments",
+                    "Appointment Date",
+                ],
+            )
+            if wh_col:
+                df = df.rename(columns={wh_col: "WH"})
+            else:
+                df["WH"] = ""
+            if reason_delay_col:
+                df = df.rename(
+                    columns={reason_delay_col: "Reason of delay in delivery"}
+                )
+            else:
+                df["Reason of delay in delivery"] = ""
+            if wh_comments_col:
+                df = df.rename(
+                    columns={wh_comments_col: "WH Comments / Appointment Date"}
+                )
+            else:
+                df["WH Comments / Appointment Date"] = ""
+
+            cutoff_col = find_col(
+                df,
+                [
+                    "Cut off (Before or After)",
+                    "Cut-off (Before or After)",
+                    "Cutoff (Before or After)",
+                    "Cut Off (Before or After)",
+                    "Before or After Cut off",
+                    "Before or After Cut-off",
+                    "Cutoff Before or After",
+                ],
+            )
+            if cutoff_col:
+                df = df.rename(
+                    columns={cutoff_col: "Cut off (Before or After)"}
+                )
+            else:
+                df["Cut off (Before or After)"] = ""
 
             df["Channel"] = df["Channel"].astype(str).str.strip()
             df["ORDER STATUS"] = df["ORDER STATUS"].astype(str).str.strip()
@@ -5770,6 +7059,352 @@ class UploadExcelViewRoche(View):
                 df_b2b = df_b2b[df_b2b["Month"].fillna("").str.lower() == selected_month_norm.lower()]
                 df_btq = df_btq[df_btq["Month"].fillna("").str.lower() == selected_month_norm.lower()]
 
+            df_month = df.copy()
+            if selected_months_norm:
+                df_month = df_month[
+                    df_month["Month"]
+                    .fillna("")
+                    .str.lower()
+                    .isin([m.lower() for m in selected_months_norm])
+                ]
+            elif selected_month_norm:
+                df_month = df_month[
+                    df_month["Month"].fillna("").str.lower()
+                    == selected_month_norm.lower()
+                ]
+
+            wh_filter_options = []
+            if "WH" in df_month.columns:
+                wh_filter_options = sorted(
+                    {
+                        str(x).strip()
+                        for x in df_month["WH"].dropna().unique()
+                        if str(x).strip()
+                    },
+                    key=lambda s: str(s).lower(),
+                )
+
+            sheet_kpi_tables = []
+            chart_data_sheet_kpi = []
+
+            def _sheet_dedupe_so_by_creation_month(df0):
+                if df0 is None or len(df0) == 0:
+                    return pd.DataFrame()
+                return df0.sort_values(
+                    ["SO", "Month", "Creation Date & Time"],
+                    na_position="last",
+                ).drop_duplicates(subset=["SO", "Month"], keep="last")
+
+            def _kpi_actual_rows(d0):
+                z = _sheet_dedupe_so_by_creation_month(d0)
+                if z.empty:
+                    return z
+                hm = z["Hit / Miss"].astype(str).str.strip().str.upper()
+                z = z.loc[hm.isin(["OK", "LATE"])].copy()
+                if z.empty:
+                    return z
+                hm2 = z["Hit / Miss"].astype(str).str.strip().str.upper()
+                z["is_hit"] = hm2 == "OK"
+                z["is_miss"] = hm2 == "LATE"
+                return z
+
+            def _kpi_contractual_rows(d0):
+                if "END to END Status" not in d0.columns:
+                    return pd.DataFrame()
+                z = _sheet_dedupe_so_by_creation_month(d0)
+                if z.empty:
+                    return z
+                e = (
+                    z["END to END Status"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    .str.replace("-", " ", regex=False)
+                    .str.replace("_", " ", regex=False)
+                )
+                is_cancel = e.str.contains("CANCEL", na=False)
+                is_delay = e.str.contains("DELAY", na=False) & ~is_cancel
+                is_ontime = (
+                    e.str.contains("ON", na=False)
+                    & e.str.contains("TIME", na=False)
+                    & ~is_cancel
+                )
+                mask = is_ontime | is_delay
+                z = z.loc[mask].copy()
+                if z.empty:
+                    return z
+                e2 = (
+                    z["END to END Status"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    .str.replace("-", " ", regex=False)
+                    .str.replace("_", " ", regex=False)
+                )
+                is_cancel2 = e2.str.contains("CANCEL", na=False)
+                is_miss_row = e2.str.contains("DELAY", na=False) & ~is_cancel2
+                z["is_miss"] = is_miss_row
+                z["is_hit"] = (
+                    e2.str.contains("ON", na=False)
+                    & e2.str.contains("TIME", na=False)
+                    & ~is_cancel2
+                    & ~is_miss_row
+                )
+                return z
+
+            hit_pct_act_b2b = {}
+            hit_pct_act_btq = {}
+            hit_pct_con_b2b = {}
+            hit_pct_con_btq = {}
+
+            _ch_month = df_month["Channel"].str.upper()
+            df_kpi_b2b_ch = df_month[_ch_month.isin(["B2B", "TRADE"])].copy()
+            df_kpi_btq_ch = df_month[_ch_month.eq("BTQ")].copy()
+
+            def _append_sheet_kpi_actual(df_slice, table_id, title):
+                nonlocal hit_pct_act_b2b, hit_pct_act_btq
+                if df_slice is None or df_slice.empty:
+                    return [], {}
+                if "Hit / Miss" not in df_slice.columns:
+                    return [], {}
+                df_kpi_actual = _kpi_actual_rows(df_slice)
+                if df_kpi_actual.empty:
+                    return [], {}
+                act_summary = (
+                    df_kpi_actual.groupby("Month")
+                    .agg(Hits=("is_hit", "sum"), Misses=("is_miss", "sum"))
+                    .reset_index()
+                )
+                act_summary["Total_Shipments"] = (
+                    act_summary["Hits"] + act_summary["Misses"]
+                )
+                act_summary["Hit %"] = (
+                    act_summary["Hits"]
+                    / act_summary["Total_Shipments"].replace(0, np.nan)
+                    * 100
+                ).fillna(0).round(2)
+                act_summary = act_summary.sort_values(
+                    by="Month", key=lambda c: c.map(month_order_value)
+                )
+                ordered = act_summary["Month"].tolist()
+                agg_col_act = None
+                if len(ordered) >= 2 and not df_slice.empty:
+                    try:
+                        agg_col_act = str(
+                            int(
+                                df_slice["Creation Date & Time"]
+                                .dropna()
+                                .dt.year.max()
+                            )
+                        )
+                    except Exception:
+                        agg_col_act = None
+                pivot_act = ["KPI"] + ordered + ([agg_col_act] if agg_col_act else [])
+                hit_pct_act = {"KPI": "Hit %"}
+                total_act = {"KPI": "Total (SO)"}
+                hit_act = {"KPI": "Hit (OK)"}
+                miss_act = {"KPI": "Miss (Late)"}
+                for m in ordered:
+                    r = act_summary[act_summary["Month"] == m].iloc[0]
+                    t, h = int(r["Total_Shipments"]), int(r["Hits"])
+                    total_act[m], hit_act[m], miss_act[m] = t, h, int(r["Misses"])
+                    hit_pct_act[m] = int(round(h * 100 / t)) if t > 0 else 0
+                if agg_col_act and agg_col_act in pivot_act:
+                    t_tot = int(act_summary["Total_Shipments"].sum())
+                    h_tot = int(act_summary["Hits"].sum())
+                    total_act[agg_col_act] = t_tot
+                    hit_act[agg_col_act] = h_tot
+                    miss_act[agg_col_act] = t_tot - h_tot
+                    hit_pct_act[agg_col_act] = (
+                        int(round(h_tot * 100 / t_tot)) if t_tot > 0 else 0
+                    )
+                sheet_kpi_tables.append(
+                    {
+                        "id": table_id,
+                        "title": title,
+                        "columns": pivot_act,
+                        "data": [hit_pct_act, hit_act, miss_act, total_act],
+                        "chart_data": [],
+                        "full_width": False,
+                        "side_by_side": True,
+                    }
+                )
+                if "b2b-kpi-actual-b2b" in table_id:
+                    hit_pct_act_b2b = hit_pct_act
+                elif "b2b-kpi-actual-btq" in table_id:
+                    hit_pct_act_btq = hit_pct_act
+                return ordered, hit_pct_act
+
+            def _append_sheet_kpi_contractual(df_slice, table_id, title):
+                nonlocal hit_pct_con_b2b, hit_pct_con_btq
+                if df_slice is None or df_slice.empty:
+                    return [], {}
+                if "END to END Status" not in df_slice.columns:
+                    return [], {}
+                df_kpi_contractual = _kpi_contractual_rows(df_slice)
+                if df_kpi_contractual.empty:
+                    return [], {}
+                con_summary = (
+                    df_kpi_contractual.groupby("Month")
+                    .agg(Hits=("is_hit", "sum"), Misses=("is_miss", "sum"))
+                    .reset_index()
+                )
+                con_summary["Total_Shipments"] = (
+                    con_summary["Hits"] + con_summary["Misses"]
+                )
+                con_summary["Hit %"] = (
+                    con_summary["Hits"]
+                    / con_summary["Total_Shipments"].replace(0, np.nan)
+                    * 100
+                ).fillna(0).round(2)
+                con_summary = con_summary.sort_values(
+                    by="Month", key=lambda c: c.map(month_order_value)
+                )
+                ordered = con_summary["Month"].tolist()
+                agg_col_con = None
+                if len(ordered) >= 2 and not df_slice.empty:
+                    try:
+                        agg_col_con = str(
+                            int(
+                                df_slice["Creation Date & Time"]
+                                .dropna()
+                                .dt.year.max()
+                            )
+                        )
+                    except Exception:
+                        agg_col_con = None
+                pivot_con = ["KPI"] + ordered + ([agg_col_con] if agg_col_con else [])
+                hit_pct_con = {"KPI": "Hit %"}
+                total_con = {"KPI": "Total (SO)"}
+                hit_con = {"KPI": "Hit (ON TIME)"}
+                miss_con = {"KPI": "Miss (DELAY)"}
+                for m in ordered:
+                    r = con_summary[con_summary["Month"] == m].iloc[0]
+                    t, h = int(r["Total_Shipments"]), int(r["Hits"])
+                    total_con[m], hit_con[m], miss_con[m] = t, h, int(r["Misses"])
+                    hit_pct_con[m] = int(round(h * 100 / t)) if t > 0 else 0
+                if agg_col_con and agg_col_con in pivot_con:
+                    t_tot = int(con_summary["Total_Shipments"].sum())
+                    h_tot = int(con_summary["Hits"].sum())
+                    total_con[agg_col_con] = t_tot
+                    hit_con[agg_col_con] = h_tot
+                    miss_con[agg_col_con] = t_tot - h_tot
+                    hit_pct_con[agg_col_con] = (
+                        int(round(h_tot * 100 / t_tot)) if t_tot > 0 else 0
+                    )
+                sheet_kpi_tables.append(
+                    {
+                        "id": table_id,
+                        "title": title,
+                        "columns": pivot_con,
+                        "data": [hit_pct_con, hit_con, miss_con, total_con],
+                        "chart_data": [],
+                        "full_width": False,
+                        "side_by_side": True,
+                    }
+                )
+                if "b2b-kpi-contractual-b2b" in table_id:
+                    hit_pct_con_b2b = hit_pct_con
+                elif "b2b-kpi-contractual-btq" in table_id:
+                    hit_pct_con_btq = hit_pct_con
+                return ordered, hit_pct_con
+
+            ordered_act_b2b, _ = _append_sheet_kpi_actual(
+                df_kpi_b2b_ch,
+                "sub-table-b2b-kpi-actual-b2b",
+                "KPI Actual — B2B & Trade (Hit / Miss — OK / Late)",
+            )
+            ordered_act_btq, _ = _append_sheet_kpi_actual(
+                df_kpi_btq_ch,
+                "sub-table-b2b-kpi-actual-btq",
+                "KPI Actual — BTQ (Hit / Miss — OK / Late)",
+            )
+            ordered_con_b2b, _ = _append_sheet_kpi_contractual(
+                df_kpi_b2b_ch,
+                "sub-table-b2b-kpi-contractual-b2b",
+                "KPI Contractual — B2B & Trade (END to END — ON TIME / DELAY)",
+            )
+            ordered_con_btq, _ = _append_sheet_kpi_contractual(
+                df_kpi_btq_ch,
+                "sub-table-b2b-kpi-contractual-btq",
+                "KPI Contractual — BTQ (END to END — ON TIME / DELAY)",
+            )
+
+            month_set_kpi = (
+                set(ordered_act_b2b)
+                | set(ordered_act_btq)
+                | set(ordered_con_b2b)
+                | set(ordered_con_btq)
+            )
+            months_sheet_kpi = sorted(
+                month_set_kpi, key=lambda mm: month_order_value.get(mm, 99)
+            )
+            if months_sheet_kpi:
+                if hit_pct_act_b2b:
+                    chart_data_sheet_kpi.append(
+                        {
+                            "type": "column",
+                            "name": "KPI Actual — B2B & Trade Hit %",
+                            "color": "#A67B5B",
+                            "related_table": "sub-table-b2b-kpi-actual-b2b",
+                            "dataPoints": [
+                                {
+                                    "label": m,
+                                    "y": int(hit_pct_act_b2b.get(m, 0) or 0),
+                                }
+                                for m in months_sheet_kpi
+                            ],
+                        }
+                    )
+                if hit_pct_act_btq:
+                    chart_data_sheet_kpi.append(
+                        {
+                            "type": "column",
+                            "name": "KPI Actual — BTQ Hit %",
+                            "color": "#D4A574",
+                            "related_table": "sub-table-b2b-kpi-actual-btq",
+                            "dataPoints": [
+                                {
+                                    "label": m,
+                                    "y": int(hit_pct_act_btq.get(m, 0) or 0),
+                                }
+                                for m in months_sheet_kpi
+                            ],
+                        }
+                    )
+                if hit_pct_con_b2b:
+                    chart_data_sheet_kpi.append(
+                        {
+                            "type": "column",
+                            "name": "KPI Contractual — B2B & Trade Hit %",
+                            "color": "#6B5344",
+                            "related_table": "sub-table-b2b-kpi-contractual-b2b",
+                            "dataPoints": [
+                                {
+                                    "label": m,
+                                    "y": int(hit_pct_con_b2b.get(m, 0) or 0),
+                                }
+                                for m in months_sheet_kpi
+                            ],
+                        }
+                    )
+                if hit_pct_con_btq:
+                    chart_data_sheet_kpi.append(
+                        {
+                            "type": "column",
+                            "name": "KPI Contractual — BTQ Hit %",
+                            "color": "#8B7355",
+                            "related_table": "sub-table-b2b-kpi-contractual-btq",
+                            "dataPoints": [
+                                {
+                                    "label": m,
+                                    "y": int(hit_pct_con_btq.get(m, 0) or 0),
+                                }
+                                for m in months_sheet_kpi
+                            ],
+                        }
+                    )
+
             def _fmt_dt(x):
                 if pd.isna(x) or x is pd.NaT:
                     return ""
@@ -5787,6 +7422,195 @@ class UploadExcelViewRoche(View):
                 if s.lower() in ("nan", "nat", "none", "<nat>"):
                     return ""
                 return s
+
+            def _cell_br_label(val):
+                t = _to_blank(val)
+                return t if t else "(blank)"
+
+            delay_reasons_table = {
+                "title": "Delay reasons — SO count by WH, Channel, reason & WH Comments / Appointment Date",
+                "columns": [
+                    "Channel",
+                    "Reason of delay in delivery",
+                    "WH Comments / Appointment Date",
+                    "SO count",
+                ],
+                "sections": [],
+                "wh_filter_options": wh_filter_options,
+            }
+            try:
+
+                _ded_dr = _sheet_dedupe_so_by_creation_month(df_month)
+                if _ded_dr is not None and len(_ded_dr) > 0:
+                    hm_dr = (
+                        _ded_dr["Hit / Miss"].astype(str).str.strip().str.upper()
+                        if "Hit / Miss" in _ded_dr.columns
+                        else pd.Series("", index=_ded_dr.index)
+                    )
+                    if "END to END Status" in _ded_dr.columns:
+                        e2e_dr = _ded_dr["END to END Status"].astype(str).str.upper()
+                    else:
+                        e2e_dr = pd.Series("", index=_ded_dr.index)
+                    is_cancel_dr = e2e_dr.str.contains("CANCEL", na=False)
+                    is_delay_e2e = e2e_dr.str.contains(
+                        "DELAY", na=False
+                    ) & ~is_cancel_dr
+                    is_late_act = hm_dr.eq("LATE")
+                    delay_only = _ded_dr.loc[is_late_act | is_delay_e2e].copy()
+                    if len(delay_only) > 0:
+                        chu_dr = delay_only["Channel"].str.upper()
+                        delay_only["__ch_display__"] = np.where(
+                            chu_dr.isin(["B2B", "TRADE"]),
+                            "B2B & Trade",
+                            np.where(chu_dr.eq("BTQ"), "BTQ", "Other"),
+                        )
+                        if "WH" in delay_only.columns:
+                            delay_only["__wh_display__"] = delay_only["WH"].map(
+                                _cell_br_label
+                            )
+                        else:
+                            delay_only["__wh_display__"] = "(blank)"
+                        delay_only["Reason of delay in delivery"] = delay_only[
+                            "Reason of delay in delivery"
+                        ].map(_cell_br_label)
+                        delay_only["WH Comments / Appointment Date"] = delay_only[
+                            "WH Comments / Appointment Date"
+                        ].map(_cell_br_label)
+                        grp_dr = (
+                            delay_only.groupby(
+                                [
+                                    "__wh_display__",
+                                    "__ch_display__",
+                                    "Reason of delay in delivery",
+                                    "WH Comments / Appointment Date",
+                                ],
+                                dropna=False,
+                            )["SO"]
+                            .nunique()
+                            .reset_index(name="SO count")
+                        )
+                        grp_dr = grp_dr.sort_values(
+                            ["__wh_display__", "__ch_display__", "SO count"],
+                            ascending=[True, True, False],
+                        )
+                        sections_out = []
+                        for wh_key, g_wh in grp_dr.groupby(
+                            "__wh_display__", sort=False
+                        ):
+                            g2 = g_wh.drop(columns=["__wh_display__"]).rename(
+                                columns={"__ch_display__": "Channel"}
+                            )
+                            sections_out.append(
+                                {
+                                    "wh": str(wh_key),
+                                    "rows": g2.to_dict(orient="records"),
+                                }
+                            )
+                        delay_reasons_table["sections"] = sorted(
+                            sections_out,
+                            key=lambda s: str(s.get("wh", "")).lower(),
+                        )
+                        _seen_wh_sec = {
+                            str(s["wh"]).strip()
+                            for s in sections_out
+                            if str(s.get("wh", "")).strip()
+                        }
+                        delay_reasons_table["wh_filter_options"] = sorted(
+                            _seen_wh_sec.union(set(wh_filter_options)),
+                            key=lambda s: str(s).lower(),
+                        )
+            except Exception:
+                delay_reasons_table["sections"] = []
+
+            cutoff_so_table = {
+                "title": "Cut-off (Before / After) — SO count by WH & Channel (Creation month filter, deduped SO)",
+                "columns": ["Channel", "Cut off (Before or After)", "SO count"],
+                "sections": [],
+                "wh_filter_options": wh_filter_options,
+            }
+            try:
+                _ded_co = _sheet_dedupe_so_by_creation_month(df_month)
+                if (
+                    _ded_co is not None
+                    and len(_ded_co) > 0
+                    and "Cut off (Before or After)" in _ded_co.columns
+                ):
+
+                    def _cut_bucket(val):
+                        raw = _to_blank(val)
+                        if not raw:
+                            return "(blank)"
+                        t = raw.lower()
+                        if "before" in t and (
+                            "cut" in t or "cut-off" in t or "cutoff" in t
+                        ):
+                            return "Before Cut-off"
+                        if "after" in t and (
+                            "cut" in t or "cut-off" in t or "cutoff" in t
+                        ):
+                            return "After Cut-off"
+                        return raw
+
+                    _ded_co = _ded_co.copy()
+                    chu_co = _ded_co["Channel"].str.upper()
+                    _ded_co["__ch_display__"] = np.where(
+                        chu_co.isin(["B2B", "TRADE"]),
+                        "B2B & Trade",
+                        np.where(chu_co.eq("BTQ"), "BTQ", "Other"),
+                    )
+                    _ded_co["__cut_bucket__"] = _ded_co[
+                        "Cut off (Before or After)"
+                    ].map(_cut_bucket)
+                    if "WH" in _ded_co.columns:
+                        _ded_co["__wh_display__"] = _ded_co["WH"].map(
+                            _cell_br_label
+                        )
+                    else:
+                        _ded_co["__wh_display__"] = "(blank)"
+
+                    grp_co = (
+                        _ded_co.groupby(
+                            ["__wh_display__", "__ch_display__", "__cut_bucket__"],
+                            dropna=False,
+                        )["SO"]
+                        .nunique()
+                        .reset_index(name="SO count")
+                    )
+                    grp_co = grp_co.sort_values(
+                        ["__wh_display__", "__ch_display__", "__cut_bucket__"],
+                        ascending=[True, True, True],
+                    )
+                    sections_co = []
+                    for wh_key, g_wh in grp_co.groupby(
+                        "__wh_display__", sort=False
+                    ):
+                        g2 = g_wh.drop(columns=["__wh_display__"]).rename(
+                            columns={
+                                "__ch_display__": "Channel",
+                                "__cut_bucket__": "Cut off (Before or After)",
+                            }
+                        )
+                        sections_co.append(
+                            {
+                                "wh": str(wh_key),
+                                "rows": g2.to_dict(orient="records"),
+                            }
+                        )
+                    cutoff_so_table["sections"] = sorted(
+                        sections_co,
+                        key=lambda s: str(s.get("wh", "")).lower(),
+                    )
+                    _seen_wh_co = {
+                        str(s["wh"]).strip()
+                        for s in sections_co
+                        if str(s.get("wh", "")).strip()
+                    }
+                    cutoff_so_table["wh_filter_options"] = sorted(
+                        _seen_wh_co.union(set(wh_filter_options)),
+                        key=lambda s: str(s).lower(),
+                    )
+            except Exception:
+                cutoff_so_table["sections"] = []
 
             sub_tables = []
             chart_data = []
@@ -5990,8 +7814,19 @@ class UploadExcelViewRoche(View):
                 sub_tables.append({"id": "sub-table-pods-btq-hit-summary", "title": "PODs BTQ KPI (Delivery → POD ≤ 18 days)", "columns": pivot_pbtq, "data": [hit_pct_pbtq, hit_pbtq, miss_pbtq, total_pbtq], "chart_data": [], "full_width": False, "side_by_side": True})
                 chart_data_pods.append({"type": "column", "name": "PODs BTQ Hit % (≤18d)", "color": "#81613E", "related_table": "sub-table-pods-btq-hit-summary", "dataPoints": [{"label": f"{m} — PODs BTQ", "y": hit_pct_pbtq.get(m, 0)} for m in ordered_pbtq]})
 
+            sub_tables = sheet_kpi_tables + sub_tables
+
             if not sub_tables:
-                return {"detail_html": "<p class='text-warning'>⚠️ No B2B or BTQ records for the selected period.</p>", "sub_tables": [], "chart_data": [], "chart_data_pods": [], "stats": {}}
+                return {
+                    "detail_html": "<p class='text-warning'>⚠️ No B2B or BTQ records for the selected period.</p>",
+                    "sub_tables": [],
+                    "chart_data": [],
+                    "chart_data_pods": [],
+                    "chart_data_sheet_kpi": [],
+                    "delay_reasons_table": None,
+                    "cutoff_so_table": None,
+                    "stats": {},
+                }
 
             df_all = pd.concat([df_b2b, df_btq], ignore_index=True) if not df_b2b.empty and not df_btq.empty else (df_b2b if not df_b2b.empty else df_btq)
             overall_total = int(df_all["SO"].nunique())
@@ -5999,6 +7834,17 @@ class UploadExcelViewRoche(View):
             overall_hit_pct = round((overall_hits / overall_total) * 100, 2) if overall_total else 0
 
             raw_sheet_cols = ["SO", "Channel", "ORDER STATUS", "Creation Date & Time", "Actual Delivery Date", "POD Date", "Month"]
+            for _extra_col in ("Hit / Miss", "END to END Status"):
+                if _extra_col in df_all.columns:
+                    raw_sheet_cols.append(_extra_col)
+            for _x in (
+                "WH",
+                "Reason of delay in delivery",
+                "WH Comments / Appointment Date",
+                "Cut off (Before or After)",
+            ):
+                if _x in df_all.columns and _x not in raw_sheet_cols:
+                    raw_sheet_cols.append(_x)
             raw_sheet_cols = [c for c in raw_sheet_cols if c in df_all.columns]
             _seen_b2b_m = {
                 str(m).strip()
@@ -6033,7 +7879,10 @@ class UploadExcelViewRoche(View):
                 "sub_tables": sub_tables,
                 "chart_data": chart_data,
                 "chart_data_pods": chart_data_pods,
+                "chart_data_sheet_kpi": chart_data_sheet_kpi,
                 "raw_excel_table": raw_excel_table,
+                "delay_reasons_table": delay_reasons_table,
+                "cutoff_so_table": cutoff_so_table,
                 "stats": {"total": overall_total, "hit": overall_hits, "miss": overall_total - overall_hits, "hit_pct": overall_hit_pct, "target": 99},
             }
 
@@ -6046,6 +7895,9 @@ class UploadExcelViewRoche(View):
                 "sub_tables": [],
                 "chart_data": [],
                 "chart_data_pods": [],
+                "chart_data_sheet_kpi": [],
+                "delay_reasons_table": None,
+                "cutoff_so_table": None,
                 "stats": {},
             }
 
@@ -6056,8 +7908,9 @@ class UploadExcelViewRoche(View):
         B2C Outbound: يقرأ من شيت B2C_Outbound.
         - يُحمّل الشيت كاملاً (حد EXCEL_FULL_MAX_ROWS في settings، أو بدون حد لو None) حتى تظهر
           كل الشهور/الصفوف في الجداول والشارتات دون الاعتماد على معاينة 200 صف.
-        - جدول Pick & Peak (Creation / Picked): حسب مدة (Creation → Picked) بالساعات،
-          صفوف Cycle (0-9HRS … 105+HRS)، أعمدة بالشهر (YYYY-MM)، عمود %، Status = Delivered فقط.
+        - جدول Pick&Pack (Creation / Picked): حسب مدة (Creation → Picked) بالساعات،
+          بعد الفلترة على Warehouse + SO، حذف التكرار، Status Formula = Delivered فقط
+          (مع استبعاد Cancelled تلقائياً)، ثم التجميع بالشهر (YYYY-MM) على تاريخ الـ Creation.
         - كروت الـ KPI: نفس منطق Hit/Miss حسب الموعد (Deadline) على كل الصفوف الصالحة.
         """
         try:
@@ -6078,15 +7931,28 @@ class UploadExcelViewRoche(View):
             _b2c_max_rows = _excel_max_rows_for_request(request, force_full=True)
             _b2c_mode = "full" if _b2c_max_rows is None else str(_b2c_max_rows)
             _fsig = _excel_cache_sig_suffix(excel_path)
+            _b2c_wh_key = (request.GET.get("b2c_wh") or "").strip().lower()
             _b2c_key = (
-                "b2c_outbound_"
+                "b2c_outbound_v18_delay_zero_riyadh_"
                 + hashlib.md5((excel_path or "").encode()).hexdigest()[:16]
                 + "_"
                 + _fsig
                 + "_"
                 + _b2c_mode
+                + "_"
+                + (_b2c_wh_key or "all")
             )
-            _b2c_cached = _tab_cache_get(_b2c_key)
+            _force_b2c_refresh = (request.GET.get("force_tab_refresh") or "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            _b2c_cached = (
+                None
+                if _force_b2c_refresh
+                else _b2c_tab_result_cache_get(_b2c_key)
+            )
             if _b2c_cached is not None:
                 return _b2c_cached
 
@@ -6112,20 +7978,79 @@ class UploadExcelViewRoche(View):
                         "stats": {},
                     }
 
-            _nr_kw = _read_excel_nrows_kw(_b2c_max_rows)
-            df = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_nr_kw
+            df = _get_sheet_dataframe(
+                excel_path,
+                sheet_name,
+                use_cache=True,
+                max_rows=_b2c_max_rows,
+                request=request,
+                force_full=True,
+                header=0,
             )
-            df.columns = df.columns.astype(str).str.strip()
+            if df is None:
+                _nr_kw = _read_excel_nrows_kw(_b2c_max_rows)
+                df = pd.read_excel(
+                    excel_path,
+                    sheet_name=sheet_name,
+                    engine="openpyxl",
+                    header=0,
+                    **_nr_kw,
+                )
+                df.columns = df.columns.astype(str).str.strip()
+            else:
+                df.columns = df.columns.astype(str).str.strip()
             df_full = df.copy()
 
             def find_col(d, candidates):
+                def _norm(s):
+                    try:
+                        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+                    except Exception:
+                        return ""
+
+                cand_norm = {_norm(x) for x in candidates if str(x).strip()}
                 for c in d.columns:
                     if str(c).strip().lower() in [x.lower() for x in candidates]:
+                        return c
+                for c in d.columns:
+                    if _norm(c) in cand_norm:
                         return c
                 for cand in candidates:
                     for c in d.columns:
                         if cand.lower() in str(c).lower():
+                            return c
+                for cand in candidates:
+                    n_cand = _norm(cand)
+                    if not n_cand:
+                        continue
+                    for c in d.columns:
+                        if n_cand and n_cand in _norm(c):
+                            return c
+                return None
+
+            def find_col_prefer(d, candidates):
+                def _norm(s):
+                    try:
+                        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+                    except Exception:
+                        return ""
+
+                for cand in candidates:
+                    cand_l = str(cand).strip().lower()
+                    for c in d.columns:
+                        if str(c).strip().lower() == cand_l:
+                            return c
+                for cand in candidates:
+                    n_cand = _norm(cand)
+                    if not n_cand:
+                        continue
+                    for c in d.columns:
+                        if _norm(c) == n_cand:
+                            return c
+                for cand in candidates:
+                    cand_l = str(cand).strip().lower()
+                    for c in d.columns:
+                        if cand_l and cand_l in str(c).strip().lower():
                             return c
                 return None
 
@@ -6141,9 +8066,21 @@ class UploadExcelViewRoche(View):
                     "Order No",
                 ],
             )
+            warehouse_col = find_col(
+                df,
+                [
+                    "Warehouse",
+                    "WAREHOUSE",
+                    "Warehouse Name",
+                    "WH",
+                ],
+            )
             creation_col = find_col(
                 df,
                 [
+                    "Created time F&O",
+                    "Created Time F&O",
+                    "Created time F&O (MM/DD/YYYY HH:mm)",
                     "CREATTION DATE",
                     "CREATION DATE",
                     "Creation Date & Time",
@@ -6160,6 +8097,113 @@ class UploadExcelViewRoche(View):
                     "Picked Date",
                     "Picked Date & Time",
                     "Picked DateTime",
+                ],
+            )
+            status_formula_col = find_col(
+                df,
+                [
+                    "Status Formula",
+                    "STATUS FORMULA",
+                    "Status Formula ",
+                ],
+            )
+            pick_pack_sla_col = find_col_prefer(
+                df,
+                [
+                    "Pick&Pack SLA (In / Out)",
+                    "Pick&Pack SLA (In/Out)",
+                    "Pick & Pack SLA (In / Out)",
+                    "Pick & Pack SLA (In/Out)",
+                    "Pick&Pack SLA",
+                    "Pick & Pack SLA",
+                    "Pick&Pack SLA \n(In / Out)",
+                    "Pick & Pack SLA \n(In / Out)",
+                    "On Time / Delay Status",
+                    "On Time / Delay Status ",
+                    "SLA_Clean",
+                ],
+            )
+            dispatch_sla_col = find_col_prefer(
+                df,
+                [
+                    "Dispatch SLA (IN/OUT)",
+                    "Dispatch SLA (In/Out)",
+                    "Dispatch SLA (In / Out)",
+                    "Dispatch SLA",
+                    "Dispatch_SLA",
+                    "Dispatch SLA\n(IN/OUT)",
+                    "Dispatch SLA \n(IN/OUT)",
+                    "END to END Status",
+                    "SLA_Clean",
+                ],
+            )
+            lastmile_sla_col = find_col_prefer(
+                df,
+                [
+                    "Last Mile SLA (IN/OUT)",
+                    "Last Mile SLA (IN / OUT)",
+                    "Last Mile SLA (In/Out)",
+                    "Last Mile SLA (In / Out)",
+                    "Last Mile SLA",
+                    "LastMile SLA (IN/OUT)",
+                    "LastMile SLA (In/Out)",
+                    "LastMile SLA",
+                    "Last_Mile_SLA",
+                    "Last Mile SLA\n(IN/OUT)",
+                    "Last Mile SLA \n(IN/OUT)",
+                    "END to END Status",
+                    "On Time / Delay Status",
+                    "On Time / Delay Status ",
+                ],
+            )
+            e2e_actual_col = find_col_prefer(
+                df,
+                [
+                    "E2E KPI - ACTUAL (IN / OUT)",
+                    "E2E KPI - ACTUAL (IN/OUT)",
+                    "E2E KPI - ACTUAL(In / Out)",
+                    "E2E KPI - ACTUAL",
+                    "E2E KPI ACTUAL (IN / OUT)",
+                    "E2E KPI ACTUAL (IN/OUT)",
+                    "E2E KPI ACTUAL",
+                    "E2E KPI - ACTUAL\n(IN / OUT)",
+                    "E2E KPI - ACTUAL \n(IN / OUT)",
+                    "END to END Status",
+                ],
+            )
+            delay_reason_col = find_col_prefer(
+                df,
+                [
+                    "Reason of delay in delivery",
+                    "Reason of Delay in Delivery",
+                    "Delay reason",
+                    "Delay Reason",
+                    "Reason",
+                    "reason",
+                    "Reason of delay",
+                    "Delay reason in delivery",
+                ],
+            )
+            aramex_sub_reason_col = find_col_prefer(
+                df,
+                [
+                    "Aramex Sub Reason",
+                    "ARAMEX SUB REASON",
+                    "Aramex Sub-Reason",
+                    "Aramex Sub reason",
+                    "Sub Reason",
+                    "Sub reason",
+                ],
+            )
+            deviation_source_col = find_col_prefer(
+                df,
+                [
+                    "Deviation Source",
+                    "DEVIATION SOURCE",
+                    "Deviation source",
+                    "Deviation_Source",
+                    "Deviation Reason",
+                    "Missed Source",
                 ],
             )
             status_col = find_col(
@@ -6183,13 +8227,17 @@ class UploadExcelViewRoche(View):
                     "Delivered Date",
                     "Delivered Date & Time",
                     "Delivered DateTime",
+                    "Actual Delivery Date",
+                    "Actual Delivery Date & Time",
+                    "Actual Delivery DateTime",
                 ],
             )
 
-            if not order_col or not creation_col or not picked_col:
+            if not order_col or not creation_col or not picked_col or not warehouse_col:
                 missing = [
                     x
                     for x, c in [
+                        ("Warehouse", warehouse_col),
                         ("ORDER / SO", order_col),
                         ("Creation", creation_col),
                         ("Picked", picked_col),
@@ -6203,28 +8251,132 @@ class UploadExcelViewRoche(View):
                     "stats": {},
                 }
 
-            df = df.rename(
-                columns={
-                    order_col: "Order_SO",
-                    creation_col: "Creation_Date",
-                    picked_col: "Picked_Date",
-                }
-            )
+            selected_status_col = status_formula_col or status_col
+            _rename_cols = {
+                warehouse_col: "Warehouse",
+                order_col: "Order_SO",
+                creation_col: "Creation_Date",
+                picked_col: "Picked_Date",
+            }
+            if selected_status_col:
+                _rename_cols[selected_status_col] = "Status_Formula"
+            if pick_pack_sla_col:
+                _rename_cols[pick_pack_sla_col] = "PickPack_SLA"
+            if dispatch_sla_col and dispatch_sla_col != pick_pack_sla_col:
+                _rename_cols[dispatch_sla_col] = "Dispatch_SLA"
+            if (
+                lastmile_sla_col
+                and lastmile_sla_col != pick_pack_sla_col
+                and lastmile_sla_col != dispatch_sla_col
+            ):
+                _rename_cols[lastmile_sla_col] = "LastMile_SLA"
+            if (
+                e2e_actual_col
+                and e2e_actual_col != pick_pack_sla_col
+                and e2e_actual_col != dispatch_sla_col
+                and e2e_actual_col != lastmile_sla_col
+            ):
+                _rename_cols[e2e_actual_col] = "E2E_Actual_SLA"
+            if (
+                delay_reason_col
+                and delay_reason_col != pick_pack_sla_col
+                and delay_reason_col != dispatch_sla_col
+                and delay_reason_col != lastmile_sla_col
+                and delay_reason_col != e2e_actual_col
+            ):
+                _rename_cols[delay_reason_col] = "Delay_Reason"
+            if (
+                aramex_sub_reason_col
+                and aramex_sub_reason_col != pick_pack_sla_col
+                and aramex_sub_reason_col != dispatch_sla_col
+                and aramex_sub_reason_col != lastmile_sla_col
+                and aramex_sub_reason_col != e2e_actual_col
+                and aramex_sub_reason_col != delay_reason_col
+            ):
+                _rename_cols[aramex_sub_reason_col] = "Aramex_Sub_Reason"
+            if (
+                deviation_source_col
+                and deviation_source_col != pick_pack_sla_col
+                and deviation_source_col != dispatch_sla_col
+                and deviation_source_col != lastmile_sla_col
+                and deviation_source_col != e2e_actual_col
+                and deviation_source_col != delay_reason_col
+                and deviation_source_col != aramex_sub_reason_col
+            ):
+                _rename_cols[deviation_source_col] = "Deviation_Source"
+            # نسخة الشيت بأسماء الأعمدة الأصلية: جدول Raw + تجنب read_excel ثانٍ (تسريع كبير).
+            _b2c_raw_sheet_df = df.copy()
+            df = df.rename(columns=_rename_cols)
+            if "LastMile_SLA" not in df.columns and "Dispatch_SLA" in df.columns:
+                # عمود مشترك في بعض ملفات B2C (مثل END to END Status)
+                df["LastMile_SLA"] = df["Dispatch_SLA"]
+            if "E2E_Actual_SLA" not in df.columns and "Dispatch_SLA" in df.columns:
+                # بعض الملفات تستخدم نفس عمود الحالة لأكثر من KPI
+                df["E2E_Actual_SLA"] = df["Dispatch_SLA"]
+            if "Delay_Reason" not in df.columns:
+                df["Delay_Reason"] = ""
+            if "Aramex_Sub_Reason" not in df.columns and "Delay_Reason" in df.columns:
+                # Fallback عملي: بعض الملفات لا تحتوي Aramex Sub Reason لكن تحتوي Delay Reason.
+                df["Aramex_Sub_Reason"] = df["Delay_Reason"]
+            elif "Aramex_Sub_Reason" not in df.columns:
+                df["Aramex_Sub_Reason"] = ""
+            if "Deviation_Source" not in df.columns and "Aramex_Sub_Reason" in df.columns:
+                # Fallback عملي إذا لم يوجد عمود Deviation Source في بعض الملفات.
+                df["Deviation_Source"] = df["Aramex_Sub_Reason"]
+            elif "Deviation_Source" not in df.columns:
+                df["Deviation_Source"] = ""
             df["Creation_Date"] = _excel_dates_to_datetime(df["Creation_Date"], errors="coerce")
             df["Picked_Date"] = _excel_dates_to_datetime(df["Picked_Date"], errors="coerce")
-            df = df.dropna(subset=["Order_SO", "Creation_Date", "Picked_Date"])
+            df_base = df.dropna(subset=["Warehouse", "Order_SO", "Creation_Date"]).copy()
+            if not df_base.empty:
+                df_base["Warehouse"] = df_base["Warehouse"].astype(str).str.strip()
+                df_base["Order_SO"] = df_base["Order_SO"].astype(str).str.strip()
+                df_base = df_base[
+                    df_base["Warehouse"].ne("")
+                    & df_base["Order_SO"].ne("")
+                    & ~df_base["Warehouse"].str.lower().isin(["nan", "none"])
+                    & ~df_base["Order_SO"].str.lower().isin(["nan", "none"])
+                ]
+                # إزالة التكرار على مستوى Warehouse + SO بعد الفلترة
+                df_base = df_base.sort_values(
+                    ["Warehouse", "Order_SO", "Creation_Date"]
+                ).drop_duplicates(subset=["Warehouse", "Order_SO"], keep="first")
+
+            b2c_warehouse_options = []
+            if not df_base.empty:
+                b2c_warehouse_options = sorted(
+                    {
+                        str(w).strip()
+                        for w in df_base["Warehouse"].dropna().tolist()
+                        if str(w).strip()
+                    },
+                    key=lambda x: x.lower(),
+                )
+            selected_b2c_wh = (request.GET.get("b2c_wh") or "").strip()
+            if selected_b2c_wh and not df_base.empty:
+                _target_wh = selected_b2c_wh.lower()
+                _wser = df_base["Warehouse"].astype(str).str.strip().str.lower()
+                _wh_mask = _wser == _target_wh
+                # لو القيمة في الإكسل فيها بادئة/لاحقة (مثل WH - Jeddah) نطابق جزئياً بعد فشل المطابقة التامة.
+                if not _wh_mask.any() and len(_target_wh) >= 4:
+                    _wh_mask = _wser.str.contains(
+                        re.escape(_target_wh), na=False, regex=True
+                    )
+                df_base = df_base[_wh_mask].copy()
+
+            df = df_base.dropna(subset=["Picked_Date"]).copy()
+            if "Status_Formula" in df.columns:
+                _status_series = (
+                    df["Status_Formula"].astype(str).str.strip().str.upper()
+                )
+                df = df[_status_series == "DELIVERED"].copy()
             if df.empty:
                 return {
-                    "detail_html": "<p class='text-warning'>⚠️ No rows with valid Order, Creation and Picked dates.</p>",
+                    "detail_html": "<p class='text-warning'>⚠️ No rows with valid Warehouse, SO, Creation, Picked and Delivered status.</p>",
                     "sub_tables": [],
                     "raw_excel_table": None,
                     "stats": {},
                 }
-
-            # تجميع بالطلب: نأخذ أول صف لكل Order (أو يمكن آخر Picked)
-            df = df.sort_values(["Order_SO", "Creation_Date"]).drop_duplicates(
-                subset=["Order_SO"], keep="first"
-            )
 
             def get_deadline(creation_dt):
                 if pd.isna(creation_dt):
@@ -6319,14 +8471,6 @@ class UploadExcelViewRoche(View):
                 return pick_peak_cycles[9]
 
             df_pp = df.copy()
-            if status_col:
-                st_series = (
-                    df_full.loc[df_pp.index, status_col]
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
-                df_pp = df_pp[st_series == "DELIVERED"].copy()
 
             df_pp["Duration_Hours_Float"] = (
                 df_pp["Picked_Date"] - df_pp["Creation_Date"]
@@ -6375,9 +8519,9 @@ class UploadExcelViewRoche(View):
                     row[ym] = c
                     row_sum += c
                 rp = (
-                    round(100.0 * row_sum / grand_total_pp, 1)
+                    int(round(100.0 * row_sum / grand_total_pp))
                     if grand_total_pp
-                    else 0.0
+                    else 0
                 )
                 row["%"] = f"{rp}%"
                 pick_peak_count_rows.append(row)
@@ -6414,7 +8558,7 @@ class UploadExcelViewRoche(View):
             sub_tables = [
                 {
                     "id": "sub-table-b2c-pick-peak",
-                    "title": "Pick & Peak — Creation / Picked",
+                    "title": "Pick&Pack — Creation / Picked",
                     "columns": pick_peak_columns,
                     "data": pick_peak_count_rows,
                     "pick_peak_summary": pick_peak_summary,
@@ -6423,83 +8567,295 @@ class UploadExcelViewRoche(View):
                 }
             ]
 
-            # ——— جدول Dispatch: Status = Delivered، Creation 9am–3pm → قبل 5:30pm، 3pm–9am → قبل 11:30am ———
-            if status_col and dispatch_col:
-                df_d = df_full[
-                    df_full[status_col].astype(str).str.strip().str.upper()
-                    == "DELIVERED"
-                ][[order_col, creation_col, dispatch_col]].copy()
-                df_d = df_d.rename(
-                    columns={
-                        order_col: "Order_SO",
-                        creation_col: "Creation_Date",
-                        dispatch_col: "Dispatch_Date",
+            # ——— جدول Pick&Pack KPI Actual: SLA In/Out بعد استبعاد Cancelled ———
+            pivot_pp_kpi = ["KPI"]
+            hit_pct_pp_kpi = {"KPI": "Hit %"}
+            hit_pp_kpi = {"KPI": "Hit"}
+            miss_pp_kpi = {"KPI": "Miss"}
+            total_pp_kpi = {"KPI": "Total Shipments"}
+            pp_kpi_chart_data = []
+            pickpack_kpi_actual_summary = {
+                "total_after_dedupe": 0,
+                "in_count": 0,
+                "out_count": 0,
+                "hit_pct": 0,
+            }
+
+            if "PickPack_SLA" in df_base.columns and not df_base.empty:
+                df_pp_kpi = df_base.copy()
+                _sla_raw = (
+                    df_pp_kpi["PickPack_SLA"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                )
+
+                def _normalize_pickpack_sla(v):
+                    s = str(v or "").strip().upper()
+                    if not s or s in ("NAN", "NONE", "<NA>"):
+                        return ""
+                    # Excluded statuses
+                    if "CANCEL" in s:
+                        return "CANCELLED"
+                    if "RETURN" in s:
+                        return "RETURNED"
+                    # Hit aliases
+                    if s in ("IN", "OK", "ON TIME", "ONTIME", "HIT"):
+                        return "IN"
+                    if "(OK)" in s or " OK" in s:
+                        return "IN"
+                    # Miss aliases
+                    if s in ("OUT", "LATE", "DELAY", "MISS"):
+                        return "OUT"
+                    if "(LATE)" in s or "LATE" in s or "DELAY" in s:
+                        return "OUT"
+                    return ""
+
+                _sla = _sla_raw.apply(_normalize_pickpack_sla)
+                df_pp_kpi = df_pp_kpi.assign(SLA_Status=_sla)
+                df_pp_kpi = df_pp_kpi[
+                    ~df_pp_kpi["SLA_Status"].isin(["", "NAN", "NONE"])
+                ]
+                df_pp_kpi = df_pp_kpi[
+                    ~df_pp_kpi["SLA_Status"].isin(["CANCELLED", "RETURNED"])
+                ]
+                df_pp_kpi = df_pp_kpi[
+                    df_pp_kpi["SLA_Status"].isin(["IN", "OUT"])
+                ]
+
+                if not df_pp_kpi.empty:
+                    # الشهر مبني على تاريخ الإنشاء فقط (Creation date)
+                    df_pp_kpi["Month"] = df_pp_kpi["Creation_Date"].dt.strftime("%b")
+                    df_pp_kpi = df_pp_kpi[df_pp_kpi["Month"].notna()]
+                    df_pp_kpi["is_hit"] = df_pp_kpi["SLA_Status"] == "IN"
+
+                    month_order_pp_kpi = [
+                        "Jan",
+                        "Feb",
+                        "Mar",
+                        "Apr",
+                        "May",
+                        "Jun",
+                        "Jul",
+                        "Aug",
+                        "Sep",
+                        "Oct",
+                        "Nov",
+                        "Dec",
+                    ]
+                    month_order_value_pp_kpi = {
+                        m: i for i, m in enumerate(month_order_pp_kpi)
                     }
+
+                    pp_kpi_summary = (
+                        df_pp_kpi.groupby("Month", as_index=False)
+                        .agg(
+                            Total_Shipments=("Order_SO", "count"),
+                            Hits=("is_hit", "sum"),
+                        )
+                    )
+                    pp_kpi_summary["Misses"] = (
+                        pp_kpi_summary["Total_Shipments"] - pp_kpi_summary["Hits"]
+                    )
+                    pp_kpi_summary = pp_kpi_summary.sort_values(
+                        by="Month",
+                        key=lambda c: c.map(
+                            lambda m: month_order_value_pp_kpi.get(m, 99)
+                        ),
+                    )
+                    ordered_pp_kpi = pp_kpi_summary["Month"].tolist()
+                    agg_col_pp_kpi = None
+                    if len(ordered_pp_kpi) >= 2:
+                        agg_col_pp_kpi = str(
+                            int(df_pp_kpi["Creation_Date"].dropna().dt.year.max())
+                        )
+                    pivot_pp_kpi = ["KPI"] + ordered_pp_kpi + (
+                        [agg_col_pp_kpi] if agg_col_pp_kpi else []
+                    )
+
+                    for _, r in pp_kpi_summary.iterrows():
+                        m = r["Month"]
+                        t = int(r["Total_Shipments"])
+                        h = int(r["Hits"])
+                        ms = int(r["Misses"])
+                        hp = int(round(h * 100 / t)) if t else 0
+                        mp = int(round(ms * 100 / t)) if t else 0
+                        hit_pct_pp_kpi[m] = hp
+                        hit_pp_kpi[m] = f"{h} ({hp}%)"
+                        miss_pp_kpi[m] = f"{ms} ({mp}%)"
+                        total_pp_kpi[m] = t
+                    if agg_col_pp_kpi:
+                        t_all = int(pp_kpi_summary["Total_Shipments"].sum())
+                        h_all = int(pp_kpi_summary["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
+                        mp_all = int(round(ms_all * 100 / t_all)) if t_all else 0
+                        hit_pct_pp_kpi[agg_col_pp_kpi] = hp_all
+                        hit_pp_kpi[agg_col_pp_kpi] = f"{h_all} ({hp_all}%)"
+                        miss_pp_kpi[agg_col_pp_kpi] = f"{ms_all} ({mp_all}%)"
+                        total_pp_kpi[agg_col_pp_kpi] = t_all
+
+                    pp_kpi_chart_data = [
+                        {
+                            "type": "column",
+                            "name": "Pick&Pack KPI Actual Hit %",
+                            "color": "#9F8170",
+                            "related_table": "sub-table-b2c-pickpack-kpi-actual",
+                            "dataPoints": [
+                                {"label": m, "y": int(hit_pct_pp_kpi[m])}
+                                for m in ordered_pp_kpi
+                            ],
+                        }
+                    ]
+
+                    total_pp_kpi_all = int(pp_kpi_summary["Total_Shipments"].sum())
+                    hit_pp_kpi_all = int(pp_kpi_summary["Hits"].sum())
+                    miss_pp_kpi_all = total_pp_kpi_all - hit_pp_kpi_all
+                    hit_pct_pp_kpi_all = (
+                        int(round(hit_pp_kpi_all * 100 / total_pp_kpi_all))
+                        if total_pp_kpi_all
+                        else 0
+                    )
+                    pickpack_kpi_actual_summary = {
+                        "total_after_dedupe": total_pp_kpi_all,
+                        "in_count": hit_pp_kpi_all,
+                        "out_count": miss_pp_kpi_all,
+                        "hit_pct": hit_pct_pp_kpi_all,
+                    }
+
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-pickpack-kpi-actual",
+                    "title": "Pick&Pack KPI Actual",
+                    "columns": pivot_pp_kpi,
+                    "data": [
+                        hit_pct_pp_kpi,
+                        hit_pp_kpi,
+                        miss_pp_kpi,
+                        total_pp_kpi,
+                    ],
+                    "full_width": False,
+                    "side_by_side_chart": True,
+                    "chart_data": pp_kpi_chart_data,
+                    "summary": pickpack_kpi_actual_summary,
+                }
+            )
+
+            # ——— جدول Pick&Pack & Dispatch Delay Reasons: بعد Warehouse + SO dedupe + Creation Date ———
+            delay_reason_rows = []
+            delay_reason_columns = ["Warehouse", "Delay Reason", "Shipments"]
+            delay_reason_summary = {
+                "total_after_dedupe": int(len(df_base)),
+                "shipments_with_reason": 0,
+            }
+            if not df_base.empty and "Delay_Reason" in df_base.columns:
+                df_delay = df_base.copy()
+                df_delay["Creation_Date_Only"] = pd.to_datetime(
+                    df_delay["Creation_Date"], errors="coerce"
+                ).dt.date
+                df_delay = df_delay[df_delay["Creation_Date_Only"].notna()]
+                df_delay["Delay_Reason"] = (
+                    df_delay["Delay_Reason"].astype(str).str.strip()
                 )
-                df_d["Creation_Date"] = _excel_dates_to_datetime(
-                    df_d["Creation_Date"], errors="coerce"
+                df_delay = df_delay[
+                    df_delay["Delay_Reason"].ne("")
+                    & ~df_delay["Delay_Reason"].str.lower().isin(
+                        ["nan", "none", "<na>", "n/a", "-", "--"]
+                    )
+                ]
+                # طلب المستخدم: حذف Delay Reason = 0 لمخزني جدة والرياض.
+                if not df_delay.empty:
+                    wh_norm = df_delay["Warehouse"].astype(str).str.strip().str.lower()
+                    reason_norm = (
+                        df_delay["Delay_Reason"].astype(str).str.strip().str.lower()
+                    )
+                    is_jeddah = wh_norm.str.contains("jeddah", na=False) | wh_norm.str.contains(
+                        "جدة", na=False
+                    )
+                    is_riyadh = wh_norm.str.contains("riyadh", na=False) | wh_norm.str.contains(
+                        "الرياض", na=False
+                    )
+                    is_zero_reason = reason_norm.isin(["0", "0.0", "0,0"])
+                    df_delay = df_delay[~((is_jeddah | is_riyadh) & is_zero_reason)]
+                if not df_delay.empty:
+                    delay_counts = (
+                        df_delay.groupby(["Warehouse", "Delay_Reason"], as_index=False)
+                        .agg(Shipments=("Order_SO", "count"))
+                        .sort_values(
+                            by=["Warehouse", "Shipments", "Delay_Reason"],
+                            ascending=[True, False, True],
+                        )
+                    )
+                    for _, r in delay_counts.iterrows():
+                        delay_reason_rows.append(
+                            {
+                                "Warehouse": str(r["Warehouse"]),
+                                "Delay Reason": str(r["Delay_Reason"]),
+                                "Shipments": int(r["Shipments"]),
+                            }
+                        )
+                    delay_reason_summary["shipments_with_reason"] = int(
+                        delay_counts["Shipments"].sum()
+                    )
+
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-pickpack-dispatch-delay-reasons",
+                    "title": "Pick&Pack & Dispatch Delay Reasons",
+                    "columns": delay_reason_columns,
+                    "data": delay_reason_rows,
+                    "full_width": True,
+                    "col_12": True,
+                    "summary": delay_reason_summary,
+                }
+            )
+
+            # ——— جدول Dispatch: Warehouse ثم SO (بدون تكرار) ثم Creation Date ثم Dispatch SLA (IN/OUT) ———
+            pivot_dispatch = ["KPI"]
+            hit_pct_d = {"KPI": "Hit %"}
+            hit_d = {"KPI": "Hit"}
+            miss_d = {"KPI": "Miss"}
+            total_d = {"KPI": "Total Shipments"}
+            dispatch_chart_data = []
+
+            if "Dispatch_SLA" in df_base.columns and not df_base.empty:
+                df_d = df_base.copy()
+                _dispatch_sla_raw = (
+                    df_d["Dispatch_SLA"].astype(str).str.strip().str.upper()
                 )
-                df_d["Dispatch_Date"] = _excel_dates_to_datetime(
-                    df_d["Dispatch_Date"], errors="coerce"
+
+                def _normalize_dispatch_sla(v):
+                    s = str(v or "").strip().upper()
+                    if not s or s in ("NAN", "NONE", "<NA>"):
+                        return ""
+                    if "CANCEL" in s:
+                        return "CANCELLED"
+                    if s in ("IN", "OK", "ON TIME", "ONTIME", "HIT"):
+                        return "IN"
+                    if s in ("OUT", "LATE", "DELAY", "MISS"):
+                        return "OUT"
+                    if " IN" in f" {s} " and "OUT" not in s:
+                        return "IN"
+                    if " OUT" in f" {s} ":
+                        return "OUT"
+                    if "(OK)" in s or " OK" in s:
+                        return "IN"
+                    if "(LATE)" in s or " LATE" in s or "DELAY" in s:
+                        return "OUT"
+                    return ""
+
+                df_d["SLA_Status"] = _dispatch_sla_raw.apply(
+                    _normalize_dispatch_sla
                 )
-                df_d = df_d.dropna(
-                    subset=["Order_SO", "Creation_Date", "Dispatch_Date"]
-                )
+                df_d = df_d[
+                    ~df_d["SLA_Status"].isin(["", "NAN", "NONE", "CANCELLED"])
+                ]
+                df_d = df_d[df_d["SLA_Status"].isin(["IN", "OUT"])].copy()
+
                 if not df_d.empty:
-                    df_d = (
-                        df_d.sort_values(["Order_SO", "Creation_Date"])
-                        .drop_duplicates(subset=["Order_SO"], keep="first")
-                    )
-
-                    def get_dispatch_deadline(creation_dt):
-                        if pd.isna(creation_dt):
-                            return pd.NaT
-                        try:
-                            ts = pd.Timestamp(creation_dt)
-                            d = ts.date()
-                            t = ts.time()
-                            t9 = time(9, 0)
-                            t15 = time(15, 0)
-                            t530 = time(17, 30)
-                            t1130 = time(11, 30)
-                            if t9 <= t < t15:
-                                return pd.Timestamp(
-                                    datetime.combine(d, t530)
-                                )
-                            elif t >= t15:
-                                next_d = d + timedelta(days=1)
-                                return pd.Timestamp(
-                                    datetime.combine(next_d, t1130)
-                                )
-                            else:
-                                return pd.Timestamp(
-                                    datetime.combine(d, t1130)
-                                )
-                        except Exception:
-                            return pd.NaT
-
-                    df_d["Deadline"] = df_d["Creation_Date"].apply(
-                        get_dispatch_deadline
-                    )
-                    df_d["is_hit"] = (
-                        (df_d["Dispatch_Date"] <= df_d["Deadline"])
-                        & df_d["Deadline"].notna()
-                    )
-                    df_d["Duration_Hours"] = (
-                        (
-                            df_d["Dispatch_Date"]
-                            - df_d["Creation_Date"]
-                        ).dt.total_seconds()
-                        / 3600.0
-                    )
-                    df_d["Duration_Hours"] = df_d["Duration_Hours"].apply(
-                        lambda x: int(round(x))
-                        if pd.notna(x) and not (isinstance(x, float) and (x != x))
-                        else pd.NA
-                    )
-
                     df_d["Month"] = df_d["Creation_Date"].dt.strftime("%b")
                     df_d = df_d[df_d["Month"].notna()]
+                    df_d["is_hit"] = df_d["SLA_Status"] == "IN"
 
                     month_order = [
                         "Jan",
@@ -6544,10 +8900,6 @@ class UploadExcelViewRoche(View):
                         [agg_col] if agg_col else []
                     )
 
-                    hit_pct_d = {"KPI": "Hit %"}
-                    hit_d = {"KPI": "Hit"}
-                    miss_d = {"KPI": "Miss"}
-                    total_d = {"KPI": "Total Shipments"}
                     for _, r in dispatch_summary.iterrows():
                         m = r["Month"]
                         t = int(r["Total_Shipments"])
@@ -6579,83 +8931,81 @@ class UploadExcelViewRoche(View):
                             "dataPoints": [
                                 {"label": m, "y": int(hit_pct_d[m])}
                                 for m in ordered_dispatch
-                                if int(hit_pct_d[m]) > 0
                             ],
                         }
                     ]
 
-                    sub_tables.append(
-                        {
-                            "id": "sub-table-b2c-dispatch",
-                            "title": "Dispatch — Creation to Dispatch",
-                            "columns": pivot_dispatch,
-                            "data": [
-                                hit_pct_d,
-                                hit_d,
-                                miss_d,
-                                total_d,
-                            ],
-                            "full_width": False,
-                            "side_by_side_chart": True,
-                            "chart_data": dispatch_chart_data,
-                        }
-                    )
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-dispatch",
+                    "title": "Dispatch — Creation to Dispatch",
+                    "columns": pivot_dispatch,
+                    "data": [
+                        hit_pct_d,
+                        hit_d,
+                        miss_d,
+                        total_d,
+                    ],
+                    "full_width": False,
+                    "side_by_side_chart": True,
+                    "chart_data": dispatch_chart_data,
+                }
+            )
 
-            # ——— جدول Last Mile KPI: Dispatch → Delivered خلال 48 hours = Hit ———
-            if (
-                status_col
-                and dispatch_col
-                and delivered_col
-                and creation_col
-            ):
-                df_lm = df_full[
-                    df_full[status_col].astype(str).str.strip().str.upper()
-                    == "DELIVERED"
-                ][[order_col, creation_col, dispatch_col, delivered_col]].copy()
-                df_lm = df_lm.rename(
-                    columns={
-                        order_col: "Order_SO",
-                        creation_col: "Creation_Date",
-                        dispatch_col: "Dispatch_Date",
-                        delivered_col: "Delivered_Date",
-                    }
+            # ——— جدول Last Mile KPI: Warehouse ثم SO (بدون تكرار) ثم Creation Date ثم Last Mile SLA (IN/OUT) ———
+            pivot_lm = ["KPI"]
+            hit_pct_lm = {"KPI": "Hit %"}
+            hit_lm = {"KPI": "Hit"}
+            miss_lm = {"KPI": "Miss"}
+            total_lm = {"KPI": "Total Shipments"}
+            lastmile_chart_data = []
+            lastmile_kpi_summary = {
+                "total_after_dedupe": 0,
+                "in_count": 0,
+                "out_count": 0,
+                "hit_pct": 0,
+            }
+            lastmile_kpi_built = False
+
+            if "LastMile_SLA" in df_base.columns and not df_base.empty:
+                df_lm = df_base.copy()
+                _lastmile_sla_raw = (
+                    df_lm["LastMile_SLA"].astype(str).str.strip().str.upper()
                 )
-                df_lm["Creation_Date"] = _excel_dates_to_datetime(
-                    df_lm["Creation_Date"], errors="coerce"
+
+                def _normalize_lastmile_sla(v):
+                    s = str(v or "").strip().upper()
+                    if not s or s in ("NAN", "NONE", "<NA>"):
+                        return ""
+                    if "CANCEL" in s:
+                        return "CANCELLED"
+                    if s in ("IN", "OK", "ON TIME", "ONTIME", "HIT"):
+                        return "IN"
+                    if s in ("OUT", "LATE", "DELAY", "MISS"):
+                        return "OUT"
+                    if " IN" in f" {s} " and "OUT" not in s:
+                        return "IN"
+                    if " OUT" in f" {s} ":
+                        return "OUT"
+                    if "(OK)" in s or " OK" in s:
+                        return "IN"
+                    if "(LATE)" in s or " LATE" in s or "DELAY" in s:
+                        return "OUT"
+                    return ""
+
+                df_lm["SLA_Status"] = _lastmile_sla_raw.apply(
+                    _normalize_lastmile_sla
                 )
-                df_lm["Dispatch_Date"] = _excel_dates_to_datetime(
-                    df_lm["Dispatch_Date"], errors="coerce"
-                )
-                df_lm["Delivered_Date"] = _excel_dates_to_datetime(
-                    df_lm["Delivered_Date"], errors="coerce"
-                )
-                df_lm = df_lm.dropna(
-                    subset=[
-                        "Order_SO",
-                        "Creation_Date",
-                        "Dispatch_Date",
-                        "Delivered_Date",
-                    ]
-                )
+                df_lm = df_lm[
+                    ~df_lm["SLA_Status"].isin(["", "NAN", "NONE", "CANCELLED"])
+                ]
+                df_lm = df_lm[df_lm["SLA_Status"].isin(["IN", "OUT"])].copy()
+
                 if not df_lm.empty:
-                    df_lm = (
-                        df_lm.sort_values(["Order_SO", "Dispatch_Date"])
-                        .drop_duplicates(subset=["Order_SO"], keep="first")
-                    )
-                    hours_48 = (
-                        df_lm["Delivered_Date"] - df_lm["Dispatch_Date"]
-                    ).dt.total_seconds() / 3600.0
-                    df_lm["is_hit"] = (hours_48 <= 48) & hours_48.notna()
-                    df_lm["Duration_Hours"] = hours_48
-                    df_lm["Duration_Hours"] = df_lm["Duration_Hours"].apply(
-                        lambda x: int(round(x))
-                        if pd.notna(x) and not (isinstance(x, float) and (x != x))
-                        else pd.NA
-                    )
-
-                    # Same month buckets as Pick & Peak / Dispatch (creation month), not dispatch month
+                    lastmile_kpi_built = True
                     df_lm["Month"] = df_lm["Creation_Date"].dt.strftime("%b")
                     df_lm = df_lm[df_lm["Month"].notna()]
+                    df_lm["is_hit"] = df_lm["SLA_Status"] == "IN"
 
                     month_order_lm = [
                         "Jan",
@@ -6701,10 +9051,6 @@ class UploadExcelViewRoche(View):
                         [agg_col_lm] if agg_col_lm else []
                     )
 
-                    hit_pct_lm = {"KPI": "Hit %"}
-                    hit_lm = {"KPI": "Hit"}
-                    miss_lm = {"KPI": "Miss"}
-                    total_lm = {"KPI": "Total Shipments"}
                     for _, r in lm_summary.iterrows():
                         m = r["Month"]
                         t = int(r["Total_Shipments"])
@@ -6726,6 +9072,11 @@ class UploadExcelViewRoche(View):
                         hit_lm[agg_col_lm] = f"{h_all} ({hp_all}%)"
                         miss_lm[agg_col_lm] = f"{ms_all} ({mp_all}%)"
                         total_lm[agg_col_lm] = t_all
+                    else:
+                        t_all = int(lm_summary["Total_Shipments"].sum())
+                        h_all = int(lm_summary["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
 
                     lastmile_chart_data = [
                         {
@@ -6736,68 +9087,300 @@ class UploadExcelViewRoche(View):
                             "dataPoints": [
                                 {"label": m, "y": int(hit_pct_lm[m])}
                                 for m in ordered_lm
-                                if int(hit_pct_lm[m]) > 0
                             ],
                         }
                     ]
 
-                    sub_tables.append(
-                        {
-                            "id": "sub-table-b2c-lastmile",
-                            "title": "Last Mile KPI — Dispatch / Delivered (≤48 hours)",
-                            "columns": pivot_lm,
-                            "data": [
-                                hit_pct_lm,
-                                hit_lm,
-                                miss_lm,
-                                total_lm,
-                            ],
-                            "full_width": False,
-                            "side_by_side_chart": True,
-                            "chart_data": lastmile_chart_data,
-                        }
-                    )
+                    lastmile_kpi_summary = {
+                        "total_after_dedupe": t_all,
+                        "in_count": h_all,
+                        "out_count": ms_all,
+                        "hit_pct": hp_all,
+                    }
 
-            # ——— جدول End to End (Creation / Delivered): خلال 48 hours = Hit ———
-            if status_col and creation_col and delivered_col:
-                df_ee = df_full[
-                    df_full[status_col].astype(str).str.strip().str.upper()
+            # Fallback آمن: إذا عمود Last Mile SLA غير موجود/فارغ بالكامل نرجع لمنطق 48 ساعة
+            # حتى لا يظهر الجدول فارغاً للمستخدمين القدامى.
+            if (
+                not lastmile_kpi_built
+                and status_col
+                and dispatch_col
+                and delivered_col
+                and creation_col
+            ):
+                # df_full كان بدون فلتر المستودع؛ نطبق نفس منطق b2c_wh حتى لا يظهر Last Mile لكل المستودعات.
+                df_lm_src = df_full
+                if selected_b2c_wh and warehouse_col in df_full.columns:
+                    tw = selected_b2c_wh.strip().lower()
+                    _w_raw = (
+                        df_full[warehouse_col]
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                    )
+                    _m_wh = _w_raw == tw
+                    if not _m_wh.any() and len(tw) >= 4:
+                        _m_wh = _w_raw.str.contains(
+                            re.escape(tw), na=False, regex=True
+                        )
+                    df_lm_src = df_full[_m_wh].copy()
+                df_lm_fb = df_lm_src[
+                    df_lm_src[status_col].astype(str).str.strip().str.upper()
                     == "DELIVERED"
-                ][[order_col, creation_col, delivered_col]].copy()
-                df_ee = df_ee.rename(
+                ][[order_col, creation_col, dispatch_col, delivered_col]].copy()
+                df_lm_fb = df_lm_fb.rename(
                     columns={
                         order_col: "Order_SO",
                         creation_col: "Creation_Date",
+                        dispatch_col: "Dispatch_Date",
                         delivered_col: "Delivered_Date",
                     }
                 )
-                df_ee["Creation_Date"] = _excel_dates_to_datetime(
-                    df_ee["Creation_Date"], errors="coerce"
+                df_lm_fb["Creation_Date"] = _excel_dates_to_datetime(
+                    df_lm_fb["Creation_Date"], errors="coerce"
                 )
-                df_ee["Delivered_Date"] = _excel_dates_to_datetime(
-                    df_ee["Delivered_Date"], errors="coerce"
+                df_lm_fb["Dispatch_Date"] = _excel_dates_to_datetime(
+                    df_lm_fb["Dispatch_Date"], errors="coerce"
                 )
-                df_ee = df_ee.dropna(
-                    subset=["Order_SO", "Creation_Date", "Delivered_Date"]
+                df_lm_fb["Delivered_Date"] = _excel_dates_to_datetime(
+                    df_lm_fb["Delivered_Date"], errors="coerce"
                 )
-                if not df_ee.empty:
-                    df_ee = (
-                        df_ee.sort_values(["Order_SO", "Creation_Date"])
+                df_lm_fb = df_lm_fb.dropna(
+                    subset=[
+                        "Order_SO",
+                        "Creation_Date",
+                        "Dispatch_Date",
+                        "Delivered_Date",
+                    ]
+                )
+                if not df_lm_fb.empty:
+                    df_lm_fb = (
+                        df_lm_fb.sort_values(["Order_SO", "Dispatch_Date"])
                         .drop_duplicates(subset=["Order_SO"], keep="first")
                     )
-                    hours_48_ee = (
-                        df_ee["Delivered_Date"] - df_ee["Creation_Date"]
+                    hours_48 = (
+                        df_lm_fb["Delivered_Date"] - df_lm_fb["Dispatch_Date"]
                     ).dt.total_seconds() / 3600.0
-                    df_ee["is_hit"] = (hours_48_ee <= 48) & hours_48_ee.notna()
-                    df_ee["Duration_Hours"] = hours_48_ee
-                    df_ee["Duration_Hours"] = df_ee["Duration_Hours"].apply(
-                        lambda x: int(round(x))
-                        if pd.notna(x) and not (isinstance(x, float) and (x != x))
-                        else pd.NA
+                    df_lm_fb["is_hit"] = (hours_48 <= 48) & hours_48.notna()
+                    df_lm_fb["Month"] = df_lm_fb["Creation_Date"].dt.strftime("%b")
+                    df_lm_fb = df_lm_fb[df_lm_fb["Month"].notna()]
+
+                    month_order_lm = [
+                        "Jan",
+                        "Feb",
+                        "Mar",
+                        "Apr",
+                        "May",
+                        "Jun",
+                        "Jul",
+                        "Aug",
+                        "Sep",
+                        "Oct",
+                        "Nov",
+                        "Dec",
+                    ]
+                    month_order_value_lm = {
+                        m: i for i, m in enumerate(month_order_lm)
+                    }
+
+                    lm_summary_fb = (
+                        df_lm_fb.groupby("Month", as_index=False)
+                        .agg(
+                            Total_Shipments=("Order_SO", "count"),
+                            Hits=("is_hit", "sum"),
+                        )
+                    )
+                    lm_summary_fb["Misses"] = (
+                        lm_summary_fb["Total_Shipments"] - lm_summary_fb["Hits"]
+                    )
+                    lm_summary_fb = lm_summary_fb.sort_values(
+                        by="Month",
+                        key=lambda c: c.map(
+                            lambda m: month_order_value_lm.get(m, 99)
+                        ),
+                    )
+                    ordered_lm_fb = lm_summary_fb["Month"].tolist()
+                    agg_col_lm_fb = None
+                    if len(ordered_lm_fb) >= 2:
+                        agg_col_lm_fb = str(
+                            int(df_lm_fb["Creation_Date"].dropna().dt.year.max())
+                        )
+                    pivot_lm = ["KPI"] + ordered_lm_fb + (
+                        [agg_col_lm_fb] if agg_col_lm_fb else []
                     )
 
+                    for _, r in lm_summary_fb.iterrows():
+                        m = r["Month"]
+                        t = int(r["Total_Shipments"])
+                        h = int(r["Hits"])
+                        ms = int(r["Misses"])
+                        hp = int(round(h * 100 / t)) if t else 0
+                        mp = int(round(ms * 100 / t)) if t else 0
+                        hit_pct_lm[m] = hp
+                        hit_lm[m] = f"{h} ({hp}%)"
+                        miss_lm[m] = f"{ms} ({mp}%)"
+                        total_lm[m] = t
+                    if agg_col_lm_fb:
+                        t_all = int(lm_summary_fb["Total_Shipments"].sum())
+                        h_all = int(lm_summary_fb["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
+                        mp_all = int(round(ms_all * 100 / t_all)) if t_all else 0
+                        hit_pct_lm[agg_col_lm_fb] = hp_all
+                        hit_lm[agg_col_lm_fb] = f"{h_all} ({hp_all}%)"
+                        miss_lm[agg_col_lm_fb] = f"{ms_all} ({mp_all}%)"
+                        total_lm[agg_col_lm_fb] = t_all
+                    else:
+                        t_all = int(lm_summary_fb["Total_Shipments"].sum())
+                        h_all = int(lm_summary_fb["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
+
+                    lastmile_chart_data = [
+                        {
+                            "type": "column",
+                            "name": "Last Mile Hit %",
+                            "color": "#9F8170",
+                            "related_table": "sub-table-b2c-lastmile",
+                            "dataPoints": [
+                                {"label": m, "y": int(hit_pct_lm[m])}
+                                for m in ordered_lm_fb
+                            ],
+                        }
+                    ]
+                    lastmile_kpi_summary = {
+                        "total_after_dedupe": t_all,
+                        "in_count": h_all,
+                        "out_count": ms_all,
+                        "hit_pct": hp_all,
+                    }
+
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-lastmile",
+                    "title": "Last Mile KPI — Dispatch / Delivered",
+                    "columns": pivot_lm,
+                    "data": [
+                        hit_pct_lm,
+                        hit_lm,
+                        miss_lm,
+                        total_lm,
+                    ],
+                    "full_width": False,
+                    "side_by_side_chart": True,
+                    "chart_data": lastmile_chart_data,
+                    "summary": lastmile_kpi_summary,
+                }
+            )
+
+            # ——— جدول LMD & E2E Delay Reasons: بعد Warehouse + SO dedupe + Creation Date ———
+            lmd_e2e_delay_rows = []
+            lmd_e2e_delay_columns = ["Warehouse", "Aramex Sub Reason", "Shipments"]
+            lmd_e2e_delay_summary = {
+                "total_after_dedupe": int(len(df_base)),
+                "shipments_with_reason": 0,
+            }
+            if not df_base.empty and "Aramex_Sub_Reason" in df_base.columns:
+                df_lmd_e2e_delay = df_base.copy()
+                df_lmd_e2e_delay["Creation_Date_Only"] = pd.to_datetime(
+                    df_lmd_e2e_delay["Creation_Date"], errors="coerce"
+                ).dt.date
+                df_lmd_e2e_delay = df_lmd_e2e_delay[
+                    df_lmd_e2e_delay["Creation_Date_Only"].notna()
+                ]
+                df_lmd_e2e_delay["Aramex_Sub_Reason"] = (
+                    df_lmd_e2e_delay["Aramex_Sub_Reason"].astype(str).str.strip()
+                )
+                df_lmd_e2e_delay = df_lmd_e2e_delay[
+                    df_lmd_e2e_delay["Aramex_Sub_Reason"].ne("")
+                    & ~df_lmd_e2e_delay["Aramex_Sub_Reason"].str.lower().isin(
+                        ["nan", "none", "<na>", "n/a", "-", "--", "0", "0.0", "0,0"]
+                    )
+                ]
+                if not df_lmd_e2e_delay.empty:
+                    lmd_e2e_counts = (
+                        df_lmd_e2e_delay.groupby(
+                            ["Warehouse", "Aramex_Sub_Reason"], as_index=False
+                        )
+                        .agg(Shipments=("Order_SO", "count"))
+                        .sort_values(
+                            by=["Warehouse", "Shipments", "Aramex_Sub_Reason"],
+                            ascending=[True, False, True],
+                        )
+                    )
+                    for _, r in lmd_e2e_counts.iterrows():
+                        lmd_e2e_delay_rows.append(
+                            {
+                                "Warehouse": str(r["Warehouse"]),
+                                "Aramex Sub Reason": str(r["Aramex_Sub_Reason"]),
+                                "Shipments": int(r["Shipments"]),
+                            }
+                        )
+                    lmd_e2e_delay_summary["shipments_with_reason"] = int(
+                        lmd_e2e_counts["Shipments"].sum()
+                    )
+
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-lmd-e2e-delay-reasons",
+                    "title": "LMD & E2E Delay Reasons",
+                    "columns": lmd_e2e_delay_columns,
+                    "data": lmd_e2e_delay_rows,
+                    "full_width": True,
+                    "col_12": True,
+                    "summary": lmd_e2e_delay_summary,
+                }
+            )
+
+            # ——— جدول End to End: Warehouse ثم SO (بدون تكرار) ثم Creation Date ثم E2E KPI - ACTUAL (IN/OUT) ———
+            pivot_ee = ["KPI"]
+            hit_pct_ee = {"KPI": "Hit %"}
+            hit_ee = {"KPI": "Hit"}
+            miss_ee = {"KPI": "Miss"}
+            total_ee = {"KPI": "Total Shipments"}
+            endtoend_chart_data = []
+            endtoend_kpi_summary = {
+                "total_after_dedupe": 0,
+                "in_count": 0,
+                "out_count": 0,
+                "hit_pct": 0,
+            }
+
+            if "E2E_Actual_SLA" in df_base.columns and not df_base.empty:
+                df_ee = df_base.copy()
+                _e2e_raw = (
+                    df_ee["E2E_Actual_SLA"].astype(str).str.strip().str.upper()
+                )
+
+                def _normalize_e2e_sla(v):
+                    s = str(v or "").strip().upper()
+                    if not s or s in ("NAN", "NONE", "<NA>"):
+                        return ""
+                    if "CANCEL" in s:
+                        return "CANCELLED"
+                    if s in ("IN", "OK", "ON TIME", "ONTIME", "HIT"):
+                        return "IN"
+                    if s in ("OUT", "LATE", "DELAY", "MISS"):
+                        return "OUT"
+                    if " IN" in f" {s} " and "OUT" not in s:
+                        return "IN"
+                    if " OUT" in f" {s} ":
+                        return "OUT"
+                    if "(OK)" in s or " OK" in s:
+                        return "IN"
+                    if "(LATE)" in s or " LATE" in s or "DELAY" in s:
+                        return "OUT"
+                    return ""
+
+                df_ee["SLA_Status"] = _e2e_raw.apply(_normalize_e2e_sla)
+                df_ee = df_ee[
+                    ~df_ee["SLA_Status"].isin(["", "NAN", "NONE", "CANCELLED"])
+                ]
+                df_ee = df_ee[df_ee["SLA_Status"].isin(["IN", "OUT"])].copy()
+
+                if not df_ee.empty:
                     df_ee["Month"] = df_ee["Creation_Date"].dt.strftime("%b")
                     df_ee = df_ee[df_ee["Month"].notna()]
+                    df_ee["is_hit"] = df_ee["SLA_Status"] == "IN"
 
                     month_order_ee = [
                         "Jan",
@@ -6843,10 +9426,6 @@ class UploadExcelViewRoche(View):
                         [agg_col_ee] if agg_col_ee else []
                     )
 
-                    hit_pct_ee = {"KPI": "Hit %"}
-                    hit_ee = {"KPI": "Hit"}
-                    miss_ee = {"KPI": "Miss"}
-                    total_ee = {"KPI": "Total Shipments"}
                     for _, r in ee_summary.iterrows():
                         m = r["Month"]
                         t = int(r["Total_Shipments"])
@@ -6868,6 +9447,11 @@ class UploadExcelViewRoche(View):
                         hit_ee[agg_col_ee] = f"{h_all} ({hp_all}%)"
                         miss_ee[agg_col_ee] = f"{ms_all} ({mp_all}%)"
                         total_ee[agg_col_ee] = t_all
+                    else:
+                        t_all = int(ee_summary["Total_Shipments"].sum())
+                        h_all = int(ee_summary["Hits"].sum())
+                        ms_all = t_all - h_all
+                        hp_all = int(round(h_all * 100 / t_all)) if t_all else 0
 
                     endtoend_chart_data = [
                         {
@@ -6878,38 +9462,96 @@ class UploadExcelViewRoche(View):
                             "dataPoints": [
                                 {"label": m, "y": int(hit_pct_ee[m])}
                                 for m in ordered_ee
-                                if int(hit_pct_ee[m]) > 0
                             ],
                         }
                     ]
+                    endtoend_kpi_summary = {
+                        "total_after_dedupe": t_all,
+                        "in_count": h_all,
+                        "out_count": ms_all,
+                        "hit_pct": hp_all,
+                    }
 
-                    sub_tables.append(
-                        {
-                            "id": "sub-table-b2c-endtoend",
-                            "title": "End to End — Creation / Delivered (≤48 hours)",
-                            "columns": pivot_ee,
-                            "data": [
-                                hit_pct_ee,
-                                hit_ee,
-                                miss_ee,
-                                total_ee,
-                            ],
-                            "full_width": False,
-                            "side_by_side_chart": True,
-                            "chart_data": endtoend_chart_data,
-                        }
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-endtoend",
+                    "title": "End to End — Creation / Delivered",
+                    "columns": pivot_ee,
+                    "data": [
+                        hit_pct_ee,
+                        hit_ee,
+                        miss_ee,
+                        total_ee,
+                    ],
+                    "full_width": False,
+                    "side_by_side_chart": True,
+                    "chart_data": endtoend_chart_data,
+                    "summary": endtoend_kpi_summary,
+                }
+            )
+
+            # ——— جدول Deviation (Missed Source): بعد Warehouse + SO dedupe + Creation Date ———
+            deviation_rows = []
+            deviation_columns = ["Warehouse", "Deviation Source", "Shipments"]
+            deviation_summary = {
+                "total_after_dedupe": int(len(df_base)),
+                "shipments_with_reason": 0,
+            }
+            if not df_base.empty and "Deviation_Source" in df_base.columns:
+                df_dev = df_base.copy()
+                df_dev["Creation_Date_Only"] = pd.to_datetime(
+                    df_dev["Creation_Date"], errors="coerce"
+                ).dt.date
+                df_dev = df_dev[df_dev["Creation_Date_Only"].notna()]
+                df_dev["Deviation_Source"] = (
+                    df_dev["Deviation_Source"].astype(str).str.strip()
+                )
+                df_dev = df_dev[
+                    df_dev["Deviation_Source"].ne("")
+                    & ~df_dev["Deviation_Source"].str.lower().isin(
+                        ["nan", "none", "<na>", "n/a", "-", "--", "0", "0.0", "0,0"]
                     )
+                ]
+                if not df_dev.empty:
+                    dev_counts = (
+                        df_dev.groupby(["Warehouse", "Deviation_Source"], as_index=False)
+                        .agg(Shipments=("Order_SO", "count"))
+                        .sort_values(
+                            by=["Warehouse", "Shipments", "Deviation_Source"],
+                            ascending=[True, False, True],
+                        )
+                    )
+                    for _, r in dev_counts.iterrows():
+                        deviation_rows.append(
+                            {
+                                "Warehouse": str(r["Warehouse"]),
+                                "Deviation Source": str(r["Deviation_Source"]),
+                                "Shipments": int(r["Shipments"]),
+                            }
+                        )
+                    deviation_summary["shipments_with_reason"] = int(
+                        dev_counts["Shipments"].sum()
+                    )
+
+            sub_tables.append(
+                {
+                    "id": "sub-table-b2c-deviation-missed-source",
+                    "title": "Deviation (Missed Source)",
+                    "columns": deviation_columns,
+                    "data": deviation_rows,
+                    "full_width": True,
+                    "col_12": True,
+                    "summary": deviation_summary,
+                }
+            )
 
             total_shipments = len(df)
             hits = int(df["is_hit"].sum())
             miss = total_shipments - hits
             hit_pct = round((hits / total_shipments) * 100, 2) if total_shipments else 0
 
-            # جدول الإكسل الخام: نفس حد القراءة الكاملة للتاب (بدون قص إضافي 500 صف)
-            _raw_nr = _read_excel_nrows_kw(_b2c_max_rows)
-            raw_df_original = pd.read_excel(
-                excel_path, sheet_name=sheet_name, engine="openpyxl", header=0, **_raw_nr
-            )
+            # جدول الإكسل الخام: نفس صفوف القراءة الأولى (بدون إعادة فتح الملف — أسرع بكثير للملفات الكبيرة).
+            raw_df_original = _b2c_raw_sheet_df.copy()
             raw_df_original.columns = raw_df_original.columns.astype(str).str.strip()
             raw_sheet_cols = list(raw_df_original.columns)
 
@@ -6931,6 +9573,9 @@ class UploadExcelViewRoche(View):
             creation_col_raw = find_col(
                 raw_df_original,
                 [
+                    "Created time F&O",
+                    "Created Time F&O",
+                    "Created time F&O (MM/DD/YYYY HH:mm)",
                     "CREATTION DATE",
                     "CREATION DATE",
                     "Creation Date & Time",
@@ -6940,6 +9585,70 @@ class UploadExcelViewRoche(View):
                     "Create Date",
                 ],
             )
+            warehouse_col_raw = find_col(
+                raw_df_original,
+                [
+                    "Warehouse",
+                    "WAREHOUSE",
+                    "Warehouse Name",
+                    "WH",
+                ],
+            )
+            so_col_raw = find_col(
+                raw_df_original,
+                [
+                    "ORDER / SO",
+                    "ORDER/SO",
+                    "Order / SO",
+                    "SO",
+                    "Order Number",
+                    "Order Nbr",
+                    "Order No",
+                ],
+            )
+            status_col_raw = find_col_prefer(
+                raw_df_original,
+                [
+                    "Status Formula",
+                    "STATUS FORMULA",
+                    "Status Formula ",
+                    "Status",
+                    "ORDER STATUS",
+                    "Order Status",
+                    "Status_Clean",
+                ],
+            )
+            tracking_col_raw = find_col(
+                raw_df_original,
+                [
+                    "Tracking #",
+                    "Tracking#",
+                    "Tracking Number",
+                    "Tracking No",
+                    "Tracking",
+                ],
+            )
+            cycle_col_raw = find_col_prefer(
+                raw_df_original,
+                [
+                    "10 Cycles SLA",
+                    "10 Cycles SLA ",
+                    "10 Cycle SLA",
+                    "10 cycle SLA",
+                    "Cycle",
+                ],
+            )
+            if selected_b2c_wh and warehouse_col_raw and warehouse_col_raw in raw_df_original.columns:
+                tw_raw = selected_b2c_wh.strip().lower()
+                _wh_raw_series = (
+                    raw_df_original[warehouse_col_raw].astype(str).str.strip().str.lower()
+                )
+                _raw_wh_mask = _wh_raw_series == tw_raw
+                if not _raw_wh_mask.any() and len(tw_raw) >= 4:
+                    _raw_wh_mask = _wh_raw_series.str.contains(
+                        re.escape(tw_raw), na=False, regex=True
+                    )
+                raw_df_original = raw_df_original[_raw_wh_mask].copy()
             _month_abbr_order = [
                 "Jan",
                 "Feb",
@@ -6985,7 +9694,34 @@ class UploadExcelViewRoche(View):
                 rec["_filter_month"] = (
                     row_month_labels[idx] if idx < len(row_month_labels) else ""
                 )
+                rec["_filter_wh"] = (
+                    _raw_cell_val(row.get(warehouse_col_raw)) if warehouse_col_raw else ""
+                )
+                rec["_filter_so"] = (
+                    _raw_cell_val(row.get(so_col_raw)) if so_col_raw else ""
+                )
+                rec["_filter_status"] = (
+                    _raw_cell_val(row.get(status_col_raw)) if status_col_raw else ""
+                )
+                rec["_filter_tracking"] = (
+                    _raw_cell_val(row.get(tracking_col_raw)) if tracking_col_raw else ""
+                )
+                rec["_filter_cycle"] = (
+                    _raw_cell_val(row.get(cycle_col_raw)) if cycle_col_raw else ""
+                )
                 raw_excel_rows.append(rec)
+
+            def _sorted_opts(rows, key):
+                vals = {
+                    str((r.get(key) or "")).strip()
+                    for r in rows
+                    if str((r.get(key) or "")).strip()
+                }
+                return sorted(vals, key=lambda x: x.lower())
+
+            warehouse_filter_options = _sorted_opts(raw_excel_rows, "_filter_wh")
+            status_filter_options = _sorted_opts(raw_excel_rows, "_filter_status")
+            cycle_filter_options = _sorted_opts(raw_excel_rows, "_filter_cycle")
 
             _raw_html_cap = int(
                 getattr(settings, "B2C_RAW_EXCEL_HTML_MAX_ROWS", 2500) or 0
@@ -7003,6 +9739,11 @@ class UploadExcelViewRoche(View):
                 "data": raw_excel_rows,
                 "full_width": True,
                 "month_filter_options": month_filter_options,
+                "warehouse_filter_options": warehouse_filter_options,
+                "status_filter_options": status_filter_options,
+                "cycle_filter_options": cycle_filter_options,
+                "b2c_warehouse_options": b2c_warehouse_options,
+                "selected_b2c_warehouse": selected_b2c_wh,
                 "truncated": _raw_truncated,
                 "total_row_count": _total_raw_rows,
             }
@@ -7019,7 +9760,7 @@ class UploadExcelViewRoche(View):
                     "target": 99,
                 },
             }
-            _tab_cache_set(_b2c_key, result, 120)
+            _b2c_tab_result_cache_set(_b2c_key, result)
             return result
 
         except Exception as e:
@@ -7035,7 +9776,8 @@ class UploadExcelViewRoche(View):
 
     def _render_safety_kpi_tab(self, request):
         """
-        يعرض شيت Safety KPI من ملف الإكسل (اسم الشيت يحتوي safety و kpi، أو مطابقة Safety KPI).
+        Master KPI tab: reads sheet Master_KPI / Master KPI / Safety KPI legacy name.
+        Renders KPI rows grouped by Category with category tiles in the UI.
         """
         excel_file_path = self.resolve_excel_file_path(request)
         if not excel_file_path:
@@ -7054,28 +9796,15 @@ class UploadExcelViewRoche(View):
                 "hit_pct": 0,
             }
 
-        def _norm_sheet(s):
-            return (str(s) or "").lower().replace(" ", "").replace("_", "")
-
-        resolved = None
-        for s in sheet_names:
-            ns = _norm_sheet(s)
-            if "safety" in ns and "kpi" in ns:
-                resolved = s
-                break
-        if not resolved:
-            for s in sheet_names:
-                if _norm_sheet(s) == _norm_sheet("Safety KPI"):
-                    resolved = s
-                    break
+        resolved = _resolve_master_kpi_sheet_name(sheet_names)
         if not resolved:
             preview = ", ".join(str(x) for x in sheet_names[:30])
             if len(sheet_names) > 30:
                 preview += ", …"
             return {
                 "detail_html": (
-                    "<div class='alert alert-warning'>No <strong>Safety KPI</strong> sheet found. "
-                    "Use a sheet name that includes <em>Safety</em> and <em>KPI</em> (e.g. <code>Safety KPI</code>).</div>"
+                    "<div class='alert alert-warning'>No <strong>Master KPI</strong> sheet found. "
+                    "Add a sheet named <code>Master_KPI</code> (or <code>Master KPI</code> / <code>Safety KPI</code>).</div>"
                     f"<p class='text-muted small mb-0'>Sheets in this file: {preview}</p>"
                 ),
                 "chart_data": [],
@@ -7083,12 +9812,42 @@ class UploadExcelViewRoche(View):
                 "hit_pct": 0,
             }
 
-        data = self.render_raw_sheet(request, resolved)
-        if isinstance(data, dict) and "hit_pct" not in data:
-            data = dict(data)
-            data.setdefault("hit_pct", 0)
-            data.setdefault("chart_data", [])
-        return data
+        try:
+            df = _load_master_kpi_dataframe(excel_file_path, resolved, request)
+        except Exception as e:
+            return {
+                "detail_html": (
+                    f"<p class='text-danger'>Could not read sheet <strong>{resolved}</strong>: {e}</p>"
+                ),
+                "chart_data": [],
+                "count": 0,
+                "hit_pct": 0,
+            }
+
+        if df is None or df.empty:
+            return {
+                "detail_html": (
+                    f"<div class='alert alert-info'>Sheet <strong>{resolved}</strong> is empty.</div>"
+                ),
+                "chart_data": [],
+                "count": 0,
+                "hit_pct": 0,
+            }
+
+        ctx = build_master_kpi_view_context(df, self.safe_format_value, request)
+        ctx["master_kpi_sheet_title"] = resolved
+        total_kpis = sum(len(c.get("rows") or []) for c in ctx["master_kpi_categories"])
+
+        html = render_to_string(
+            "forms-table/table/bootstrap-table/basic-table/components/master-kpi-tab.html",
+            ctx,
+        )
+        return {
+            "detail_html": html,
+            "chart_data": [],
+            "count": int(total_kpis),
+            "hit_pct": 0,
+        }
 
     def _placeholder_tab_response(self, tab_name):
         """يرجع استجابة تاب placeholder مع رسالة Loading data."""
@@ -10507,9 +13266,14 @@ class UploadExcelViewRoche(View):
                 else ""
             )
             _full_flag = "1" if _excel_full_data_requested(request) else "0"
+            _channel_cache = ""
+            if request is not None and hasattr(request, "GET"):
+                _channel_cache = (request.GET.get("channel") or "").strip().lower()
             # v2: chart_data includes outbound POD charts for All-in-One overview
             # v3: توقيع الملف لنفس مسار latest.xlsx بعد رفع جديد
-            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_fsig}_{_month_part}_{_months_list}_{_full_flag}_v3"
+            # v4: فلتر channel لتاب B2B KPI
+            # v6: جدول أسباب التأخير مقسّم حسب WH + فلتر WH من دون reload
+            _cache_key = f"tlp_total_lead_time_{_path_hash}_{_fsig}_{_month_part}_{_months_list}_{_full_flag}_{_channel_cache}_v6"
             cached_result = _tab_cache_get(_cache_key)
             if cached_result is not None:
                 return cached_result
@@ -10972,7 +13736,10 @@ class UploadExcelViewRoche(View):
                     "sub_tables": outbound_result["sub_tables"],
                     "chart_data": outbound_result.get("chart_data", []),
                     "chart_data_pods": outbound_result.get("chart_data_pods", []),
+                    "chart_data_sheet_kpi": outbound_result.get("chart_data_sheet_kpi", []),
                     "raw_excel_table": outbound_result.get("raw_excel_table"),
+                    "delay_reasons_table": outbound_result.get("delay_reasons_table"),
+                    "cutoff_so_table": outbound_result.get("cutoff_so_table"),
                 }
                 outbound_html = render_to_string(
                     "forms-table/table/bootstrap-table/basic-table/components/excel-sheet-table.html",

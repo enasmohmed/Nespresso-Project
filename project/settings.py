@@ -190,7 +190,16 @@ EXCEL_DISABLE_TAB_CACHE = os.environ.get("EXCEL_DISABLE_TAB_CACHE", "1").strip()
     "on",
 )
 
-# تسريع أول GET على / (تاب Dashboard): لا نقرأ أسماء الشيتات/الشهور في أول تحميل.
+# مع تعطيل كاش التاب: الإبقاء على كاش قراءة الشيت من القرص (DataFrame) — مفتاحه يتضمن توقيع الملف.
+# يسرّع إعادة فتح التابات أثناء تعديل الكود؛ عند تغيير الإكسل أو رفعه يتغيّر التوقيع. عطّله بـ EXCEL_SHEET_DF_CACHE=0.
+EXCEL_SHEET_DF_CACHE = os.environ.get("EXCEL_SHEET_DF_CACHE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+# تسريع أول GET على الصفحة الرئيسية: لا نقرأ أسماء الشيتات/الشهور من الإكسل حتى يكتمل HTML (أي تاب في ?tab=).
 EXCEL_FAST_INITIAL_PAGE = os.environ.get("EXCEL_FAST_INITIAL_PAGE", "1").strip().lower() in (
     "1",
     "true",
@@ -200,14 +209,58 @@ EXCEL_FAST_INITIAL_PAGE = os.environ.get("EXCEL_FAST_INITIAL_PAGE", "1").strip()
 
 # ─── إكسل: معاينة سريعة ثم تحميل كامل عند ?full_data=1 ───
 # أول تحميل للتاب (بدون full_data): يقرأ أول N صف فقط → أسرع على PythonAnywhere
-EXCEL_PREVIEW_MAX_ROWS = 200
-# عند الضغط على «تحميل كامل» أو full_data=1: حد أقصى للصفوف (خفّضيه لو السيرفر يتعطل)
-# None = قراءة الشيت كاملًا (قد يكون بطيئًا جدًا على ملفات ضخمة)
-EXCEL_FULL_MAX_ROWS = 50000
+try:
+    EXCEL_PREVIEW_MAX_ROWS = int(
+        os.environ.get("EXCEL_PREVIEW_MAX_ROWS", "200").strip() or "200"
+    )
+except (TypeError, ValueError):
+    EXCEL_PREVIEW_MAX_ROWS = 200
+# استخراج الشهور لقائمة الفلتر (AJAX): حد صفوف لكل شيت (الافتراضي أسرع بكثير من قراءة الشيت كاملاً).
+# 0 أو سالب = الرجوع لحد EXCEL_FULL_MAX_ROWS (بطيء على ملفات كبيرة).
+try:
+    EXCEL_MONTH_SCAN_MAX_ROWS = int(
+        os.environ.get("EXCEL_MONTH_SCAN_MAX_ROWS", "8000").strip() or "8000"
+    )
+except (TypeError, ValueError):
+    EXCEL_MONTH_SCAN_MAX_ROWS = 8000
+# كاش قائمة الشهور لكل تاب (مفتاح = توقيع الملف + اسم التاب) — مستقل عن EXCEL_DISABLE_TAB_CACHE
+EXCEL_AVAILABLE_MONTHS_CACHE = os.environ.get(
+    "EXCEL_AVAILABLE_MONTHS_CACHE", "1"
+).strip().lower() in ("1", "true", "yes", "on")
+try:
+    EXCEL_AVAILABLE_MONTHS_CACHE_TTL = int(
+        os.environ.get("EXCEL_AVAILABLE_MONTHS_CACHE_TTL", "1800").strip() or "1800"
+    )
+except (TypeError, ValueError):
+    EXCEL_AVAILABLE_MONTHS_CACHE_TTL = 1800
+# عند الضغط على «تحميل كامل» أو full_data=1 أو مسارات تقرأ الشيت كاملاً (مثل B2B Outbound KPI): حد الصفوف.
+# خفّض القيمة أثناء التطوير لتسريع التابات (مثلاً EXCEL_FULL_MAX_ROWS=12000).
+try:
+    _full_cap = os.environ.get("EXCEL_FULL_MAX_ROWS", "").strip()
+    if _full_cap:
+        _v = int(_full_cap)
+        EXCEL_FULL_MAX_ROWS = _v if _v > 0 else 50000
+    else:
+        EXCEL_FULL_MAX_ROWS = 50000
+except (TypeError, ValueError):
+    EXCEL_FULL_MAX_ROWS = 50000
 # حد صفوف جدول B2C الخام في HTML (القراءة قد تكون كاملة لكن العرض يُقتصر لتفادي تعليق المتصفح/فشل الكاش).
 B2C_RAW_EXCEL_HTML_MAX_ROWS = int(
     os.environ.get("B2C_RAW_EXCEL_HTML_MAX_ROWS", "2500").strip() or "2500"
 )
+# كاش نتيجة تاب B2C (المفتاح يشمل b2c_wh + توقيع الملف) — يعمل حتى مع EXCEL_DISABLE_TAB_CACHE=1 لتسريع الفلتر العام.
+B2C_TAB_RESULT_CACHE = os.environ.get("B2C_TAB_RESULT_CACHE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+try:
+    B2C_TAB_RESULT_CACHE_TTL = int(
+        os.environ.get("B2C_TAB_RESULT_CACHE_TTL", "300").strip() or "300"
+    )
+except (TypeError, ValueError):
+    B2C_TAB_RESULT_CACHE_TTL = 300
 # للتوافق مع كود قديم يشير لـ EXCEL_LOAD_MAX_ROWS
 EXCEL_LOAD_MAX_ROWS = 500
 

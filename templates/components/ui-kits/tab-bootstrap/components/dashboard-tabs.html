@@ -362,6 +362,14 @@
               <button id="export-excel-btn" class="btn btn-download-excel ms-3">
                 📥 Download Excel
               </button>
+              <button
+                type="button"
+                id="refresh-no-cache-btn"
+                class="btn btn-outline-secondary btn-sm ms-2 d-none"
+                title="تجاوز كاش المتصفح للتابات فقط — يجلب HTML من السيرفر (مفيد أثناء التطوير)"
+              >
+                ⟳ Update without cache
+              </button>
 <!--              <a href="?action=clear_excel" class="btn btn-outline-secondary ms-2" title="Clear data to see upload message again">-->
 <!--                🗑️ Clear Data-->
 <!--              </a>-->
@@ -728,11 +736,28 @@
     }
     let selectedTab = (typeof window.INITIAL_TAB !== "undefined" && window.INITIAL_TAB) ? window.INITIAL_TAB : "dashboard";
     let selectedQuarter = "";
+    /** يزداد مع كل طلب تاب — يتجاهل ردود طلبات قديمة بعد تنقّل سريع */
+    let tabLoadSeq = 0;
+    var tabContentXhr = null;
 
     const TAB_CACHE_PREFIX = "dashboard_tab_cache";
     // v12: مفتاح الكاش يتضمن توقيع الملف — عند وجود كاش صالح لا نعيد طلب السيرفر (تنقل أسرع بين التابات)
-    const TAB_CACHE_VERSION = "v16_capacity_ui_refresh";
+    const TAB_CACHE_VERSION = "v44_master_kpi_def_cols_month_filter";
     const TAB_CACHE_TTL_MS = 45 * 60 * 1000; // 45 دقيقة لنفس الملف ثم إعادة جلب
+
+    /** ?nocache=1 — يتجاوز localStorage للتابات طوال الجلسة على نفس الرابط */
+    function isNoClientTabCacheFromUrl() {
+      try {
+        const v = (
+          new URLSearchParams(window.location.search || "").get("nocache") || ""
+        )
+          .trim()
+          .toLowerCase();
+        return ["1", "true", "yes", "on"].indexOf(v) !== -1;
+      } catch (e) {
+        return false;
+      }
+    }
 
     window.EXCEL_WORKBOOK_CACHE_SIG = "{{ excel_workbook_cache_sig|default:'' }}";
 
@@ -808,6 +833,30 @@
       } catch (err) {
         console.warn("⚠️ Failed to write tab cache:", err);
       }
+    }
+
+    /** كاش في الذاكرة لنفس الجلسة — يدعم HTML الضخم (مثل Dashboard) بدون حد localStorage وبدون JSON ثقيل على القرص */
+    var tabMemoryCache = Object.create(null);
+
+    function readMemoryTabCache(key) {
+      try {
+        var entry = tabMemoryCache[key];
+        if (!entry || !entry.payload) return null;
+        if (Date.now() - entry.timestamp > TAB_CACHE_TTL_MS) {
+          delete tabMemoryCache[key];
+          return null;
+        }
+        return entry.payload;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function writeMemoryTabCache(key, payload) {
+      try {
+        if (!payload || typeof payload !== "object") return;
+        tabMemoryCache[key] = { timestamp: Date.now(), payload: payload };
+      } catch (e) {}
     }
 
     $("#dashboard-tabs button").removeClass("active");
@@ -977,9 +1026,17 @@
     function handleTabResponse(data, options = {}) {
       const fromCache = options.fromCache || false;
       if (!fromCache) {
-        console.log("📦 [DATA RECEIVED]", data);
+        var _dh =
+          typeof data.detail_html === "string" ? data.detail_html.length : 0;
+        console.log(
+          "📦 [TAB]",
+          selectedTab,
+          "detail_html.len=",
+          _dh,
+          data.error ? "error=" + String(data.error).slice(0, 120) : "",
+        );
       } else {
-        console.log("⚡ Rendering cached data for tab:", selectedTab);
+        console.log("⚡ Cached tab:", selectedTab);
       }
 
       $("#quarter-loader").hide();
@@ -1010,8 +1067,10 @@
 
       if (selectedTab.toLowerCase() === "all") {
         const tabContent = $("#tab-content");
-        if (data.detail_html && data.detail_html.trim() !== "") {
-          tabContent.html(data.detail_html).show();
+        const allDetail =
+          typeof data.detail_html === "string" ? data.detail_html : "";
+        if (allDetail.trim() !== "") {
+          tabContent.html(allDetail).show();
           reinitializeScripts(tabContent[0]);
           attachInnerTabListeners(tabContent[0]);
 
@@ -1036,13 +1095,18 @@
         return;
       }
 
-      if (data.detail_html && data.detail_html.trim() !== "") {
-        $("#tab-content").html(data.detail_html).show();
-        reinitializeScripts(document.getElementById("tab-content"));
-        attachInnerTabListeners(document.getElementById("tab-content"));
-        queueInitialChartRefresh(document.getElementById("tab-content"));
-        initInboundShipmentsDataTable(document.getElementById("tab-content"));
-        if (selectedTab && selectedTab.toLowerCase() === "dashboard") {
+      const detailHtml =
+        typeof data.detail_html === "string" ? data.detail_html : "";
+      if (detailHtml.trim() !== "") {
+        const tabEl = document.getElementById("tab-content");
+        $("#tab-content").html(detailHtml).show();
+        reinitializeScripts(tabEl);
+        attachInnerTabListeners(tabEl);
+        const tabLower =
+          (selectedTab && String(selectedTab).toLowerCase().trim()) || "";
+        if (tabLower === "dashboard") {
+          queueInitialChartRefresh(tabEl);
+          initInboundShipmentsDataTable(tabEl);
           setTimeout(function () {
             if (window.initInboundPendingDonut) {
               window.initInboundPendingDonut();
@@ -1077,16 +1141,18 @@
             setTimeout(window.initInventoryCapacityChart, 100);
             setTimeout(window.initInventoryCapacityChart, 500);
           }
+          setTimeout(function () {
+            initInboundShipmentsDataTable(tabEl);
+          }, 300);
+          setTimeout(function () {
+            initInboundShipmentsDataTable(tabEl);
+          }, 500);
+          setTimeout(function () {
+            initInboundShipmentsDataTable(tabEl);
+          }, 1000);
+        } else {
+          initInboundShipmentsDataTable(tabEl);
         }
-        setTimeout(function () {
-          initInboundShipmentsDataTable(document.getElementById("tab-content"));
-        }, 300);
-        setTimeout(function () {
-          initInboundShipmentsDataTable(document.getElementById("tab-content"));
-        }, 500);
-        setTimeout(function () {
-          initInboundShipmentsDataTable(document.getElementById("tab-content"));
-        }, 1000);
       } else {
         $("#tab-content").html(
           "<div class='text-center text-muted'>No data available to display.</div>",
@@ -1131,10 +1197,11 @@
       const month = $("#month-select").val() || "";
       const quarter = selectedQuarter || "";
       const bust = getWorkbookCacheBust();
-      let ceFilterKey = "";
+      let tabFilterKey = "";
       let ceFacility = "";
       let ceCompany = "";
       let ceOrderNbr = "";
+      let b2cWarehouse = "";
       if (
         selectedTab &&
         String(selectedTab).toLowerCase().trim() === "capacity + expiry"
@@ -1144,9 +1211,20 @@
           ceFacility = (sp.get("facility") || "").trim();
           ceCompany = (sp.get("company") || "").trim();
           ceOrderNbr = (sp.get("order_nbr") || "").trim();
-          ceFilterKey = JSON.stringify([ceFacility, ceCompany, ceOrderNbr]);
+          tabFilterKey = JSON.stringify([ceFacility, ceCompany, ceOrderNbr]);
         } catch (e) {
-          ceFilterKey = "";
+          tabFilterKey = "";
+        }
+      } else if (
+        selectedTab &&
+        String(selectedTab).toLowerCase().trim() === "b2c outbound"
+      ) {
+        try {
+          const sp = new URLSearchParams(window.location.search || "");
+          b2cWarehouse = (sp.get("b2c_wh") || "").trim();
+          tabFilterKey = JSON.stringify([b2cWarehouse]);
+        } catch (e) {
+          tabFilterKey = "";
         }
       }
       const cacheKey = buildTabCacheKey(
@@ -1154,9 +1232,18 @@
         month,
         quarter,
         bust,
-        ceFilterKey,
+        tabFilterKey,
       );
-      const cachedPayload = readTabCache(cacheKey);
+      const oneShotNoLs = !!window.__dashboardSkipLsOnce;
+      if (oneShotNoLs) {
+        window.__dashboardSkipLsOnce = false;
+      }
+      const bypassClientTabCache = isNoClientTabCacheFromUrl() || oneShotNoLs;
+      var cachedPayload = null;
+      if (!bypassClientTabCache) {
+        cachedPayload =
+          readMemoryTabCache(cacheKey) || readTabCache(cacheKey);
+      }
 
       if (cachedPayload) {
         applyAvailableMonthsToSelect(cachedPayload);
@@ -1166,12 +1253,25 @@
         return;
       }
 
-      $.ajax({
+      $("#tab-content").html(
+        "<div class='text-center p-3 text-muted'>⏳ Loading data...</div>",
+      );
+
+      const mySeq = ++tabLoadSeq;
+      if (tabContentXhr && tabContentXhr.readyState !== 4) {
+        try {
+          tabContentXhr.abort();
+        } catch (e) {}
+      }
+
+      tabContentXhr = $.ajax({
         url: "{% url 'dashboard:upload_excel' %}",
         method: "GET",
         headers: { "X-Requested-With": "XMLHttpRequest" },
         data: {
-          tab: selectedTab,
+          tab: String(selectedTab || "")
+            .trim()
+            .toLowerCase(),
           month: month,
           quarter: quarter,
           full_data:
@@ -1182,26 +1282,41 @@
           facility: ceFacility,
           company: ceCompany,
           order_nbr: ceOrderNbr,
+          b2c_wh: b2cWarehouse,
+          force_tab_refresh: oneShotNoLs ? 1 : 0,
         },
         beforeSend: function () {
           if (quarter) {
             $("#quarter-loader").show();
           }
-          $("#tab-content").html(
-            "<div class='text-center p-3 text-muted'>⏳ Loading data...</div>",
-          );
         },
         success: function (data) {
+          if (mySeq !== tabLoadSeq) {
+            return;
+          }
           applyAvailableMonthsToSelect(data);
           // عرض المحتوى قبل كتابة localStorage: تاب B2C قد يرجع HTML ضخمًا فيفشل
           // JSON.stringify أو يتجاوز حد التخزين — كان يمنع استبدال "Loading data...".
           handleTabResponse(data);
+          if (!bypassClientTabCache && mySeq === tabLoadSeq) {
+            writeMemoryTabCache(cacheKey, data);
+          }
           // Defer stringify so the browser can paint tab HTML first (large Dashboard payloads).
-          setTimeout(function () {
-            writeTabCache(cacheKey, data);
-          }, 0);
+          if (!bypassClientTabCache) {
+            setTimeout(function () {
+              if (mySeq === tabLoadSeq) {
+                writeTabCache(cacheKey, data);
+              }
+            }, 0);
+          }
         },
         error: function (err) {
+          if (mySeq !== tabLoadSeq) {
+            return;
+          }
+          if (err && (err.statusText === "abort" || err.status === 0)) {
+            return;
+          }
           $("#quarter-loader").hide();
           console.error("❌ Error while loading data:", err);
           let msg = "⚠️ An error occurred while loading data.";
@@ -1213,14 +1328,23 @@
             "<div class='alert alert-danger text-center'>" + msg + "</div>",
           );
         },
-        complete: function () {
+        complete: function (_xhr, status) {
           $("#quarter-loader").hide();
+          if (status === "abort") {
+            return;
+          }
+          tabContentXhr = null;
         },
       });
     }
 
     window.loadTabData = loadTabData;
     window.reinitializeScripts = reinitializeScripts;
+
+    $("#refresh-no-cache-btn").on("click", function () {
+      window.__dashboardSkipLsOnce = true;
+      loadTabData();
+    });
 
     // 🔹 Traceability KPI: بحث من الصفحة الرئيسية (event delegation) لأن السكربت داخل التاب قد لا يُنفَّذ بعد AJAX
     var traceabilitySearchUrl = "{% url 'dashboard:upload_excel' %}";
@@ -1442,12 +1566,11 @@
       $("#dashboard-tabs button").removeClass("active");
       $(this).addClass("active");
 
-      // 🧹 تنظيف المحتوى القديم قبل تحميل الجديد
-      $("#tab-content").empty();
-      $("#cards-section").empty().hide();
-
+      /* لا نفرّغ المحتوى هنا: إن وُجد كاش للتاب الجديد يُعرض فورًا بدون وميض فارغ */
       if (selectedTab.toLowerCase() === "all") {
         $("#cards-section").show();
+      } else {
+        $("#cards-section").hide();
       }
 
       loadTabData();
@@ -1473,9 +1596,17 @@
     });
 
     // أول تحميل: نأجّل طلب التاب لإطار واحد حتى يكتمل رسم الصفحة (إحساس أسرع بالفتح)
-    setTimeout(function () {
-      loadTabData();
-    }, 0);
+    function scheduleInitialTabLoad() {
+      var run = function () {
+        loadTabData();
+      };
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: 500 });
+      } else {
+        setTimeout(run, 80);
+      }
+    }
+    scheduleInitialTabLoad();
   });
 
   async function loadTab(tabName) {
@@ -1566,11 +1697,13 @@
   }
 </script>
 <script>
-  document
-    .getElementById("month-select")
-    .addEventListener("change", function () {
-      const selectedMonth = this.value;
-      const container = document.getElementById("data-container");
+  (function () {
+    var monthSel = document.getElementById("month-select");
+    if (!monthSel) return;
+    monthSel.addEventListener("change", function () {
+      var selectedMonth = this.value;
+      var container = document.getElementById("data-container");
+      if (!container) return;
 
       if (!selectedMonth) {
         container.innerHTML = "";
@@ -1580,16 +1713,21 @@
       fetch("{% url 'dashboard:upload_excel' %}?month=" + selectedMonth, {
         headers: { "X-Requested-With": "XMLHttpRequest" },
       })
-        .then((res) => res.json())
-        .then((data) => {
+        .then(function (res) {
+          return res.json();
+        })
+        .then(function (data) {
           if (data.error) {
-            container.innerHTML = `<p class="text-danger">${data.error}</p>`;
+            container.innerHTML = "<p class=\"text-danger\">" + data.error + "</p>";
             return;
           }
-          container.innerHTML = data.html;
+          container.innerHTML = data.html || "";
         })
-        .catch((err) => console.error("❌ Fetch Month Error:", err));
+        .catch(function (err) {
+          console.error("❌ Fetch Month Error:", err);
+        });
     });
+  })();
 </script>
 <script>
   (function () {

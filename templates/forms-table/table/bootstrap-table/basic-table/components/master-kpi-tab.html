@@ -1,0 +1,677 @@
+{% load custom_tags %}
+{# Master KPI — definition table, then one Actual table (months × region + one comments column) #}
+<div
+  class="master-kpi-scope mkpi-root px-1 py-2"
+  id="master-kpi-root-{{ master_kpi_uid }}"
+  data-master-kpi-root
+  lang="en"
+>
+  <style>
+    .master-kpi-scope.mkpi-root {
+      --mkpi-cream: #fdfbf7;
+      --mkpi-paper: #faf6f0;
+      --mkpi-sand: #f0e8dc;
+      --mkpi-border: #d4c4b0;
+      --mkpi-border-soft: rgba(195, 176, 145, 0.55);
+      --mkpi-brown: #6b5344;
+      --mkpi-brown-mid: #81613e;
+      --mkpi-brown-light: #9a7d62;
+      --mkpi-text: #3d342b;
+      --mkpi-muted: #6b5d50;
+      --mkpi-accent: #1a4a6e;
+      --mkpi-radius: 14px;
+      --mkpi-shadow: 0 10px 28px rgba(107, 83, 68, 0.12);
+      color: var(--mkpi-text);
+      background: linear-gradient(180deg, var(--mkpi-cream) 0%, var(--mkpi-paper) 40%, var(--mkpi-sand) 100%);
+      border-radius: var(--mkpi-radius);
+      border: 1px solid var(--mkpi-border-soft);
+      box-shadow: var(--mkpi-shadow);
+    }
+    .master-kpi-scope .mkpi-hero {
+      padding: 0.35rem 0.5rem 1rem;
+      border-bottom: 1px solid var(--mkpi-border-soft);
+      margin-bottom: 1rem;
+    }
+    .master-kpi-scope .mkpi-hero h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin: 0;
+      color: var(--mkpi-brown);
+    }
+    .master-kpi-scope .mkpi-hero p {
+      margin: 0.35rem 0 0;
+      font-size: 0.8rem;
+      color: var(--mkpi-muted);
+      max-width: 42rem;
+      line-height: 1.5;
+    }
+    .master-kpi-scope .mkpi-hero-badge {
+      display: inline-block;
+      font-size: 0.66rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--mkpi-brown-mid);
+      border: 1px solid var(--mkpi-border);
+      background: rgba(255, 255, 255, 0.65);
+      padding: 0.3rem 0.6rem;
+      border-radius: 999px;
+      margin-bottom: 0.35rem;
+    }
+    .master-kpi-scope .mkpi-cat-card {
+      border: 1px solid var(--mkpi-border-soft);
+      border-radius: var(--mkpi-radius);
+      background: linear-gradient(180deg, #fff 0%, var(--mkpi-paper) 100%);
+      padding: 0.95rem 0.65rem 0.8rem;
+      text-align: center;
+      cursor: pointer;
+      height: 100%;
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+      color: var(--mkpi-text);
+      transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+      outline: none;
+    }
+    .master-kpi-scope .mkpi-cat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(107, 83, 68, 0.1);
+      border-color: var(--mkpi-brown-light);
+    }
+    .master-kpi-scope .mkpi-cat-card:focus-visible {
+      box-shadow: 0 0 0 3px rgba(129, 97, 62, 0.25);
+    }
+    .master-kpi-scope .mkpi-cat-card.active {
+      border-color: var(--mkpi-brown-mid);
+      box-shadow: 0 0 0 2px rgba(129, 97, 62, 0.18);
+      background: linear-gradient(180deg, #fff 0%, #f5ebe0 100%);
+    }
+    .master-kpi-scope .mkpi-cat-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.28rem;
+      color: #fff;
+    }
+    .master-kpi-scope .mkpi-cat-icon--safety {
+      background: linear-gradient(135deg, #4a7eb0 0%, #2d5a82 100%);
+    }
+    .master-kpi-scope .mkpi-cat-icon--inbound {
+      background: linear-gradient(135deg, #3d9a6b 0%, #2a6b49 100%);
+    }
+    .master-kpi-scope .mkpi-cat-icon--storage {
+      background: linear-gradient(135deg, #c98a4a 0%, #9a6230 100%);
+    }
+    .master-kpi-scope .mkpi-cat-icon--outbound {
+      background: linear-gradient(135deg, #c75c6e 0%, #943e4c 100%);
+    }
+    .master-kpi-scope .mkpi-cat-icon--generic {
+      background: linear-gradient(135deg, #8a7d72 0%, #5c534a 100%);
+    }
+    .master-kpi-scope .mkpi-cat-title {
+      font-weight: 700;
+      font-size: 0.88rem;
+      color: var(--mkpi-brown);
+    }
+    .master-kpi-scope .mkpi-cat-meta {
+      font-size: 0.7rem;
+      color: var(--mkpi-muted);
+    }
+    .master-kpi-scope .mkpi-panel {
+      display: none;
+    }
+    .master-kpi-scope .mkpi-panel.active {
+      display: block;
+      animation: mkpi-panel-in 0.26s ease both;
+    }
+    @keyframes mkpi-panel-in {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .master-kpi-scope .mkpi-sheet-card {
+      border-radius: var(--mkpi-radius);
+      border: 1px solid var(--mkpi-border-soft);
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.55);
+    }
+    .master-kpi-scope .mkpi-sheet-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      background: linear-gradient(90deg, #a08068 0%, #b89678 45%, #a08068 100%);
+      color: #fffaf5;
+      padding: 0.65rem 1rem;
+      font-weight: 700;
+      font-size: 0.95rem;
+      letter-spacing: 0.02em;
+      border-bottom: 1px solid var(--mkpi-border-soft);
+      text-shadow: 0 1px 0 rgba(61, 52, 43, 0.12);
+    }
+    .master-kpi-scope .mkpi-sheet-head span:last-child {
+      font-size: 0.68rem;
+      font-weight: 600;
+      opacity: 0.92;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .master-kpi-scope .mkpi-panel-body {
+      padding: 1rem 0.85rem 1.1rem;
+    }
+    .master-kpi-scope .mkpi-block {
+      border-radius: 12px;
+      border: 1px solid var(--mkpi-border-soft);
+      background: #fffef9;
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .master-kpi-scope .mkpi-block:last-child {
+      margin-bottom: 0;
+    }
+    .master-kpi-scope .mkpi-block-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--mkpi-brown-mid);
+      padding: 0.5rem 0.75rem;
+      background: linear-gradient(180deg, var(--mkpi-sand) 0%, #ebe2d6 100%);
+      border-bottom: 1px solid var(--mkpi-border-soft);
+    }
+    .master-kpi-scope .mkpi-table-scroll {
+      overflow-x: auto;
+      max-width: 100%;
+    }
+    .master-kpi-scope .mkpi-tbl {
+      font-size: 0.8rem;
+      margin: 0;
+      width: 100%;
+      min-width: 520px;
+      --bs-table-bg: transparent;
+      --bs-table-color: var(--mkpi-text);
+      --bs-table-border-color: var(--mkpi-border-soft);
+    }
+    .master-kpi-scope .mkpi-tbl thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: linear-gradient(180deg, #e8ddd0 0%, #dccfbf 100%) !important;
+      color: var(--mkpi-brown) !important;
+      font-weight: 700;
+      font-size: 0.74rem;
+      white-space: nowrap;
+      vertical-align: middle;
+      padding: 0.45rem 0.4rem;
+      border-color: var(--mkpi-border) !important;
+    }
+    .master-kpi-scope .mkpi-tbl tbody td {
+      vertical-align: top;
+      padding: 0.45rem 0.4rem;
+      border-color: rgba(195, 176, 145, 0.45) !important;
+      color: var(--mkpi-text);
+      background: #fffef9;
+    }
+    .master-kpi-scope .mkpi-tbl tbody tr:nth-child(even) td {
+      background: #faf6f0;
+    }
+    .master-kpi-scope .mkpi-tbl tbody tr:hover td {
+      background: #f3ecdf;
+    }
+    .master-kpi-scope .mkpi-col-category {
+      min-width: 6.5rem;
+      max-width: 9rem;
+      font-weight: 700;
+      color: var(--mkpi-brown-mid);
+    }
+    .master-kpi-scope .mkpi-col-kpi {
+      min-width: 12rem;
+      max-width: 22rem;
+      text-align: start !important;
+    }
+    .master-kpi-scope .mkpi-col-method {
+      min-width: 14rem;
+      max-width: 26rem;
+      text-align: start !important;
+      color: var(--mkpi-muted);
+    }
+    .master-kpi-scope .mkpi-col-idx {
+      width: 2.25rem;
+      text-align: center;
+      font-weight: 700;
+      color: var(--mkpi-accent);
+    }
+    .master-kpi-scope .mkpi-col-num {
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .master-kpi-scope .mkpi-act-thead th.mkpi-corner {
+      vertical-align: middle;
+      background: linear-gradient(180deg, #e0d4c8 0%, #d2c2b2 100%) !important;
+      color: var(--mkpi-brown) !important;
+    }
+    .master-kpi-scope .mkpi-act-thead th.mkpi-th-tier1 {
+      text-align: center;
+      font-weight: 800;
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: linear-gradient(180deg, #3a3532 0%, #2c2826 100%) !important;
+      color: #faf8f5 !important;
+      border-color: #1a1816 !important;
+    }
+    .master-kpi-scope .mkpi-act-thead th.mkpi-th-tier2 {
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.72rem;
+      background: linear-gradient(180deg, #4a433d 0%, #3d3833 100%) !important;
+      color: #f5f0ea !important;
+      border-color: #2a2623 !important;
+    }
+    .master-kpi-scope .mkpi-act-thead th.mkpi-th-tier3 {
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.68rem;
+      text-transform: capitalize;
+      background: linear-gradient(180deg, #5c534a 0%, #4d453d 100%) !important;
+      color: #faf6f0 !important;
+      border-color: #3d3833 !important;
+    }
+    .master-kpi-scope .mkpi-act-thead th.mkpi-th-comments {
+      min-width: 11rem;
+      max-width: 22rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-align: center;
+      vertical-align: middle;
+      background: linear-gradient(180deg, #3a3532 0%, #2c2826 100%) !important;
+      color: #faf8f5 !important;
+      border-color: #1a1816 !important;
+    }
+    .master-kpi-scope .mkpi-col-comments {
+      text-align: start !important;
+      font-size: 0.76rem;
+      color: var(--mkpi-muted) !important;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      min-width: 11rem;
+      max-width: 24rem;
+      background: #fffdf8 !important;
+    }
+    .master-kpi-scope .mkpi-act-wrap {
+      animation: mkpi-act-wrap-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    @keyframes mkpi-act-wrap-in {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr {
+      animation: mkpi-act-row-in 0.42s ease both;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(1) {
+      animation-delay: 0.03s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(2) {
+      animation-delay: 0.06s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(3) {
+      animation-delay: 0.09s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(4) {
+      animation-delay: 0.12s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(5) {
+      animation-delay: 0.15s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(6) {
+      animation-delay: 0.18s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(7) {
+      animation-delay: 0.21s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(8) {
+      animation-delay: 0.24s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(9) {
+      animation-delay: 0.27s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(10) {
+      animation-delay: 0.3s;
+    }
+    .master-kpi-scope .mkpi-act-tbl tbody tr:nth-child(n + 11) {
+      animation-delay: 0.33s;
+    }
+    @keyframes mkpi-act-row-in {
+      from {
+        opacity: 0;
+        transform: translateX(-6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    .master-kpi-scope .mkpi-method-highlight {
+      background: linear-gradient(90deg, #fff3b0, #ffeaa7) !important;
+      color: var(--mkpi-text) !important;
+      border-radius: 6px;
+      box-shadow: inset 0 0 0 1px rgba(200, 170, 80, 0.35);
+    }
+    .master-kpi-scope .mkpi-empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--mkpi-muted);
+      font-size: 0.88rem;
+    }
+    .master-kpi-scope .mkpi-alert {
+      border-radius: var(--mkpi-radius);
+      border: 1px solid var(--mkpi-border);
+      background: #fff8e8;
+      color: var(--mkpi-brown);
+      padding: 0.9rem 1rem;
+    }
+  </style>
+
+  {% if not master_kpi_categories %}
+  <div class="mkpi-alert mb-0" role="alert">
+    No <strong>Category</strong> column or no categories found in sheet
+    <strong>{{ master_kpi_sheet_title }}</strong>.
+  </div>
+  {% else %}
+  <div class="mkpi-hero">
+    <div>
+      <div class="mkpi-hero-badge">Master KPI</div>
+      <h2>KPI categories</h2>
+      <p>
+        <strong>1)</strong> KPI definition through contract breach &nbsp;·&nbsp; <strong>2)</strong> Actual (January–March
+        by region) with one responsible-comments column — same row order as the sheet.
+      </p>
+    </div>
+  </div>
+  <div class="row g-3 mb-3">
+    {% for cat in master_kpi_categories %}
+    <div class="col-6 col-md-3">
+      <div
+        class="mkpi-cat-card {% if forloop.first %}active{% endif %}"
+        role="button"
+        tabindex="0"
+        data-mkpi-cat="{{ cat.slug }}"
+        aria-pressed="{% if forloop.first %}true{% else %}false{% endif %}"
+        aria-label="Show {{ cat.name }} KPIs"
+      >
+        <div class="mkpi-cat-icon mkpi-cat-icon--{{ cat.icon_variant|default:'generic' }}">
+          {% with v=cat.icon_variant|default:'generic' %}
+          {% if v == 'safety' %}
+          <i class="bi bi-shield-check" aria-hidden="true"></i>
+          {% elif v == 'inbound' %}
+          <i class="bi bi-box-arrow-in-down" aria-hidden="true"></i>
+          {% elif v == 'storage' %}
+          <i class="bi bi-boxes" aria-hidden="true"></i>
+          {% elif v == 'outbound' %}
+          <i class="bi bi-box-arrow-up" aria-hidden="true"></i>
+          {% else %}
+          <i class="bi bi-grid-3x3-gap" aria-hidden="true"></i>
+          {% endif %}
+          {% endwith %}
+        </div>
+        <div class="mkpi-cat-title">{{ cat.name }}</div>
+        <div class="mkpi-cat-meta">
+          {% if cat.rows|length == 1 %}1 KPI{% else %}{{ cat.rows|length }} KPIs{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% for cat in master_kpi_categories %}
+  <div
+    class="mkpi-panel {% if forloop.first %}active{% endif %}"
+    data-mkpi-panel="{{ cat.slug }}"
+    role="region"
+    aria-label="{{ cat.name }} KPI tables"
+  >
+    <div class="mkpi-sheet-card">
+      <div class="mkpi-sheet-head">
+        <span>{{ cat.name }}</span>
+        <span>Tables</span>
+      </div>
+      <div class="mkpi-panel-body">
+        {% if cat.rows %}
+        {# —— 1) KPI definition & contract (column order matches sheet) —— #}
+        <div class="mkpi-block">
+          <div class="mkpi-block-title">KPI definition &amp; contract</div>
+          <div class="mkpi-table-scroll custom-scrollbar">
+            <table class="table table-bordered mkpi-tbl mb-0">
+              <thead>
+                <tr>
+                  <th class="mkpi-col-kpi">{{ master_kpi_meta_labels.kpi }}</th>
+                  <th class="mkpi-col-method">{{ master_kpi_meta_labels.method }}</th>
+                  <th>{{ master_kpi_meta_labels.reporting }}</th>
+                  <th>{{ master_kpi_meta_labels.frequency }}</th>
+                  <th>{{ master_kpi_meta_labels.target }}</th>
+                  <th>{{ master_kpi_meta_labels.sla }}</th>
+                  <th>{{ master_kpi_meta_labels.breach }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in cat.rows %}
+                <tr>
+                  <td class="mkpi-col-kpi">{{ row.kpi|default:"—" }}</td>
+                  <td class="mkpi-col-method{% with k=row.kpi|default:''|lower %}{% if 'goods reception' in k and 'rework' in k %} mkpi-method-highlight{% endif %}{% endwith %}">{{ row.method|default:"—" }}</td>
+                  <td class="text-center text-nowrap">{{ row.reporting|default:"—" }}</td>
+                  <td class="text-center text-nowrap">{{ row.frequency|default:"—" }}</td>
+                  <td class="text-center text-nowrap mkpi-col-num">{{ row.target|default:"—" }}</td>
+                  <td class="text-center text-nowrap mkpi-col-num">{{ row.sla|default:"—" }}</td>
+                  <td class="text-center text-nowrap mkpi-col-num">{{ row.breach|default:"—" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {# —— Actual (Jan–Mar, Actual-only) + one Responsible comments column —— #}
+        <div class="mkpi-block mb-0">
+          <div class="mkpi-block-title">Actual</div>
+          <div class="mkpi-table-scroll custom-scrollbar mkpi-act-wrap">
+            {% if cat.actual_use_merged_header and cat.actual_two_row_header %}
+            <table class="table table-bordered mkpi-tbl mkpi-act-tbl mb-0">
+              <thead class="mkpi-act-thead">
+                <tr>
+                  <th rowspan="2" class="mkpi-col-idx mkpi-corner">{{ master_kpi_meta_labels.idx }}</th>
+                  <th rowspan="2" class="mkpi-col-kpi mkpi-corner">{{ master_kpi_meta_labels.kpi }}</th>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  {% for mo in blk.months %}
+                  {% if mo.cells %}
+                  <th colspan="{{ mo.colspan }}" class="mkpi-th-tier1">{{ mo.title }}</th>
+                  {% endif %}
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                  <th rowspan="2" class="mkpi-th-comments">{{ master_kpi_meta_labels.comments }}</th>
+                </tr>
+                <tr>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  {% for mo in blk.months %}
+                  {% for cell in mo.cells %}
+                  <th class="mkpi-th-tier2 mkpi-col-num" title="{{ cell.col }}">{{ cell.region|default:"—" }}</th>
+                  {% endfor %}
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in cat.rows %}
+                <tr>
+                  <td class="mkpi-col-idx">{{ row.idx|default:"—" }}</td>
+                  <td class="mkpi-col-kpi">{{ row.kpi|default:"—" }}</td>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  {% for mo in blk.months %}
+                  {% for cell in mo.cells %}
+                  <td class="mkpi-col-num">{{ row.actual_by_col|get_item:cell.col|default:"—" }}</td>
+                  {% endfor %}
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                  <td class="mkpi-col-comments">{{ row.comments|default:"—" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% elif cat.actual_use_merged_header %}
+            <table class="table table-bordered mkpi-tbl mkpi-act-tbl mb-0">
+              <thead class="mkpi-act-thead">
+                <tr>
+                  <th rowspan="3" class="mkpi-col-idx mkpi-corner">{{ master_kpi_meta_labels.idx }}</th>
+                  <th rowspan="3" class="mkpi-col-kpi mkpi-corner">{{ master_kpi_meta_labels.kpi }}</th>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  <th colspan="{{ blk.colspan }}" class="mkpi-th-tier1">{{ blk.title }}</th>
+                  {% endif %}
+                  {% endfor %}
+                  <th rowspan="3" class="mkpi-th-comments">{{ master_kpi_meta_labels.comments }}</th>
+                </tr>
+                <tr>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  {% for mo in blk.months %}
+                  {% if mo.cells %}
+                  <th colspan="{{ mo.colspan }}" class="mkpi-th-tier2">{{ mo.title }}</th>
+                  {% endif %}
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                </tr>
+                <tr>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  {% for mo in blk.months %}
+                  {% for cell in mo.cells %}
+                  <th class="mkpi-th-tier3 mkpi-col-num" title="{{ cell.col }}">{{ cell.region|default:"—" }}</th>
+                  {% endfor %}
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in cat.rows %}
+                <tr>
+                  <td class="mkpi-col-idx">{{ row.idx|default:"—" }}</td>
+                  <td class="mkpi-col-kpi">{{ row.kpi|default:"—" }}</td>
+                  {% for blk in cat.actual_blocks %}
+                  {% if blk.colspan %}
+                  {% for mo in blk.months %}
+                  {% for cell in mo.cells %}
+                  <td class="mkpi-col-num">{{ row.actual_by_col|get_item:cell.col|default:"—" }}</td>
+                  {% endfor %}
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                  <td class="mkpi-col-comments">{{ row.comments|default:"—" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% elif cat.actual_flat_columns %}
+            <table class="table table-bordered mkpi-tbl mkpi-act-tbl mb-0">
+              <thead>
+                <tr>
+                  <th class="mkpi-col-idx">{{ master_kpi_meta_labels.idx }}</th>
+                  <th class="mkpi-col-kpi">{{ master_kpi_meta_labels.kpi }}</th>
+                  {% for h in cat.actual_flat_columns %}
+                  <th class="mkpi-col-num" title="{{ h.col }}">{{ h.label }}</th>
+                  {% endfor %}
+                  <th class="mkpi-th-comments mkpi-th-tier1">{{ master_kpi_meta_labels.comments }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in cat.rows %}
+                <tr>
+                  <td class="mkpi-col-idx">{{ row.idx|default:"—" }}</td>
+                  <td class="mkpi-col-kpi">{{ row.kpi|default:"—" }}</td>
+                  {% for h in cat.actual_flat_columns %}
+                  <td class="mkpi-col-num">{{ row.actual_by_col|get_item:h.col|default:"—" }}</td>
+                  {% endfor %}
+                  <td class="mkpi-col-comments">{{ row.comments|default:"—" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}
+            <div class="mkpi-empty">No actual columns for these KPIs in this category (or every month cell is empty here).</div>
+            {% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div class="mkpi-empty mb-0">No KPI rows for this category in the current data range.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  <script>
+    (function () {
+      var root = document.getElementById("master-kpi-root-{{ master_kpi_uid }}");
+      if (!root || root.dataset.mkpiBound === "1") return;
+      root.dataset.mkpiBound = "1";
+
+      function activate(slug) {
+        root.querySelectorAll("[data-mkpi-cat]").forEach(function (btn) {
+          var on = btn.getAttribute("data-mkpi-cat") === slug;
+          btn.classList.toggle("active", on);
+          btn.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        root.querySelectorAll("[data-mkpi-panel]").forEach(function (panel) {
+          var show = panel.getAttribute("data-mkpi-panel") === slug;
+          panel.classList.toggle("active", show);
+          if (show) {
+            requestAnimationFrame(function () {
+              panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            });
+          }
+        });
+      }
+
+      root.addEventListener("click", function (ev) {
+        var btn = ev.target.closest("[data-mkpi-cat]");
+        if (!btn || !root.contains(btn)) return;
+        var slug = btn.getAttribute("data-mkpi-cat");
+        if (slug) activate(slug);
+      });
+
+      root.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        var btn = ev.target.closest("[data-mkpi-cat]");
+        if (!btn || !root.contains(btn)) return;
+        ev.preventDefault();
+        var slug = btn.getAttribute("data-mkpi-cat");
+        if (slug) activate(slug);
+      });
+    })();
+  </script>
+</div>
